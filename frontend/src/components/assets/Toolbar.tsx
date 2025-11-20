@@ -1,7 +1,10 @@
-import React, { useState } from "react";
-import { Box, Typography, IconButton } from "@mui/material"; // Removed Drawer
+import React, { useState, useEffect } from "react";
+import { Box, Typography, IconButton, Tooltip } from "@mui/material"; // Removed Drawer
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import SmartToyIcon from "@mui/icons-material/SmartToy";
+import BoltIcon from "@mui/icons-material/Bolt";
 import AiAssistant from "../ai-assitant/ai-assistant.tsx";
+import QuickCommandsPanel from "./QuickCommandsPanel";
 
 interface RightToolbarProps {
   style?: React.CSSProperties;
@@ -13,6 +16,7 @@ type ToolType =
   | "file-transfer"
   | "monitor"
   | "ai"
+  | "quickcmd" // added missing quickcmd type
   | "tools"
   | "settings"
   | null;
@@ -44,9 +48,21 @@ const Toolbar: React.FC<RightToolbarProps> = ({
       title: "AI Assistant",
       tooltip: "AI Intelligent Assistant",
     },
+    {
+      key: "quickcmd",
+      icon: <BoltIcon fontSize="small" />,
+      title: "Quick Commands",
+      tooltip: "Quick Commands Panel",
+    },
     // { key: 'tools', icon: <BuildIcon fontSize="small" />, title: 'Toolbox', tooltip: 'System toolbox' },
     // { key: 'settings', icon: <SettingsIcon fontSize="small" />, title: 'Settings', tooltip: 'Application settings' },
   ];
+
+  const shortcutHints: Record<string, string[]> = {
+    ai: ["Ctrl+Shift+L Toggle"],
+    quickcmd: ["Ctrl+Shift+K Toggle", "Ctrl+K Search", "Enter Insert", "Ctrl/Shift+Enter Execute"],
+    // other panels can be added later
+  };
 
   const handleButtonClick = (type: ToolType) => {
     setDrawerState((prev) => ({
@@ -59,8 +75,33 @@ const Toolbar: React.FC<RightToolbarProps> = ({
   const handleCloseDrawer = () =>
     setDrawerState((prev) => ({ ...prev, open: false }));
 
-  const getDrawerTitle = () =>
-    toolButtons.find((b) => b.key === drawerState.type)?.title || "";
+  const getDrawerTitle = () => {
+    const btn = toolButtons.find((b) => b.key === drawerState.type);
+    if (!btn) return "";
+    const hints = (shortcutHints[btn.key] || []).filter(h => !/^\(No preset/.test(h));
+    return (
+      <Box display="flex" alignItems="center" gap={1}>
+        <Typography variant="subtitle2" fontSize={14}>{btn.title}</Typography>
+        {hints.length > 0 && (
+          <Tooltip
+            placement="bottom"
+            arrow
+            title={
+              <Box display="flex" flexDirection="column" gap={0.5}>
+                {hints.map(h => (
+                  <Typography key={h} variant="caption" sx={{ lineHeight: 1.2 }}>{h}</Typography>
+                ))}
+              </Box>
+            }
+          >
+            <IconButton size="small" sx={{ p:0.5 }}>
+              <HelpOutlineIcon fontSize="inherit" />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
+    );
+  };
 
   const getDrawerContent = () => {
     switch (drawerState.type) {
@@ -96,6 +137,12 @@ const Toolbar: React.FC<RightToolbarProps> = ({
             />
           </Box>
         );
+      case "quickcmd":
+        return (
+          <Box height="100%" display="flex" flexDirection="column">
+            <QuickCommandsPanel activeTabKey={activeTabKey} />
+          </Box>
+        );
       case "tools":
         return (
           <Box p={2}>
@@ -122,6 +169,34 @@ const Toolbar: React.FC<RightToolbarProps> = ({
         return null;
     }
   };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Quick Commands toggle
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setDrawerState(prev => {
+          if (prev.type === 'quickcmd') {
+            return { ...prev, open: !prev.open };
+          }
+          return { open: true, type: 'quickcmd', width: prev.width };
+        });
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        setDrawerState(prev => {
+          if (prev.type === 'ai') {
+            return { ...prev, open: !prev.open };
+          }
+          return { open: true, type: 'ai', width: prev.width };
+        });
+        return;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <Box
@@ -251,14 +326,14 @@ const Toolbar: React.FC<RightToolbarProps> = ({
             sx={(theme) => ({
               borderBottom: `1px solid ${theme.palette.divider}`,
               flexShrink: 0,
+              position:'relative',
+                height: 40,
             })}
             display="flex"
             alignItems="center"
             justifyContent="space-between"
           >
-            <Typography variant="subtitle2" fontSize={14}>
-              {getDrawerTitle()}
-            </Typography>
+            {getDrawerTitle()}
             <IconButton onClick={handleCloseDrawer} sx={{ ml: 1 }}>
               ✕
             </IconButton>

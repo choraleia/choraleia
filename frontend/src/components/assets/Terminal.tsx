@@ -30,6 +30,23 @@ const terminalInstances = new Map<
   }
 >();
 
+export function sendToTerminal(tabKey: string, text: string, execute: boolean = false) {
+  const data = terminalInstances.get(tabKey);
+  if (!data) return false;
+  const { terminal, socket } = data;
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    terminal.writeln(`\r\n\x1b[31m[Not Connected]\x1b[m ${text}`);
+    return false;
+  }
+  // Avoid local echo to prevent duplication (remote shell will echo input)
+  if (execute) {
+    socket.send(JSON.stringify({ type: "TermInput", data: text + "\r" }));
+  } else {
+    socket.send(JSON.stringify({ type: "TermInput", data: text }));
+  }
+  return true;
+}
+
 // Function to handle terminal output request
 const handleTerminalOutputRequest = (
   terminal: Terminal,

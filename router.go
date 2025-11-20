@@ -115,6 +115,9 @@ func (s *Server) SetupRoutes() {
 	// Create terminal service instance
 	terminalService := service.NewTerminalService(assetService)
 
+	// Create quick command service instance
+	quickCmdService := service.NewQuickCommandService()
+
 	// Terminal connection routes
 	// /terminal
 	termGroups := s.ginEngine.Group("/terminal")
@@ -163,6 +166,17 @@ func (s *Server) SetupRoutes() {
 
 	// AI Agent Chat API route
 	apiGroup.POST("/chat", agentService.HandleAgentChat)
+
+	// Quick command management API routes (CRUD + reorder)
+	quickCmdGroup := apiGroup.Group("/quickcmd")
+	{
+		quickCmdGroup.GET("", s.listQuickCommands(quickCmdService))
+		quickCmdGroup.POST("", s.createQuickCommand(quickCmdService))
+		quickCmdGroup.GET(":id", s.getQuickCommand(quickCmdService))
+		quickCmdGroup.PUT(":id", s.updateQuickCommand(quickCmdService))
+		quickCmdGroup.DELETE(":id", s.deleteQuickCommand(quickCmdService))
+		quickCmdGroup.POST("/reorder", s.reorderQuickCommands(quickCmdService))
+	}
 }
 
 // Dialogue management handlers
