@@ -205,11 +205,10 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(({ assetsVis
     return () => window.removeEventListener("asset-connect", handler as any);
   }, []);
 
-  // Trigger terminal resize when asset panel visibility changes
+  // Trigger event when asset panel visibility changes
   useEffect(() => {
-    const trigger = () => window.dispatchEvent(new CustomEvent("terminal-resize", { detail: { tabKey: activeTabKey } }));
-    if (assetsVisible) [0, 60, 150].forEach((d) => setTimeout(trigger, d));
-  }, [assetsVisible, activeTabKey]);
+    window.dispatchEvent(new Event("asset-tree-visible"));
+  }, [assetsVisible]);
 
   return (
     <Box display="flex" height="100%" flex={1} minHeight={0}>

@@ -549,23 +549,28 @@ function TerminalComponent({
         }
       }, 0);
     }
-  }, [isActive, tabKey]);
+  }, [isActive]);
 
   // Listen to terminal-resize event, respond only to current tabKey
   useEffect(() => {
-    const handleResize = (e: CustomEvent) => {
-      if (isActive && e.detail && e.detail.tabKey === tabKey) {
+    const handleResize = (e: Event) => {
+      if (isActive) {
         fitIfNeeded();
       }
     };
-    window.addEventListener("terminal-resize", handleResize as EventListener);
+    window.addEventListener("asset-tree-resize", handleResize as EventListener);
+    window.addEventListener("asset-tree-visible", handleResize as EventListener);
     return () => {
       window.removeEventListener(
-        "terminal-resize",
+        "asset-tree-resize",
         handleResize as EventListener,
       );
+      window.removeEventListener(
+          "asset-tree-visible",
+          handleResize as EventListener,
+      );
     };
-  }, [tabKey, isActive]);
+  }, [isActive]);
 
   // Listen to window resize, actively trigger current terminal auto-fit
   useEffect(() => {

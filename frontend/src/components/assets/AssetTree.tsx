@@ -78,6 +78,50 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(({ }, ref) 
   // Replace original showSearch flag with Popover anchor
   const [searchAnchorEl, setSearchAnchorEl] = useState<HTMLElement | null>(null);
 
+  // ====== Resizable width ======
+  const [width, setWidth] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('assetTreeWidth'));
+    return !isNaN(saved) && saved >= 160 ? saved : 200; // default 200, min 160
+  });
+  const resizingRef = useRef<boolean>(false);
+  const startXRef = useRef<number>(0);
+  const startWidthRef = useRef<number>(0);
+  const finalWidthRef = useRef<number>(width);
+  useEffect(() => { finalWidthRef.current = width; }, [width]);
+  const handleResizeMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // left button only
+    resizingRef.current = true;
+    startXRef.current = e.clientX;
+    startWidthRef.current = finalWidthRef.current;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const dx = ev.clientX - startXRef.current;
+      let newW = startWidthRef.current + dx;
+      const min = 160; const max = Math.min(window.innerWidth * 0.6, 800);
+      if (newW < min) newW = min; if (newW > max) newW = max;
+      setWidth(newW);
+    };
+    const onUp = () => {
+      if (!resizingRef.current) return;
+      resizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('mouseleave', onUp);
+      const w = finalWidthRef.current;
+      localStorage.setItem('assetTreeWidth', String(w));
+      // Trigger custom event
+      window.dispatchEvent(new Event('asset-tree-resize'));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('mouseleave', onUp);
+  };
+  // ====== end Resizable width ======
+
   // Add host / folder
   const [addHostModalVisible, setAddHostModalVisible] = useState(false);
   const [addHostParentId, setAddHostParentId] = useState<string | null>(null);
@@ -527,7 +571,9 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(({ }, ref) 
   const onDragEnd = () => { dragNodeIdRef.current = null; draggedAssetRef.current = null; clearDragHover(); };
 
   return (
-    <Box display="flex" flexDirection="column" height="100%" sx={{ borderRight: '1px solid #f0f0f0' }}>
+    <Box display="flex" flexDirection="column" height="100%" sx={{ borderRight: '1px solid #e5e5e5', position:'relative', width, flexShrink:0 }}>
+      {/* Resize handle */}
+      <Box onMouseDown={handleResizeMouseDown} sx={{ position:'absolute', top:0, right:0, height:'100%', width:'6px', cursor:'col-resize', zIndex:10, '&:hover': { backgroundColor:'rgba(0,0,0,0.05)' }, touchAction:'none' }} />
       {/* Toolbar */}
       <Box display="flex" alignItems="center" gap={1} px={1} py={0.5}>
         {/*<Typography variant="subtitle2" flex={0}>Assets</Typography>*/}
