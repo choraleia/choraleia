@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +15,6 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
@@ -221,143 +219,6 @@ func (tom *TerminalOutputManager) HandleOutputResponse(response *message.TermOut
 	}
 }
 
-type TerminalOutputInput struct {
-	TerminalId string `json:"terminal_id"`
-	Lines      int    `json:"lines"`
-}
-
-func GetTerminalOutput(_ context.Context, params *TerminalOutputInput) (string, error) {
-	output, err := GlobalTerminalManager.RequestTerminalOutput(params.TerminalId, params.Lines)
-	if err != nil {
-		GlobalTerminalManager.logger.Error("Failed to request terminal output via websocket", "error", err, "terminalId", params.TerminalId)
-		return "", fmt.Errorf("failed to get terminal output: %w", err)
-	}
-	if len(output) == 0 {
-		return "Terminal output is empty", nil
-	}
-	result := strings.Join(output, "\n")
-	return result, nil
-}
-
-func NewTerminalOutputTool() tool.InvokableTool {
-	terminalTool := utils.NewTool(&schema.ToolInfo{
-		Name:  "get_terminal_output",
-		Desc:  "Fetch recent output of a specified terminal; choose a terminal_id from IDs mentioned in user messages.",
-		Extra: map[string]any{},
-		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"terminal_id": {Type: schema.String, Required: true, Desc: "Terminal ID to inspect. Use explicit IDs mentioned by user (e.g. from 'Current Terminal ID' or 'Available Terminal List'), avoid literal placeholders like 'currentTerminal'."},
-			"lines":       {Type: schema.Integer, Required: true, Desc: "Number of latest lines to fetch. Default 100."},
-		}),
-	}, GetTerminalOutput)
-	return terminalTool
-}
-
-type ExecCommandInput struct {
-	TerminalId     string `json:"terminal_id"`
-	Command        string `json:"command"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-}
-
-// ExecTerminalCommand executes command in specified terminal and returns output & exit code
-func ExecTerminalCommand(_ context.Context, params *ExecCommandInput) (string, error) {
-	if params.TerminalId == "" || params.Command == "" {
-		return "", fmt.Errorf("terminal_id and command are required")
-	}
-	if params.TimeoutSeconds <= 0 {
-		params.TimeoutSeconds = 30
-	}
-	GlobalTerminalManager.mutex.RLock()
-	session, exists := GlobalTerminalManager.terminals[params.TerminalId]
-	GlobalTerminalManager.mutex.RUnlock()
-	if !exists || session.term == nil {
-		return "", fmt.Errorf("terminal not ready: %s", params.TerminalId)
-	}
-	session.mutex.RLock()
-	startLen := len(session.Output)
-	session.mutex.RUnlock()
-
-	marker := "__OMNITERM_EXIT_CODE__"
-	augmentedCmd := fmt.Sprintf("%s; echo %s$?", params.Command, marker)
-
-	// Direct write to underlying terminal (backend echo mode)
-	session.term.writeToTerminal([]byte(augmentedCmd + "\n"))
-
-	deadline := time.Now().Add(time.Duration(params.TimeoutSeconds) * time.Second)
-	exitCode := -1
-	exitCodeRegex := regexp.MustCompile(marker + `([0-9]+)`)
-
-	for time.Now().Before(deadline) {
-		session.mutex.RLock()
-		currentLen := len(session.Output)
-		var newData string
-		if currentLen > startLen {
-			var b strings.Builder
-			for _, chunk := range session.Output[startLen:] {
-				b.WriteString(chunk)
-			}
-			newData = b.String()
-		}
-		session.mutex.RUnlock()
-		if newData != "" {
-			if m := exitCodeRegex.FindStringSubmatch(newData); len(m) == 2 {
-				_, _ = fmt.Sscanf(m[1], "%d", &exitCode)
-				break
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-
-	session.mutex.RLock()
-	var b strings.Builder
-	for _, chunk := range session.Output[startLen:] {
-		b.WriteString(chunk)
-	}
-	allOutput := b.String()
-	session.mutex.RUnlock()
-
-	if exitCode == -1 {
-		if m := exitCodeRegex.FindStringSubmatch(allOutput); len(m) == 2 {
-			_, _ = fmt.Sscanf(m[1], "%d", &exitCode)
-		}
-	}
-	allOutput = strings.ReplaceAll(allOutput, marker, "")
-
-	if exitCode == -1 {
-		// Timeout without detecting exit code; attempt Ctrl+C
-		if session.term != nil {
-			session.term.writeToTerminal([]byte("\x03"))
-			time.Sleep(3 * time.Millisecond)
-			session.mutex.RLock()
-			var b2 strings.Builder
-			for _, chunk := range session.Output[startLen:] {
-				b2.WriteString(chunk)
-			}
-			allOutput = b2.String()
-			allOutput = strings.ReplaceAll(allOutput, marker, "")
-			session.mutex.RUnlock()
-			return fmt.Sprintf("Command timed out, attempted interrupt (Ctrl+C).\nCommand: %s\nOutput:\n%s", params.Command, allOutput), nil
-		}
-		return fmt.Sprintf("Command executed but exit code not detected (possibly timeout).\nCommand: %s\nOutput:\n%s", params.Command, allOutput), nil
-	}
-
-	return fmt.Sprintf("Command completed\nCommand: %s\nExit Code: %d\nOutput:\n%s", params.Command, exitCode, allOutput), nil
-}
-
-// NewExecCommandTool creates command execution tool
-func NewExecCommandTool() tool.InvokableTool {
-	cmdTool := utils.NewTool(&schema.ToolInfo{
-		Name:  "exec_terminal_command",
-		Desc:  "Execute a shell command in a terminal and return exit code & output. Use for diagnosis, file inspection, running scripts.",
-		Extra: map[string]any{},
-		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"terminal_id":     {Type: schema.String, Required: true, Desc: "Target terminal ID from context."},
-			"command":         {Type: schema.String, Required: true, Desc: "Shell command to execute (no newline)."},
-			"timeout_seconds": {Type: schema.Integer, Required: false, Desc: "Timeout waiting for command output (seconds), default 30"},
-		}),
-	}, ExecTerminalCommand)
-	return cmdTool
-}
-
 // AIAgentService AI Agent version service
 type AIAgentService struct {
 	modelService     *ModelService
@@ -374,6 +235,7 @@ func NewAIAgentService(chatStoreService *ChatStoreService, modelService *ModelSe
 	}
 }
 
+// getChatModel selects and constructs the chat model
 func (s *AIAgentService) getChatModel(c *gin.Context) (*ark.ChatModel, error) {
 	selectedModel := c.Query("selectedModel")
 	if selectedModel == "" {
@@ -447,6 +309,7 @@ Use professional and friendly language in responses.`
 	return agent, nil
 }
 
+// SSEEvent sends a single SSE event
 func (s *AIAgentService) SSEEvent(c *gin.Context, event string, data any) {
 	flusher, _ := c.Writer.(http.Flusher)
 	_, _ = c.Writer.WriteString(fmt.Sprintf("event: %s\n", event))
@@ -455,6 +318,7 @@ func (s *AIAgentService) SSEEvent(c *gin.Context, event string, data any) {
 	flusher.Flush()
 }
 
+// LogMessages logs messages for debugging
 func (s *AIAgentService) LogMessages(key string, msgs []*schema.Message) {
 	text, err := json.MarshalIndent(msgs, "", "  ")
 	if err != nil {
@@ -465,6 +329,7 @@ func (s *AIAgentService) LogMessages(key string, msgs []*schema.Message) {
 
 // HandleAgentChat processes agent chat requests
 func (s *AIAgentService) HandleAgentChat(c *gin.Context) {
+	// ...existing validation & setup code...
 	stageId := int64(0)
 	newStage := func() int64 { stageId += 1; return stageId }
 
@@ -501,7 +366,7 @@ func (s *AIAgentService) HandleAgentChat(c *gin.Context) {
 		return
 	}
 
-	tools := []tool.BaseTool{NewTerminalOutputTool(), NewExecCommandTool()}
+	tools := []tool.BaseTool{NewTerminalOutputTool(), NewExecCommandTool(), NewWriteFileTool(), NewReadFileTool()}
 
 	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
