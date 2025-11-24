@@ -728,7 +728,7 @@ func (s *AIAgentService) GenerateTitle(c *gin.Context) {
 	if len(messages) > 4 {
 		messages = messages[:4]
 	}
-	messages = append(messages, &schema.Message{Role: schema.User, Content: "Please generate a concise accurate title for the above dialogue, max 16 characters, without quotes."})
+	messages = append(messages, &schema.Message{Role: schema.User, Content: "Please generate a concise accurate title for the above dialogue, max 50 english characters or 20 chinese characters, without quotes."})
 	output, err := chatModel.Generate(c.Request.Context(), messages)
 	if err != nil {
 		s.logger.Error("Failed to generate title", "error", err)

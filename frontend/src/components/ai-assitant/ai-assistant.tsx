@@ -507,41 +507,55 @@ export default function AiAssistant({
     });
   };
 
-  // convertMessage unchanged
+  // convertMessage optimized: single pass merging adjacent text/reasoning and consolidating tool-call results in O(n)
   const convertMessage = (message: ThreadMessageLike) => {
-    if (!Array.isArray(message.content) || message.content.length === 0)
-      return message;
-    const merged: typeof message.content = [];
-    for (let i = 0; i < message.content.length; i++) {
-      const curr = message.content[i];
+    const parts = message.content;
+    if (!Array.isArray(parts) || parts.length < 2) return message;
+
+    // Fast path: check if any merge/update work is needed
+    let needsWork = false;
+    for (let i = 1; i < parts.length; i++) {
+      const prev = parts[i - 1];
+      const curr = parts[i];
       if (
-        curr.type === "tool-call" &&
-        curr.result !== undefined &&
-        curr.toolCallId
+        (prev.type === curr.type && (curr.type === "text" || curr.type === "reasoning")) ||
+        (curr.type === "tool-call" && curr.result !== undefined)
       ) {
-        const prevIdx = merged.findIndex(
-          (p) => p.type === "tool-call" && p.toolCallId === curr.toolCallId,
-        );
-        if (prevIdx !== -1) {
-          merged[prevIdx] = { ...merged[prevIdx], result: curr.result };
-          continue;
-        }
-      }
-      const prev = merged.length > 0 ? merged[merged.length - 1] : null;
-      if (
-        prev &&
-        prev.type === curr.type &&
-        (curr.type === "text" || curr.type === "reasoning")
-      ) {
-        merged[merged.length - 1] = {
-          type: curr.type,
-          text: (prev.text || "") + (curr.text || ""),
-        } as any;
-      } else {
-        merged.push(curr);
+        needsWork = true;
+        break;
       }
     }
-    return { ...message, content: merged };
+    if (!needsWork) return message;
+
+    const out: typeof parts = [];
+    const toolIndex: Record<string, number> = {};
+    let last: any = null;
+
+    for (const p of parts) {
+      if (p.type === "tool-call" && p.toolCallId) {
+        const idx = toolIndex[p.toolCallId];
+        if (idx !== undefined) {
+          if (p.result !== undefined && out[idx].result === undefined) {
+            out[idx] = { ...out[idx], result: p.result };
+          }
+          continue;
+        }
+        toolIndex[p.toolCallId] = out.push(p) - 1;
+        last = p;
+        continue;
+      }
+      if (last && last.type === p.type && (p.type === "text" || p.type === "reasoning")) {
+        last.text = (last.text || "") + (p.text || "");
+        continue;
+      }
+      const normalized = (p.type === "text" || p.type === "reasoning")
+        ? { type: p.type, text: p.text || "" }
+        : p;
+      out.push(normalized);
+      last = normalized;
+    }
+
+    return { ...message, content: out };
   };
 
   // convertChatMessageToThreadMessageLike unchanged

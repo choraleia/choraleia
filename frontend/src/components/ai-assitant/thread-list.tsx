@@ -162,36 +162,35 @@ const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({
   return (
     <ThreadListItemPrimitive.Root>
       <ListItem disablePadding>
-        <ListItemButton
-          selected={isActive}
-          onClick={onSelect}
-          sx={{
-            py: 0.75,
-            px: 1.5,
-            "&.Mui-selected": { bgcolor: "action.selected", fontWeight: 500 },
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-start", // ensure left alignment
-            gap: 1,
-            textAlign: "left", // left-align any inline text
-            "& .thread-delete-btn": {
-              opacity: 0,
-              pointerEvents: "none",
-              transition: "opacity 0.15s",
-            },
-            "&:hover .thread-delete-btn": {
-              opacity: 1,
-              pointerEvents: "auto",
-            },
-          }}
-        >
-          <ThreadListItemPrimitive.Trigger
-            style={{ width: "100%", display: "flex", flexGrow: 1 }}
+        <ThreadListItemPrimitive.Trigger asChild>
+          <ListItemButton
+            selected={isActive}
+            onClick={onSelect}
+            sx={{
+              py: 0.75,
+              px: 1.5,
+              "&.Mui-selected": { bgcolor: "action.selected", fontWeight: 500 },
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-start",
+              gap: 1,
+              textAlign: "left",
+              position: "relative",
+              "& .thread-delete-btn": {
+                opacity: 0,
+                pointerEvents: "none",
+                transition: "opacity 0.15s",
+              },
+              "&:hover .thread-delete-btn": {
+                opacity: 1,
+                pointerEvents: "auto",
+              },
+            }}
           >
             <ThreadListItemTitle />
-          </ThreadListItemPrimitive.Trigger>
-          <ThreadListItemDelete />
-        </ListItemButton>
+            <ThreadListItemDelete />
+          </ListItemButton>
+        </ThreadListItemPrimitive.Trigger>
       </ListItem>
     </ThreadListItemPrimitive.Root>
   );
