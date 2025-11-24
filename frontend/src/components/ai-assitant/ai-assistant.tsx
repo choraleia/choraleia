@@ -72,52 +72,82 @@ export default function AiAssistant({
   activeTabKey,
   visible,
 }: AIAssistantProps) {
-  const [messages, setMessages] = useState<ThreadMessageLike[]>([]);
-  const [isRunning, setIsRunning] = useState(false);
+  // --- Per-tab chat state (conversation/messages/stream) ---
+  interface TabChatState {
+    conversationId: string;
+    messages: ThreadMessageLike[];
+    isRunning: boolean;
+    sse: SSE | null;
+    isLoading: boolean; // per-tab loading (initializing conversation / switching threads)
+  }
+  const [tabChatStates, setTabChatStates] = useState<
+    Record<string, TabChatState>
+  >({});
+  // helper ensure state object exists for a tab
+  const ensureTabState = (tabKey: string) => {
+    setTabChatStates((prev) =>
+      prev[tabKey]
+        ? prev
+        : {
+            ...prev,
+            [tabKey]: {
+              conversationId: "",
+              messages: [],
+              isRunning: false,
+              sse: null,
+              isLoading: false,
+            },
+          },
+    );
+  };
+  // derive current terminal from active tab
+  const [currentTerminal, setCurrentTerminal] = useState<string>("welcome");
+  // available terminals unchanged
+  const [availableTerminals, setAvailableTerminals] = useState<
+    TerminalOption[]
+  >([]);
+  // global threads list (unchanged)
+  const [threads, setThreads] = useState<ExtendedThreadData[]>([]);
+  // selected conversation id is per-tab; expose current active tab conversation id for runtime
+  const activeState = tabChatStates[currentTerminal] || {
+    conversationId: "",
+    messages: [],
+    isRunning: false,
+    sse: null,
+    isLoading: false,
+  };
+  const currentConversationId = activeState.conversationId; // for runtime
+  const messages = activeState.messages; // runtime messages
+  const isRunning = activeState.isRunning; // runtime running state
+  // other existing states
   const [isLoading, setIsLoading] = useState(false);
   const [agentMode, setAgentMode] = useState<AgentMode>("tools");
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedTerminals, setSelectedTerminals] = useState<string[]>([]);
-
-  // Conversations state
-  const [threads, setThreads] = useState<ExtendedThreadData[]>([]);
-  // Conversation state (only current conversation id)
-  const [currentConversationId, setCurrentConversationId] =
-    useState<string>("");
-
-  // Terminal related state
-  const [availableTerminals, setAvailableTerminals] = useState<
-    TerminalOption[]
-  >([]);
-  const [currentTerminal, setCurrentTerminal] = useState<string>("welcome");
-
-  // Model configuration state
   const [groupedModelOptions, setGroupedModelOptions] = useState<
     Record<string, ModelConfig[]>
   >({});
-  const sseRef = useRef<SSE | null>(null); // define sseRef
+  const [titleGenerationStatus, setTitleGenerationStatus] = useState<
+    Record<string, "pending" | "done">
+  >({});
+  // track previous running state per conversation to detect completion transitions
+  const prevRunningRef = useRef<Record<string, boolean>>({});
 
   // Sync terminal state when props update
   useEffect(() => {
     const terminals: TerminalOption[] = tabs
       .filter((tab: any) => tab.key !== "welcome")
-      .map((tab: any) => ({
-        key: tab.key,
-        label: tab.label,
-        isActive: true,
-      }));
-
+      .map((tab: any) => ({ key: tab.key, label: tab.label, isActive: true }));
     setAvailableTerminals(terminals);
-
     const newCurrentTerminal =
       activeTabKey === "welcome" ? "welcome" : activeTabKey;
     setCurrentTerminal(newCurrentTerminal);
+    ensureTabState(newCurrentTerminal);
   }, [tabs, activeTabKey]);
 
-  // Extract text from AppendMessage parts
+  // Extract text helper unchanged
   const extractTextFromAppendMessage = (msg: AppendMessage): string => {
     if (Array.isArray(msg.content)) {
-      // Extract all text content
       return msg.content
         .filter((part) => part.type === "text")
         .map((part) =>
@@ -128,338 +158,14 @@ export default function AiAssistant({
     return "";
   };
 
-  // Send message; create new conversation only on first send
-  const sendMessage = useCallback(
-    async (msg: AppendMessage) => {
-      const textContent = extractTextFromAppendMessage(msg);
-      let messageId = uuidv4();
-      let conversationId = currentConversationId;
-      // If no conversation yet, create a new one first
-      if (!conversationId) {
-        let assetId = "default";
-        if (currentTerminal !== "welcome") {
-          const currentTab = tabs.find((tab) => tab.key === currentTerminal);
-          if (currentTab && currentTab.assetId) {
-            assetId = currentTab.assetId;
-          }
-        }
-        try {
-          const createResponse = await fetch(
-            "http://wails.localhost:8088/api/conversations",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                title: "New Conversation",
-                asset_id: assetId,
-                asset_session_id: currentTerminal, // use current tab key
-              }),
-            },
-          );
-          if (createResponse.ok) {
-            const conversation = await createResponse.json();
-            await loadThreads(); // Refresh thread list first to ensure threadItems pool has new conversation
-            setCurrentConversationId(conversation.id); // Then set current conversation id
-            conversationId = conversation.id;
-          } else {
-            return;
-          }
-        } catch (error) {
-          return;
-        }
-      }
-      const userMessage: ChatMessage = {
-        conversationId: conversationId,
-        messageId: messageId,
-        message: {
-          role: RoleType.User,
-          content: textContent,
-        },
-      };
-      const threadMessage = convertChatMessageToThreadMessageLike(userMessage);
-      setMessages((prev) => [...prev, threadMessage]);
-      setIsRunning(true);
-      if (sseRef.current) {
-        sseRef.current.close();
-        sseRef.current = null;
-      }
-      try {
-        const params = new URLSearchParams({
-          agentMode,
-          selectedModel,
-          currentTerminal,
-          // send union of current active terminal + manually selected terminals (dedup)
-          selectedTerminals: [currentTerminal, ...selectedTerminals.filter(t => t !== currentTerminal)].join(","),
-        });
-        const url = `http://wails.localhost:8088/api/chat?${params.toString()}`;
-        const source = new SSE(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          payload: JSON.stringify(userMessage),
-        });
-        sseRef.current = source;
-        source.addEventListener("connected", (event: any) => {
-          console.log("SSE connected:", event.data);
-        });
-        source.addEventListener("message", (event: any) => {
-          try {
-            const chatMessage: ChatMessage = JSON.parse(event.data);
-            const threadMessage =
-              convertChatMessageToThreadMessageLike(chatMessage);
-            setMessages((prevMessages) => {
-              const idx = prevMessages.findIndex(
-                (m) => m.id === threadMessage.id,
-              );
-              if (idx !== -1) {
-                const newArr = [...prevMessages];
-                const oldContent = Array.isArray(newArr[idx].content)
-                  ? newArr[idx].content
-                  : [];
-                const newContent = Array.isArray(threadMessage.content)
-                  ? threadMessage.content
-                  : [];
-                newArr[idx] = {
-                  ...newArr[idx],
-                  content: [...oldContent, ...newContent] as typeof oldContent,
-                };
-                return newArr;
-              } else {
-                return [...prevMessages, threadMessage];
-              }
-            });
-          } catch (error) {
-            console.error("Error parsing message data:", error);
-          }
-        });
-        source.addEventListener("completed", (_event: any) => {
-          setIsRunning(false);
-          sseRef.current = null;
-        });
-        source.addEventListener("error", (event: any) => {
-          console.error("SSE error:", event.data);
-          let errorText = "❌ Sorry, an error occurred. Please try again later.";
-          try {
-            // Check model overdue error
-            if (event.data) {
-              const errorObj = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-              if (errorObj.error && typeof errorObj.error === "string") {
-                // Extract nested JSON error
-                const match = errorObj.error.match(/Error code: 403 - ({.*})/); // simplified regex
-                if (match && match[1]) {
-                  const innerError = JSON.parse(match[1]);
-                  if (innerError.code === "AccountOverdueError") {
-                    errorText = "Your model account is overdue. Please recharge and retry.";
-                  }
-                }
-              }
-            }
-          } catch (_) {}
-          const errorMessage: ThreadMessageLike = {
-            id: uuidv4(),
-            role: "assistant",
-            content: [{ type: "text", text: errorText }],
-            createdAt: new Date(),
-            metadata: { custom: {} },
-          };
-          setMessages((prev) => [...prev, errorMessage]);
-          source.close();
-          sseRef.current = null;
-          setIsRunning(false);
-        });
-      } catch (error) {
-        console.error("Error sending message:", error);
-        const errorMessage: ThreadMessageLike = {
-          id: uuidv4(),
-          role: "assistant",
-          content: [
-            {
-              type: "text",
-              text: "Sorry, an error occurred. Please try again later. If you need to analyze terminal output, ensure the terminal connection is active.",
-            },
-          ],
-          createdAt: new Date(),
-          metadata: { custom: {} },
-        };
-        setMessages((prev) => [...prev, errorMessage]);
-        setIsRunning(false);
-      }
-    },
-    [
-      currentConversationId,
-      agentMode,
-      selectedModel,
-      selectedTerminals,
-      currentTerminal,
-      tabs,
-    ],
-  );
-
-  // Ensure onCancel returns Promise<void>
-  const onCancel = useCallback(async () => {
-    if (sseRef.current) {
-      sseRef.current.close();
-      sseRef.current = null;
-    }
-    setIsRunning(false);
-    console.log("Message generation stopped");
-  }, []);
-
-  // Tool invocation result merge handler
-  const onAddToolResult = (options: AddToolResultOptions) => {
-    console.log("Add tool result:", options);
-    setMessages((prev) =>
-      prev.map((message) => {
-        if (message.id === options.messageId) {
-          // Handle when message.content may be string
-          if (Array.isArray(message.content)) {
-            return {
-              ...message,
-              content: message.content.map((part) => {
-                if (
-                  part.type === "tool-call" &&
-                  part.toolCallId === options.toolCallId
-                ) {
-                  return {
-                    ...part,
-                    result: options.result,
-                  };
-                }
-                return part;
-              }),
-            };
-          } else {
-            return message;
-          }
-        }
-        return message;
-      }),
-    );
-  };
-
-  const convertMessage = (message: ThreadMessageLike) => {
-    // Merge adjacent same-type (reasoning or text) content
-    if (!Array.isArray(message.content) || message.content.length === 0)
-      return message;
-    const mergedContent: typeof message.content = [];
-    for (let i = 0; i < message.content.length; i++) {
-      const curr = message.content[i];
-      // If tool-call with result, merge into previous same toolCallId part
-      if (
-        curr.type === "tool-call" &&
-        curr.result !== undefined &&
-        curr.toolCallId
-      ) {
-        // Find previous part with same toolCallId
-        const prevIdx = mergedContent.findIndex(
-          (p) => p.type === "tool-call" && p.toolCallId === curr.toolCallId,
-        );
-        if (prevIdx !== -1) {
-          // Update result field
-          mergedContent[prevIdx] = {
-            ...mergedContent[prevIdx],
-            result: curr.result,
-          };
-          // Skip adding current part
-          continue;
-        }
-      }
-      // Merge adjacent same-type text/reasoning parts
-      const prev =
-        mergedContent.length > 0
-          ? mergedContent[mergedContent.length - 1]
-          : null;
-      if (
-        prev &&
-        prev.type === curr.type &&
-        (curr.type === "text" || curr.type === "reasoning")
-      ) {
-        mergedContent[mergedContent.length - 1] = {
-          type: curr.type,
-          text: (prev.text || "") + (curr.text || ""),
-        };
-      } else {
-        mergedContent.push(curr);
-      }
-    }
-    return { ...message, content: mergedContent };
-  };
-
-  // ChatMessage -> ThreadMessageLike converter
-  const convertChatMessageToThreadMessageLike = (
-    chatMessage: ChatMessage,
-  ): ThreadMessageLike => {
-    const { messageId, message } = chatMessage;
-    let content: any[] = [];
-    if (message.tool_calls != null && message.tool_calls!.length > 0) {
-      content.push(
-        ...message.tool_calls.map((toolCall) => {
-          return {
-            type: "tool-call",
-            toolCallId: toolCall.id,
-            toolName: toolCall.function.name,
-            arguments: toolCall.function.arguments,
-          };
-        }),
-      );
-    } else if (
-      message.role === RoleType.Tool &&
-      message.tool_call_id != null &&
-      message.tool_call_id !== ""
-    ) {
-      message.role = RoleType.Assistant;
-      content.push({
-        type: "tool-call",
-        toolCallId: message.tool_call_id,
-        toolName: message.toolName,
-        result: message.content,
-      });
-    } else if (
-      Array.isArray(message.multiContent) &&
-      message.multiContent.length > 0
-    ) {
-      content = message.multiContent.map((part: any) => {
-        if (part.type === "text") {
-          return { type: "text", text: part.text };
-        } else if (part.type === "image_url") {
-          return { type: "image_url", imageURL: part.imageURL };
-        } else if (part.type === "audio_url") {
-          return { type: "audio_url", audioURL: part.audioURL };
-        } else if (part.type === "video_url") {
-          return { type: "video_url", videoURL: part.videoURL };
-        } else if (part.type === "file_url") {
-          return { type: "file_url", fileURL: part.fileURL };
-        } else {
-          return { type: part.type, ...part };
-        }
-      });
-    } else if (message.content) {
-      content.push({ type: "text", text: message.content });
-    } else if (message.reasoning_content) {
-      content.push({ type: "reasoning", text: message.reasoning_content });
-    } else {
-      console.log("Unsupported message format:", message);
-    }
-    return {
-      id: messageId,
-      role: message.role as "user" | "assistant" | "system",
-      content,
-      createdAt: new Date(),
-      metadata: { custom: message.extra || {} },
-    };
-  };
-
-  // Load conversation list
+  // Load conversation list (threads) unchanged except using currentTerminal from state
   const loadThreads = useCallback(async () => {
     setIsLoading(true);
     try {
       let assetId = "";
       if (currentTerminal !== "welcome") {
         const currentTab = tabs.find((tab) => tab.key === currentTerminal);
-        if (currentTab && currentTab.assetId) {
-          assetId = currentTab.assetId;
-        }
+        if (currentTab && currentTab.assetId) assetId = currentTab.assetId;
       }
       const url = assetId
         ? `http://wails.localhost:8088/api/conversations?asset_id=${encodeURIComponent(assetId)}`
@@ -474,7 +180,7 @@ export default function AiAssistant({
           createdAt: new Date(conv.created_at),
           updatedAt: new Date(conv.updated_at),
           assetId: conv.asset_id,
-          assetSessionId: conv.asset_session_id, // preserve asset session id for matching
+          assetSessionId: conv.asset_session_id,
         }));
         setThreads(threadListData);
       }
@@ -485,14 +191,11 @@ export default function AiAssistant({
     }
   }, [currentTerminal, tabs]);
 
-  // Auto load conversation list on mount
   useEffect(() => {
-    loadThreads().then(() => {
-      console.log("Loaded threads on mount.");
-    });
+    loadThreads();
   }, [loadThreads]);
 
-  // Load conversation messages
+  // Load messages for a conversation id (used when switching threads inside active tab)
   const loadMessages = useCallback(async (conversationId: string) => {
     try {
       const resp = await fetch(
@@ -514,161 +217,620 @@ export default function AiAssistant({
     return [];
   }, []);
 
-  const threadList: ExternalStoreThreadListAdapter = {
-    threadId: currentConversationId,
-    isLoading: isLoading,
-    threads: threads,
-    onSwitchToNewThread: async () => {
-      console.log("onSwitchToNewThread");
-      let assetId = "default";
-      if (currentTerminal !== "welcome") {
-        const currentTab = tabs.find((tab) => tab.key === currentTerminal);
-        if (currentTab && currentTab.assetId) {
-          assetId = currentTab.assetId;
+  // --- Send message for active tab ---
+  const sendMessage = useCallback(
+    async (msg: AppendMessage) => {
+      const tabKey = currentTerminal;
+      ensureTabState(tabKey);
+      const textContent = extractTextFromAppendMessage(msg);
+      let messageId = uuidv4();
+      let conversationId = tabChatStates[tabKey]?.conversationId || "";
+      // create conversation if needed for this tab
+      if (!conversationId) {
+        let assetId = "default";
+        if (tabKey !== "welcome") {
+          const currentTab = tabs.find((tab) => tab.key === tabKey);
+          if (currentTab && currentTab.assetId) assetId = currentTab.assetId;
+        }
+        try {
+          const createResponse = await fetch(
+            "http://wails.localhost:8088/api/conversations",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                title: "New Conversation",
+                asset_id: assetId,
+                asset_session_id: tabKey,
+              }),
+            },
+          );
+          if (createResponse.ok) {
+            const conversation = await createResponse.json();
+            await loadThreads();
+            conversationId = conversation.id;
+            setTabChatStates((prev) => ({
+              ...prev,
+              [tabKey]: {
+                ...(prev[tabKey] || {
+                  messages: [],
+                  isRunning: false,
+                  sse: null,
+                  conversationId: "",
+                  isLoading: false,
+                }),
+                conversationId,
+              },
+            }));
+          } else {
+            return;
+          }
+        } catch (e) {
+          return;
         }
       }
+      const userMessage: ChatMessage = {
+        conversationId,
+        messageId,
+        message: { role: RoleType.User, content: textContent },
+      };
+      const threadMessage = convertChatMessageToThreadMessageLike(userMessage);
+      setTabChatStates((prev) => {
+        const cur = prev[tabKey] || {
+          conversationId,
+          messages: [],
+          isRunning: false,
+          sse: null,
+        };
+        return {
+          ...prev,
+          [tabKey]: {
+            ...cur,
+            messages: [...cur.messages, threadMessage],
+            isRunning: true,
+            isLoading: false,
+          },
+        };
+      });
+      // close existing SSE only for this tab
+      const existing = tabChatStates[tabKey]?.sse;
+      if (existing) existing.close();
+      try {
+        const params = new URLSearchParams({
+          agentMode,
+          selectedModel,
+          currentTerminal: tabKey,
+          selectedTerminals: [
+            tabKey,
+            ...selectedTerminals.filter((t) => t !== tabKey),
+          ].join(","),
+        });
+        const url = `http://wails.localhost:8088/api/chat?${params.toString()}`;
+        const source = new SSE(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          payload: JSON.stringify(userMessage),
+        });
+        setTabChatStates((prev) => ({
+          ...prev,
+          [tabKey]: {
+            ...(prev[tabKey] || {
+              conversationId,
+              messages: [threadMessage],
+              isRunning: true,
+              sse: null,
+              isLoading: false,
+            }),
+            sse: source,
+          },
+        }));
+        source.addEventListener("message", (event: any) => {
+          try {
+            const chatMessage: ChatMessage = JSON.parse(event.data);
+            const tMsg = convertChatMessageToThreadMessageLike(chatMessage);
+            setTabChatStates((prev) => {
+              const cur = prev[tabKey];
+              if (!cur) return prev;
+              const idx = cur.messages.findIndex((m) => m.id === tMsg.id);
+              let newMessages: ThreadMessageLike[];
+              if (idx !== -1) {
+                const oldContent = Array.isArray(cur.messages[idx].content)
+                  ? cur.messages[idx].content
+                  : [];
+                const newContent = Array.isArray(tMsg.content)
+                  ? tMsg.content
+                  : [];
+                const merged = {
+                  ...cur.messages[idx],
+                  content: [...oldContent, ...newContent],
+                };
+                newMessages = [...cur.messages];
+                newMessages[idx] = merged;
+              } else {
+                newMessages = [...cur.messages, tMsg];
+              }
+              return { ...prev, [tabKey]: { ...cur, messages: newMessages } };
+            });
+          } catch (e) {
+            console.error("Error parsing message data:", e);
+          }
+        });
+        source.addEventListener("completed", () => {
+          setTabChatStates((prev) => {
+            const cur = prev[tabKey];
+            if (!cur) return prev;
+            return {
+              ...prev,
+              [tabKey]: {
+                ...cur,
+                isRunning: false,
+                sse: null,
+                isLoading: false,
+              },
+            };
+          });
+        });
+        source.addEventListener("error", (event: any) => {
+          console.error("SSE error:", event.data);
+          let errorText =
+            "❌ Sorry, an error occurred. Please try again later.";
+          try {
+            if (event.data) {
+              const errorObj =
+                typeof event.data === "string"
+                  ? JSON.parse(event.data)
+                  : event.data;
+              if (errorObj.error && typeof errorObj.error === "string") {
+                const match = errorObj.error.match(/Error code: 403 - ({.*})/);
+                if (match && match[1]) {
+                  const innerError = JSON.parse(match[1]);
+                  if (innerError.code === "AccountOverdueError")
+                    errorText =
+                      "Your model account is overdue. Please recharge and retry.";
+                }
+              }
+            }
+          } catch (_) {}
+          const errorMessage: ThreadMessageLike = {
+            id: uuidv4(),
+            role: "assistant",
+            content: [{ type: "text", text: errorText }],
+            createdAt: new Date(),
+            metadata: { custom: {} },
+          };
+          setTabChatStates((prev) => {
+            const cur = prev[tabKey];
+            if (!cur) return prev;
+            cur.sse?.close();
+            return {
+              ...prev,
+              [tabKey]: {
+                ...cur,
+                messages: [...cur.messages, errorMessage],
+                isRunning: false,
+                sse: null,
+                isLoading: false,
+              },
+            };
+          });
+        });
+      } catch (e) {
+        console.error("Error sending message:", e);
+        const errorMessage: ThreadMessageLike = {
+          id: uuidv4(),
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "Sorry, an error occurred. Please try again later. If you need to analyze terminal output, ensure the terminal connection is active.",
+            },
+          ],
+          createdAt: new Date(),
+          metadata: { custom: {} },
+        };
+        setTabChatStates((prev) => {
+          const cur = prev[tabKey];
+          if (!cur) return prev;
+          return {
+            ...prev,
+            [tabKey]: {
+              ...cur,
+              messages: [...cur.messages, errorMessage],
+              isRunning: false,
+              isLoading: false,
+            },
+          };
+        });
+      }
+    },
+    [
+      currentTerminal,
+      tabChatStates,
+      agentMode,
+      selectedModel,
+      selectedTerminals,
+      tabs,
+      loadThreads,
+    ],
+  );
+
+  // Cancel only active tab stream
+  const onCancel = useCallback(async () => {
+    setTabChatStates((prev) => {
+      const cur = prev[currentTerminal];
+      if (!cur) return prev;
+      cur.sse?.close();
+      return {
+        ...prev,
+        [currentTerminal]: {
+          ...cur,
+          isRunning: false,
+          sse: null,
+          isLoading: false,
+        },
+      };
+    });
+  }, [currentTerminal]);
+
+  // Tool result merge for active tab only
+  const onAddToolResult = (options: AddToolResultOptions) => {
+    const tabKey = currentTerminal;
+    setTabChatStates((prev) => {
+      const cur = prev[tabKey];
+      if (!cur) return prev;
+      return {
+        ...prev,
+        [tabKey]: {
+          ...cur,
+          messages: cur.messages.map((message) => {
+            if (
+              message.id === options.messageId &&
+              Array.isArray(message.content)
+            ) {
+              return {
+                ...message,
+                content: message.content.map((part) => {
+                  if (
+                    part.type === "tool-call" &&
+                    part.toolCallId === options.toolCallId
+                  ) {
+                    return { ...part, result: options.result };
+                  }
+                  return part;
+                }),
+              };
+            }
+            return message;
+          }),
+        },
+      };
+    });
+  };
+
+  // convertMessage unchanged
+  const convertMessage = (message: ThreadMessageLike) => {
+    if (!Array.isArray(message.content) || message.content.length === 0)
+      return message;
+    const merged: typeof message.content = [];
+    for (let i = 0; i < message.content.length; i++) {
+      const curr = message.content[i];
+      if (
+        curr.type === "tool-call" &&
+        curr.result !== undefined &&
+        curr.toolCallId
+      ) {
+        const prevIdx = merged.findIndex(
+          (p) => p.type === "tool-call" && p.toolCallId === curr.toolCallId,
+        );
+        if (prevIdx !== -1) {
+          merged[prevIdx] = { ...merged[prevIdx], result: curr.result };
+          continue;
+        }
+      }
+      const prev = merged.length > 0 ? merged[merged.length - 1] : null;
+      if (
+        prev &&
+        prev.type === curr.type &&
+        (curr.type === "text" || curr.type === "reasoning")
+      ) {
+        merged[merged.length - 1] = {
+          type: curr.type,
+          text: (prev.text || "") + (curr.text || ""),
+        } as any;
+      } else {
+        merged.push(curr);
+      }
+    }
+    return { ...message, content: merged };
+  };
+
+  // convertChatMessageToThreadMessageLike unchanged
+  const convertChatMessageToThreadMessageLike = (
+    chatMessage: ChatMessage,
+  ): ThreadMessageLike => {
+    const { messageId, message } = chatMessage;
+    let content: any[] = [];
+    if (message.tool_calls != null && message.tool_calls.length > 0) {
+      content.push(
+        ...message.tool_calls.map((toolCall) => ({
+          type: "tool-call",
+          toolCallId: toolCall.id,
+          toolName: toolCall.function.name,
+          arguments: toolCall.function.arguments,
+        })),
+      );
+    } else if (message.role === RoleType.Tool && message.tool_call_id) {
+      message.role = RoleType.Assistant;
+      content.push({
+        type: "tool-call",
+        toolCallId: message.tool_call_id,
+        toolName: message.toolName,
+        result: message.content,
+      });
+    } else if (
+      Array.isArray(message.multiContent) &&
+      message.multiContent.length > 0
+    ) {
+      content = message.multiContent.map((part: any) => {
+        if (part.type === "text") return { type: "text", text: part.text };
+        if (part.type === "image_url")
+          return { type: "image_url", imageURL: part.imageURL };
+        if (part.type === "audio_url")
+          return { type: "audio_url", audioURL: part.audioURL };
+        if (part.type === "video_url")
+          return { type: "video_url", videoURL: part.videoURL };
+        if (part.type === "file_url")
+          return { type: "file_url", fileURL: part.fileURL };
+        return { type: part.type, ...part };
+      });
+    } else if (message.content) {
+      content.push({ type: "text", text: message.content });
+    } else if (message.reasoning_content) {
+      content.push({ type: "reasoning", text: message.reasoning_content });
+    } else {
+      console.log("Unsupported message format:", message);
+    }
+    return {
+      id: messageId,
+      role: message.role as any,
+      content,
+      createdAt: new Date(),
+      metadata: { custom: message.extra || {} },
+    };
+  };
+
+  // Thread list adapter referencing active tab state only
+  const threadList: ExternalStoreThreadListAdapter = {
+    threadId: currentConversationId,
+    isLoading, // global thread list loading only
+    threads,
+    onSwitchToNewThread: async () => {
+      let assetId = "default";
+      if (currentTerminal !== "welcome") {
+        const currentTab = tabs.find((t) => t.key === currentTerminal);
+        if (currentTab && currentTab.assetId) assetId = currentTab.assetId;
+      }
+      // mark tab loading
+      setTabChatStates((prev) => ({
+        ...prev,
+        [currentTerminal]: {
+          ...(prev[currentTerminal] || {
+            messages: [],
+            isRunning: false,
+            sse: null,
+            conversationId: "",
+            isLoading: false,
+          }),
+          isLoading: true,
+        },
+      }));
       const createResponse = await fetch(
         "http://wails.localhost:8088/api/conversations",
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title: "New Conversation",
             asset_id: assetId,
-            asset_session_id: currentTerminal, // use tab key as session id
+            asset_session_id: currentTerminal,
           }),
         },
       );
       if (createResponse.ok) {
         await loadThreads();
         const conversation = await createResponse.json();
-        setCurrentConversationId(conversation.id);
-        setMessages([]);
+        setTabChatStates((prev) => ({
+          ...prev,
+          [currentTerminal]: {
+            ...(prev[currentTerminal] || {
+              messages: [],
+              isRunning: false,
+              sse: null,
+              conversationId: "",
+              isLoading: true,
+            }),
+            conversationId: conversation.id,
+            messages: [],
+            isLoading: false,
+          },
+        }));
+      } else {
+        setTabChatStates((prev) => ({
+          ...prev,
+          [currentTerminal]: {
+            ...(prev[currentTerminal] || {
+              messages: [],
+              isRunning: false,
+              sse: null,
+              conversationId: "",
+              isLoading: true,
+            }),
+            isLoading: false,
+          },
+        }));
       }
     },
     onSwitchToThread: async (threadId: string) => {
-      console.log("onSwitchToThread");
+      // set per-tab loading
+      setTabChatStates((prev) => ({
+        ...prev,
+        [currentTerminal]: {
+          ...(prev[currentTerminal] || {
+            conversationId: threadId,
+            messages: [],
+            isRunning: false,
+            sse: null,
+            isLoading: false,
+          }),
+          isLoading: true,
+        },
+      }));
       setIsLoading(true);
       try {
-        setCurrentConversationId(threadId);
         const msgs = await loadMessages(threadId);
-        setMessages(msgs);
+        setTabChatStates((prev) => ({
+          ...prev,
+          [currentTerminal]: {
+            ...(prev[currentTerminal] || {
+              conversationId: threadId,
+              messages: [],
+              isRunning: false,
+              sse: null,
+              isLoading: false,
+            }),
+            conversationId: threadId,
+            messages: msgs,
+            isLoading: false,
+          },
+        }));
       } finally {
         setIsLoading(false);
       }
     },
     onRename: async (threadId: string, newTitle: string) => {
-      console.log("onRename");
       await fetch(
         `http://wails.localhost:8088/api/conversations/${threadId}/title`,
         {
           method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title: newTitle }),
         },
       );
       await loadThreads();
     },
     onDelete: async (threadId: string) => {
-      console.log("onDelete");
       try {
         const resp = await fetch(
           `http://wails.localhost:8088/api/conversations/${threadId}`,
-          {
-            method: "DELETE",
-          },
+          { method: "DELETE" },
         );
         if (resp.ok) {
           await loadThreads();
-          if (threadId === currentConversationId) {
-            setMessages([]);
-            setCurrentConversationId("");
-          }
+          setTabChatStates((prev) => {
+            const cur = prev[currentTerminal];
+            if (!cur || cur.conversationId !== threadId) return prev;
+            return {
+              ...prev,
+              [currentTerminal]: { ...cur, conversationId: "", messages: [] },
+            };
+          });
         }
-      } catch (err) {
-        console.error("Error deleting conversation:", err);
+      } catch (e) {
+        console.error("Error deleting conversation:", e);
       }
     },
-    onArchive: async (threadId: string) => {
-      console.log("Archive", threadId);
-    },
-    onUnarchive: async (threadId: string) => {
-      console.log("Unarchive", threadId);
-    },
+    onArchive: async () => {},
+    onUnarchive: async () => {},
   };
 
-  // Create AssistantUI runtime using ThreadMessageLike
+  // Runtime uses active tab state
   const runtime = useExternalStoreRuntime({
-    messages: messages,
+    messages,
     isRunning,
-    isLoading,
-    adapters: {
-      threadList,
-    },
+    isLoading: activeState.isLoading,
+    adapters: { threadList },
     onNew: async (message: AppendMessage) => {
-      if (message) {
-        await sendMessage(message);
-      }
+      if (message) await sendMessage(message);
     },
-    onEdit: async (message: AppendMessage) => {
-      console.log("Edit message:", message);
-    },
-    onReload: async (parentId: string | null) => {
-      console.log("Reload from parent:", parentId);
-    },
-    onCancel, // type matched
+    onEdit: async () => {},
+    onReload: async () => {},
+    onCancel,
     onAddToolResult,
     convertMessage,
   });
 
-  // Auto-generate title and refresh thread list and current thread title
-  const autoGenerateTitle = useCallback(
-    async (conversationId: string) => {
-      if (!conversationId) return;
+  // helper: request title generation safely (idempotent per conversation)
+  const requestTitleGeneration = useCallback(
+    async (convoId: string) => {
+      if (!convoId) return;
+      // already requested or finished
+      if (
+        titleGenerationStatus[convoId] === "pending" ||
+        titleGenerationStatus[convoId] === "done"
+      )
+        return;
+      // mark pending
+      setTitleGenerationStatus((prev) => ({ ...prev, [convoId]: "pending" }));
       try {
         const resp = await fetch(
-          `http://wails.localhost:8088/api/conversations/${conversationId}/generateTitle?selectedModel=${encodeURIComponent(selectedModel)}`,
+          `http://wails.localhost:8088/api/conversations/${convoId}/generateTitle?selectedModel=${encodeURIComponent(selectedModel)}`,
         );
         if (resp.ok) {
           const data = await resp.json();
           const newTitle = data.title;
-          // Immediately update current thread title
-          setThreads((prevThreads) =>
-            prevThreads.map((t) =>
-              t.id === conversationId ? { ...t, title: newTitle } : t,
-            ),
+          setThreads((prev) =>
+            prev.map((t) => (t.id === convoId ? { ...t, title: newTitle } : t)),
           );
         }
       } catch (e) {
         console.error("Failed to auto-generate title:", e);
+      } finally {
+        setTitleGenerationStatus((prev) => ({ ...prev, [convoId]: "done" }));
       }
     },
-    [loadThreads, selectedModel],
+    [selectedModel, titleGenerationStatus],
   );
 
-  // Listen for SSE completion; after first reply auto-generate title
+  // Auto-generate title: only on (isRunning true -> false) transition or initial loaded state without prior tracking.
   useEffect(() => {
-    if (!isRunning && currentConversationId && messages.length > 1) {
-      const currentThread = threads.find((t) => t.id === currentConversationId);
-      if (
-        currentThread &&
-        (currentThread.title === "New Conversation" ||
-          !currentThread.title ||
-          /^New Conversation/.test(currentThread.title))
-      ) {
-        autoGenerateTitle(currentConversationId);
-      }
-    }
-  }, [isRunning, currentConversationId, threads, autoGenerateTitle, messages]);
+    // build quick lookup of thread titles (allow undefined safely)
+    const titleById: Record<string, string | undefined> = {};
+    threads.forEach((t) => (titleById[t.id] = t.title));
 
-  // Fetch model list only when visible
+    Object.values(tabChatStates).forEach((state) => {
+      const convoId = state.conversationId;
+      if (!convoId) return;
+      const title = titleById[convoId];
+      // skip if title already non-default
+      if (title && !/^New Conversation/.test(title)) {
+        if (prevRunningRef.current[convoId] === undefined) {
+          prevRunningRef.current[convoId] = state.isRunning;
+        }
+        return;
+      }
+      if (state.messages.length < 2) {
+        if (prevRunningRef.current[convoId] === undefined) {
+          prevRunningRef.current[convoId] = state.isRunning;
+        }
+        return;
+      }
+      const prevRunning = prevRunningRef.current[convoId];
+      // detect transition from running -> stopped (stream finished). Keep explicit comparison to avoid incorrect lint simplification.
+      const transitionedToStopped =
+        prevRunning === true && state.isRunning === false; // prev true -> current false
+      const initialLoadedStopped =
+        prevRunning === undefined && !state.isRunning; // first observation already stopped
+      if (transitionedToStopped || initialLoadedStopped) {
+        requestTitleGeneration(convoId);
+      }
+      prevRunningRef.current[convoId] = state.isRunning;
+    });
+  }, [tabChatStates, threads, requestTitleGeneration]);
+
+  // Fetch models only when visible (unchanged)
   useEffect(() => {
     if (!visible) return;
-    async function fetchModels() {
+    (async () => {
       try {
         const resp = await fetch("http://wails.localhost:8088/api/models");
         if (resp.ok) {
@@ -680,49 +842,43 @@ export default function AiAssistant({
               groups[m.provider].push(m);
             });
             setGroupedModelOptions(groups);
-            if (data.data.length > 0) setSelectedModel(data.data[0].name);
+            if (data.data.length > 0 && !selectedModel)
+              setSelectedModel(data.data[0].name);
           }
         }
       } catch (e) {
         console.error("Failed to fetch model list:", e);
       }
-    }
-    fetchModels();
-  }, [visible]);
+    })();
+  }, [visible, selectedModel]);
 
-  // Auto-select latest conversation matching current tab session id when tab changes or threads refresh
+  // When active tab changes, auto-select latest matching conversation (if state empty)
   useEffect(() => {
-    if (!currentTerminal) return;
-    // Find conversations with assetSessionId === currentTerminal
-    const matched = (threads as ExtendedThreadData[])
-      .filter((t) => t.assetSessionId === currentTerminal)
-      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-    if (matched.length > 0) {
-      const latestId = matched[0].id;
-      if (latestId !== currentConversationId) {
-        setCurrentConversationId(latestId);
-        // Load messages for latest conversation
-        (async () => {
-          const msgs = await loadMessages(latestId);
-            setMessages(msgs);
-        })();
-      }
-    } else {
-      // If no matched conversation, clear current conversation context
-      if (currentConversationId) {
-        setCurrentConversationId("");
-        setMessages([]);
-      }
-    }
-  }, [currentTerminal, threads, loadMessages]);
+    ensureTabState(currentTerminal);
+    setTabChatStates((prev) => {
+      const cur = prev[currentTerminal];
+      if (!cur) return prev;
+      if (cur.conversationId) return prev; // already has conversation
+      // find latest thread for this session id
+      const matched = threads
+        .filter((t) => t.assetSessionId === currentTerminal)
+        .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+      if (matched.length === 0) return prev;
+      return {
+        ...prev,
+        [currentTerminal]: {
+          ...cur,
+          conversationId: matched[0].id,
+          isLoading: false,
+        },
+      };
+    });
+  }, [currentTerminal, threads]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-full flex flex-col">
-        {/* Conversation management area */}
         <ThreadList />
-
-        {/* Chat interface */}
         <div className="flex-1 overflow-hidden">
           <Thread
             agentMode={agentMode}
@@ -730,7 +886,7 @@ export default function AiAssistant({
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}
             groupedModelOptions={groupedModelOptions}
-            isLoading={isLoading}
+            isLoading={activeState.isLoading} // use per-tab loading here
             availableTerminals={availableTerminals}
             selectedTerminals={selectedTerminals}
             currentTerminal={currentTerminal}
