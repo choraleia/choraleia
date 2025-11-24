@@ -33,7 +33,7 @@ export const lightTheme = createTheme({
     background: { default: "#f0f2f5", paper: "#ffffff" },
     text: { primary: "rgba(0,0,0,0.88)", secondary: "rgba(0,0,0,0.65)" },
   },
-  shape: { borderRadius: 6 },
+  shape: { borderRadius: 3 },
   typography: {
     fontFamily:
       '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif',
@@ -48,7 +48,7 @@ export const lightTheme = createTheme({
           transition: "none !important",
         },
         html: { scrollBehavior: "auto" },
-        body: { animation: "none !important" },
+        body: { animation: "none !important", fontSize: 12, lineHeight: 1.5 },
       },
     },
     MuiButton: {
@@ -60,15 +60,13 @@ export const lightTheme = createTheme({
       styleOverrides: {
         root: {
           textTransform: "none",
-          padding: "4px 12px",
-          minHeight: 32,
           transition: "none",
         },
       },
     },
     MuiTabs: {
       styleOverrides: {
-        root: { minHeight: 36, transition: "none" },
+        root: { transition: "none" },
         indicator: { transition: "none" },
       },
     },
@@ -77,7 +75,7 @@ export const lightTheme = createTheme({
     },
     MuiSelect: {
       defaultProps: { size: "small" },
-      styleOverrides: { root: { fontSize: 12 }, select: { fontSize: 12 } },
+      styleOverrides: { },
     },
     MuiAutocomplete: { defaultProps: { size: "small" } },
     MuiSwitch: { defaultProps: { size: "small" } },
@@ -85,12 +83,12 @@ export const lightTheme = createTheme({
     MuiRadio: { defaultProps: { size: "small", disableRipple: true } },
     MuiIconButton: {
       defaultProps: { size: "small", disableRipple: true },
-      styleOverrides: { root: { padding: 4, transition: "none" } },
+      styleOverrides: { root: { transition: "none" } },
     },
     MuiTab: {
       defaultProps: { iconPosition: "start", disableRipple: true },
       styleOverrides: {
-        root: { minHeight: 36, padding: "6px 12px", transition: "none", textTransform: 'none' },
+        root: { minHeight: 24, padding: "6px 12px", transition: "none", textTransform: 'none' },
       },
     },
     MuiDialogTitle: { styleOverrides: { root: { padding: "12px 16px" } } },
@@ -106,8 +104,8 @@ export const lightTheme = createTheme({
     MuiChip: {
       defaultProps: { size: "small" },
       styleOverrides: {
-        root: { height: 24 },
-        label: { paddingLeft: 6, paddingRight: 6 },
+        root: { },
+        label: { },
       },
     },
     MuiAlert: {
@@ -117,21 +115,20 @@ export const lightTheme = createTheme({
     MuiMenuItem: {
       styleOverrides: {
         root: {
-          minHeight: 32,
+          minHeight: 24,
           paddingTop: 4,
           paddingBottom: 4,
           transition: "none",
-          fontSize: 12,
         },
       },
     },
     MuiListItem: {
       defaultProps: { dense: true, disablePadding: false },
-      styleOverrides: { root: { minHeight: 32, transition: "none" } },
+      styleOverrides: { root: { minHeight: 24, transition: "none" } },
     },
     MuiBreadcrumbs: { styleOverrides: { li: {} } },
     MuiPopover: {
-      styleOverrides: { paper: { borderRadius: 6, transition: "none" } },
+      styleOverrides: { paper: { borderRadius: 3, transition: "none" } },
     },
     MuiTableCell: {
       defaultProps: { size: "small" },
@@ -141,16 +138,11 @@ export const lightTheme = createTheme({
     MuiPagination: { defaultProps: { size: "small" } },
     MuiOutlinedInput: {
       styleOverrides: {
-        root: { minHeight: 32, transition: "none" },
+        root: { minHeight: 24, transition: "none" },
         input: {
           padding: "7px 8px",
-          height: 32,
-          lineHeight: "18px",
-          fontSize: 12,
           boxSizing: 'border-box',
           '&::placeholder': {
-            fontSize: 12,
-            lineHeight: '18px',
             opacity: 0.5,
           },
         },
@@ -159,16 +151,11 @@ export const lightTheme = createTheme({
     MuiInputBase: {
       defaultProps: { size: "small" },
       styleOverrides: {
-        root: { minHeight: 32, transition: "none" },
+        root: { minHeight: 18, transition: "none" },
         input: {
           padding: "7px 8px",
-          height: 32,
-          lineHeight: "18px",
-          fontSize: 12,
           boxSizing: 'border-box',
           '&::placeholder': {
-            fontSize: 12,
-            lineHeight: '18px',
             opacity: 0.5,
           },
         },
@@ -190,11 +177,9 @@ export const lightTheme = createTheme({
           style: ({ theme }) => ({
             backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
             padding: '4px 12px',
-            borderRadius: theme.shape.borderRadius * 3,
+            borderRadius: 3,
             boxShadow: 'none',
             border: `1px solid ${theme.palette.divider}`,
-            fontSize: theme.typography.fontSize,
-            lineHeight: 1.6,
           }),
         },
       ],
@@ -236,7 +221,7 @@ export const darkTheme = createTheme({
       secondary: "rgba(255,255,255,0.65)",
     },
   },
-  shape: { borderRadius: 6 },
+  shape: { borderRadius: 3 },
   typography: {
     fontFamily:
       '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif',
@@ -250,7 +235,7 @@ export const darkTheme = createTheme({
           transition: "none !important",
         },
         html: { scrollBehavior: "auto" },
-        body: { animation: "none !important" },
+        body: { animation: "none !important", fontSize: 12, lineHeight: 1.5 },
       },
     },
     MuiButton: {
@@ -263,7 +248,7 @@ export const darkTheme = createTheme({
         root: {
           textTransform: "none",
           padding: "4px 12px",
-          minHeight: 32,
+          minHeight: 24,
           transition: "none",
         },
       },
@@ -273,7 +258,7 @@ export const darkTheme = createTheme({
     },
     MuiSelect: {
       defaultProps: { size: "small" },
-      styleOverrides: { root: { fontSize: 12 }, select: { fontSize: 12 } },
+      styleOverrides: { root: { }, select: { } },
     },
     MuiAutocomplete: { defaultProps: { size: "small" } },
     MuiSwitch: { defaultProps: { size: "small" } },
@@ -286,7 +271,7 @@ export const darkTheme = createTheme({
     MuiTab: {
       defaultProps: { iconPosition: "start", disableRipple: true },
       styleOverrides: {
-        root: { minHeight: 36, padding: "6px 12px", transition: "none", textTransform: 'none' },
+        root: { minHeight: 24, padding: "6px 12px", transition: "none", textTransform: 'none' },
       },
     },
     MuiDialogTitle: { styleOverrides: { root: { padding: "12px 16px" } } },
@@ -313,8 +298,7 @@ export const darkTheme = createTheme({
     MuiMenuItem: {
       styleOverrides: {
         root: {
-          minHeight: 32,
-          fontSize: 12,
+          minHeight: 24,
           paddingTop: 4,
           paddingBottom: 4,
           transition: "none",
@@ -323,11 +307,11 @@ export const darkTheme = createTheme({
     },
     MuiListItem: {
       defaultProps: { dense: true },
-      styleOverrides: { root: { minHeight: 32, transition: "none" } },
+      styleOverrides: { root: { minHeight: 24, transition: "none" } },
     },
     MuiBreadcrumbs: { styleOverrides: { li: {} } },
     MuiPopover: {
-      styleOverrides: { paper: { borderRadius: 6, transition: "none" } },
+      styleOverrides: { paper: { borderRadius: 3, transition: "none" } },
     },
     MuiTableCell: {
       defaultProps: { size: "small" },
@@ -337,16 +321,11 @@ export const darkTheme = createTheme({
     MuiPagination: { defaultProps: { size: "small" } },
     MuiOutlinedInput: {
       styleOverrides: {
-        root: { minHeight: 32, transition: "none" },
+        root: { minHeight: 24, transition: "none" },
         input: {
           padding: "7px 8px",
-          height: 32,
-          lineHeight: "18px",
-          fontSize: 12,
           boxSizing: 'border-box',
           '&::placeholder': {
-            fontSize: 12,
-            lineHeight: '18px',
             opacity: 0.5,
           },
         },
@@ -355,16 +334,11 @@ export const darkTheme = createTheme({
     MuiInputBase: {
       defaultProps: { size: "small" },
       styleOverrides: {
-        root: { minHeight: 32, transition: "none" },
+        root: { minHeight: 24, transition: "none" },
         input: {
           padding: "7px 8px",
-          height: 32,
-          lineHeight: "18px",
-          fontSize: 12,
           boxSizing: 'border-box',
           '&::placeholder': {
-            fontSize: 12,
-            lineHeight: '18px',
             opacity: 0.5,
           },
         },
@@ -386,11 +360,9 @@ export const darkTheme = createTheme({
           style: ({ theme }) => ({
             backgroundColor: theme.palette.background.paper,
             padding: '4px 12px',
-            borderRadius: theme.shape.borderRadius * 3,
+            borderRadius: 3,
             boxShadow: 'none',
             border: `1px solid ${theme.palette.divider}`,
-            fontSize: theme.typography.fontSize,
-            lineHeight: 1.6,
           }),
         },
       ],

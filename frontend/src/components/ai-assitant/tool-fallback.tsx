@@ -74,7 +74,6 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
           backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.06)',
           border: 'none',
           outline: 'none',
-          fontSize: theme.typography.fontSize,
           fontWeight: 500,
           color: theme.palette.mode === 'light' ? theme.palette.primary.main : theme.palette.primary.light,
           '&:hover': { backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.10)' },

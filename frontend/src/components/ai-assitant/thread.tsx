@@ -377,7 +377,6 @@ const UserMessage: FC = () => {
           boxShadow: 'none',
           border: `1px solid ${theme.palette.divider}`,
           borderRadius: 2,
-          fontSize: theme.typography.fontSize,
         })}
       >
         <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
@@ -478,7 +477,6 @@ const AssistantMessage: FC = () => {
           boxShadow: 'none',
           border: `1px solid ${theme.palette.divider}`,
           borderRadius: 2,
-          fontSize: theme.typography.fontSize,
         })}
       >
         <MessagePrimitive.Unstable_PartsGroupedByParentId

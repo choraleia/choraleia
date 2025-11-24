@@ -12,8 +12,8 @@ import remarkGfm from "remark-gfm";
 import { type FC, memo, useState } from "react";
 
 import { TooltipIconButton } from "./tooltip-icon-button.tsx";
-import { cn } from "./lib/utils.ts";
 import { CheckIcon, CopyIcon } from "./assistant-icons.tsx";
+import { Box, Typography, Link as MuiLink, Divider } from "@mui/material";
 
 const MarkdownTextImpl = () => {
   return (
@@ -35,13 +35,35 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
   };
 
   return (
-    <div className="mt-4 flex items-center justify-between gap-4 rounded-t-lg bg-zinc-900 px-4 py-2 text-sm font-semibold text-white">
-      <span className="lowercase [&>span]:text-xs">{language}</span>
+    <Box
+      sx={(theme) => ({
+        mt: 1.5,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 1,
+        px: 2,
+        py: 1,
+        fontWeight: 600,
+        bgcolor:
+          theme.palette.mode === "dark"
+            ? theme.palette.grey[900]
+            : theme.palette.grey[800],
+        color: theme.palette.common.white,
+        borderTopLeftRadius: theme.shape.borderRadius,
+        borderTopRightRadius: theme.shape.borderRadius,
+        border: `1px solid ${theme.palette.divider}`,
+        borderBottom: "none",
+      })}
+    >
+      <Box component="span" sx={{ textTransform: "lowercase", fontSize: "0.75em" }}>
+        {language}
+      </Box>
       <TooltipIconButton tooltip="Copy" onClick={onCopy}>
         {!isCopied && <CopyIcon />}
         {isCopied && <CheckIcon />}
       </TooltipIconButton>
-    </div>
+    </Box>
   );
 };
 
@@ -66,151 +88,229 @@ const useCopyToClipboard = ({
 
 const defaultComponents = memoizeMarkdownComponents({
   h1: ({ className, ...props }) => (
-    <h1
-      className={cn(
-        "mb-8 scroll-m-20 text-4xl font-extrabold tracking-tight last:mb-0",
-        className,
-      )}
+    <Typography
+      component="h1"
+      variant="h4"
+      sx={(theme) => ({
+        mb: 2,
+        mt: 0,
+        fontWeight: 800,
+        scrollMarginTop: theme.spacing(5),
+        letterSpacing: "-0.5px",
+      })}
+      className={className}
       {...props}
     />
   ),
   h2: ({ className, ...props }) => (
-    <h2
-      className={cn(
-        "mb-4 mt-8 scroll-m-20 text-3xl font-semibold tracking-tight first:mt-0 last:mb-0",
-        className,
-      )}
+    <Typography
+      component="h2"
+      variant="h5"
+      sx={(theme) => ({
+        mt: 3,
+        mb: 1.5,
+        fontWeight: 600,
+        scrollMarginTop: theme.spacing(5),
+      })}
+      className={className}
       {...props}
     />
   ),
   h3: ({ className, ...props }) => (
-    <h3
-      className={cn(
-        "mb-4 mt-6 scroll-m-20 text-2xl font-semibold tracking-tight first:mt-0 last:mb-0",
-        className,
-      )}
+    <Typography
+      component="h3"
+      variant="h6"
+      sx={(theme) => ({ mt: 2.5, mb: 1, fontWeight: 600, scrollMarginTop: theme.spacing(5) })}
+      className={className}
       {...props}
     />
   ),
   h4: ({ className, ...props }) => (
-    <h4
-      className={cn(
-        "mb-4 mt-6 scroll-m-20 text-xl font-semibold tracking-tight first:mt-0 last:mb-0",
-        className,
-      )}
+    <Typography
+      component="h4"
+      variant="subtitle1"
+      sx={{ mt: 2, mb: 1, fontWeight: 600 }}
+      className={className}
       {...props}
     />
   ),
   h5: ({ className, ...props }) => (
-    <h5
-      className={cn(
-        "my-4 text-lg font-semibold first:mt-0 last:mb-0",
-        className,
-      )}
+    <Typography
+      component="h5"
+      variant="subtitle2"
+      sx={{ my: 1.5, fontWeight: 600 }}
+      className={className}
       {...props}
     />
   ),
   h6: ({ className, ...props }) => (
-    <h6
-      className={cn("my-4 font-semibold first:mt-0 last:mb-0", className)}
+    <Typography
+      component="h6"
+      variant="subtitle2"
+      sx={{ my: 1.5, fontWeight: 600, opacity: 0.85 }}
+      className={className}
       {...props}
     />
   ),
   p: ({ className, ...props }) => (
-    <p
-      className={cn("mb-5 mt-5 leading-7 first:mt-0 last:mb-0", className)}
+    <Typography
+      component="p"
+      variant="body2"
+      sx={{ mt: 1.5, mb: 1.5, lineHeight: 1.5 }}
+      className={className}
       {...props}
     />
   ),
   a: ({ className, ...props }) => (
-    <a
-      className={cn(
-        "text-primary font-medium underline underline-offset-4",
-        className,
-      )}
+    <MuiLink
+      underline="hover"
+      sx={{ fontWeight: 500 }}
+      className={className}
       {...props}
     />
   ),
   blockquote: ({ className, ...props }) => (
-    <blockquote
-      className={cn("border-l-2 pl-6 italic", className)}
+    <Box
+      component="blockquote"
+      sx={(theme) => ({
+        borderLeft: `4px solid ${theme.palette.divider}`,
+        pl: 2,
+        py: 0.5,
+        my: 2,
+        fontStyle: "italic",
+        color: theme.palette.text.secondary,
+        backgroundColor: theme.palette.action.hover,
+        borderRadius: theme.shape.borderRadius,
+      })}
+      className={className}
       {...props}
     />
   ),
   ul: ({ className, ...props }) => (
-    <ul
-      className={cn("my-5 ml-6 list-disc [&>li]:mt-2", className)}
+    <Box
+      component="ul"
+      sx={{ my: 2, pl: 3, listStyle: "disc", "& > li": { mt: 0.5 } }}
+      className={className}
       {...props}
     />
   ),
   ol: ({ className, ...props }) => (
-    <ol
-      className={cn("my-5 ml-6 list-decimal [&>li]:mt-2", className)}
+    <Box
+      component="ol"
+      sx={{ my: 2, pl: 3, listStyle: "decimal", "& > li": { mt: 0.5 } }}
+      className={className}
       {...props}
     />
   ),
   hr: ({ className, ...props }) => (
-    <hr className={cn("my-5 border-b", className)} {...props} />
+    <Divider sx={{ my: 2 }} className={className} {...props} />
   ),
   table: ({ className, ...props }) => (
-    <table
-      className={cn(
-        "my-5 w-full border-separate border-spacing-0 overflow-y-auto",
-        className,
-      )}
+    <Box
+      component="table"
+      sx={(theme) => ({
+        my: 2,
+        width: "100%",
+        borderCollapse: "separate",
+        borderSpacing: 0,
+        overflowX: "auto",
+      })}
+      className={className}
       {...props}
     />
   ),
-  th: ({ className, ...props }) => (
-    <th
-      className={cn(
-        "bg-muted px-4 py-2 text-left font-bold first:rounded-tl-lg last:rounded-tr-lg [&[align=center]]:text-center [&[align=right]]:text-right",
-        className,
-      )}
-      {...props}
-    />
-  ),
-  td: ({ className, ...props }) => (
-    <td
-      className={cn(
-        "border-b border-l px-4 py-2 text-left last:border-r [&[align=center]]:text-center [&[align=right]]:text-right",
-        className,
-      )}
-      {...props}
-    />
-  ),
+  th: ({ className, ...props }) => {
+    const { align, ...rest } = props as any;
+    return (
+      <Box
+        component="th"
+        sx={(theme) => ({
+          bgcolor: theme.palette.action.hover,
+          px: 2,
+          py: 1,
+          textAlign: align || "left",
+          fontWeight: 700,
+          border: `1px solid ${theme.palette.divider}`,
+          '&:first-of-type': { borderTopLeftRadius: theme.shape.borderRadius },
+          '&:last-of-type': { borderTopRightRadius: theme.shape.borderRadius },
+        })}
+        className={className}
+        {...rest}
+      />
+    );
+  },
+  td: ({ className, ...props }) => {
+    const { align, ...rest } = props as any;
+    return (
+      <Box
+        component="td"
+        sx={(theme) => ({
+          px: 2,
+          py: 1,
+            textAlign: align || "left",
+          border: `1px solid ${theme.palette.divider}`,
+        })}
+        className={className}
+        {...rest}
+      />
+    );
+  },
   tr: ({ className, ...props }) => (
-    <tr
-      className={cn(
-        "m-0 border-b p-0 first:border-t [&:last-child>td:first-child]:rounded-bl-lg [&:last-child>td:last-child]:rounded-br-lg",
-        className,
-      )}
+    <Box
+      component="tr"
+      sx={{ m: 0, p: 0, '&:last-child td': { borderBottom: 'none' } }}
+      className={className}
       {...props}
     />
   ),
   sup: ({ className, ...props }) => (
-    <sup
-      className={cn("[&>a]:text-xs [&>a]:no-underline", className)}
+    <Box
+      component="sup"
+      sx={{ '& a': { fontSize: '0.65em', textDecoration: 'none' } }}
+      className={className}
       {...props}
     />
   ),
   pre: ({ className, ...props }) => (
-    <pre
-      className={cn(
-        "overflow-x-auto !rounded-t-none rounded-b-lg bg-black p-4 text-white",
-        className,
-      )}
+    <Box
+      component="pre"
+      sx={(theme) => ({
+        overflowX: "auto",
+        m: 0,
+        p: 2,
+        fontFamily: 'monospace',
+        color: theme.palette.text.primary,
+        backgroundColor:
+          theme.palette.mode === 'dark'
+            ? theme.palette.grey[900]
+            : theme.palette.grey[100],
+        border: `1px solid ${theme.palette.divider}`,
+        borderBottomLeftRadius: theme.shape.borderRadius,
+        borderBottomRightRadius: theme.shape.borderRadius,
+      })}
+      className={className}
       {...props}
     />
   ),
   code: function Code({ className, ...props }) {
     const isCodeBlock = useIsMarkdownCodeBlock();
+    if (isCodeBlock) {
+      return <code className={className} {...props} />;
+    }
     return (
-      <code
-        className={cn(
-          !isCodeBlock && "bg-muted rounded border font-semibold",
-          className,
-        )}
+      <Box
+        component="code"
+        sx={(theme) => ({
+          fontFamily: 'monospace',
+          px: 0.75,
+          py: 0.25,
+          borderRadius: theme.shape.borderRadius,
+          backgroundColor: theme.palette.action.hover,
+          border: `1px solid ${theme.palette.divider}`,
+          fontSize: '0.85em',
+          fontWeight: 600,
+        })}
+        className={className}
         {...props}
       />
     );

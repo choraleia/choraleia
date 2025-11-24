@@ -76,7 +76,6 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
           backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.06)',
           border: "none",
           outline: "none",
-          fontSize: theme.typography.fontSize,
           fontWeight: 500,
           color: theme.palette.mode === "light" ? theme.palette.primary.main : theme.palette.primary.light,
           '&:hover': {
@@ -110,10 +109,9 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
               variant="body2"
               sx={{
                 whiteSpace: 'pre-wrap',
-                lineHeight: 1.6,
+                lineHeight: 1.2,
                 color: theme.palette.text.secondary,
                 fontFamily: theme.typography.fontFamily,
-                fontSize: theme.typography.body2.fontSize,
               }}
             >
               {displayText}

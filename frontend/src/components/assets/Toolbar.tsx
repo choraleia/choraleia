@@ -103,73 +103,6 @@ const Toolbar: React.FC<RightToolbarProps> = ({
     );
   };
 
-  const getDrawerContent = () => {
-    switch (drawerState.type) {
-      case "file-transfer":
-        return (
-          <Box p={2}>
-            <Typography variant="h6" fontSize={16}>
-              File Transfer
-            </Typography>
-            <Box mt={2} fontSize={13} color="text.secondary">
-              File transfer feature under development...
-            </Box>
-          </Box>
-        );
-      case "monitor":
-        return (
-          <Box p={2}>
-            <Typography variant="h6" fontSize={16}>
-              Host Monitor
-            </Typography>
-            <Box mt={2} fontSize={13} color="text.secondary">
-              Host monitor panel under development...
-            </Box>
-          </Box>
-        );
-      case "ai":
-        return (
-          <Box height="100%" display="flex" flexDirection="column">
-            <AiAssistant
-              tabs={tabs}
-              activeTabKey={activeTabKey}
-              visible={drawerState.open && drawerState.type === "ai"}
-            />
-          </Box>
-        );
-      case "quickcmd":
-        return (
-          <Box height="100%" display="flex" flexDirection="column">
-            <QuickCommandsPanel activeTabKey={activeTabKey} />
-          </Box>
-        );
-      case "tools":
-        return (
-          <Box p={2}>
-            <Typography variant="h6" fontSize={16}>
-              System Toolbox
-            </Typography>
-            <Box mt={2} fontSize={13} color="text.secondary">
-              Toolbox feature under development...
-            </Box>
-          </Box>
-        );
-      case "settings":
-        return (
-          <Box p={2}>
-            <Typography variant="h6" fontSize={16}>
-              Application Settings
-            </Typography>
-            <Box mt={2} fontSize={13} color="text.secondary">
-              Settings page under development...
-            </Box>
-          </Box>
-        );
-      default:
-        return null;
-    }
-  };
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Quick Commands toggle
@@ -259,90 +192,119 @@ const Toolbar: React.FC<RightToolbarProps> = ({
         })}
       </Box>
 
-      {/* Custom fixed panel replacing Drawer so background remains interactive */}
-      {drawerState.open && (
+      {/* Persistent panel: keep mounted to retain internal state (AI Assistant) */}
+      <Box
+        sx={(theme) => ({
+          position: "fixed",
+          right: 40, // keep space for the dock itself
+          top: 0,
+          height: "calc(100% - 24px)",
+          width: drawerState.width,
+          display: drawerState.open ? "flex" : "none",
+          flexDirection: "column",
+          borderLeft: `1px solid ${theme.palette.divider}`,
+          boxShadow:
+            theme.palette.mode === "light"
+              ? "0 0 8px rgba(0,0,0,0.15)"
+              : "0 0 8px rgba(0,0,0,0.5)",
+          overflow: "hidden",
+          backgroundColor: theme.palette.background.paper,
+          zIndex: 1299,
+        })}
+      >
+        {/* Resize handle */}
         <Box
-          sx={(theme) => ({
-            position: "fixed",
-            right: 40, // align with dock width
+          sx={{
+            position: "absolute",
+            left: -4,
             top: 0,
-            height: "calc(100% - 24px)",
-            width: drawerState.width,
-            display: "flex",
-            flexDirection: "column",
-            borderLeft: `1px solid ${theme.palette.divider}`,
-            boxShadow:
-              theme.palette.mode === "light"
-                ? "0 0 8px rgba(0,0,0,0.15)"
-                : "0 0 8px rgba(0,0,0,0.5)",
-            overflow: "hidden",
-            backgroundColor: theme.palette.background.paper,
-            zIndex: 1299, // just under dock so dock button remains on top
+            width: 8,
+            height: "100%",
+            cursor: "ew-resize",
+            bgcolor: isResizing ? "rgba(24,144,255,0.3)" : "transparent",
+            transition: isResizing ? "none" : "background-color 0.2s ease",
+          }}
+          onMouseDown={(e) => {
+            setIsResizing(true);
+            e.preventDefault();
+            const startX = e.clientX;
+            const startWidth = drawerState.width;
+            document.body.style.cursor = "ew-resize";
+            document.body.style.userSelect = "none";
+            // Use fixed left main menu width provided by user instead of querying DOM.
+            const LEFT_MENU_WIDTH = 40; // left main menu width
+            const dockWidth = 40; // right dock width (this component's button column)
+            const minWidth = 300;
+            const handleMove = (me: MouseEvent) => {
+              me.preventDefault();
+              const delta = startX - me.clientX; // dragging left increases width
+              const desiredWidth = startWidth + delta;
+              // Maximum width so drawer's left edge never crosses left menu right edge.
+              // Drawer left edge = window.innerWidth - dockWidth - currentWidth
+              const computedMax = window.innerWidth - dockWidth - LEFT_MENU_WIDTH;
+              const maxWidth = Math.max(minWidth, computedMax);
+              const newWidth = Math.min(maxWidth, Math.max(minWidth, desiredWidth));
+              requestAnimationFrame(() =>
+                setDrawerState((prev) => ({ ...prev, width: newWidth }))
+              );
+            };
+            const handleUp = () => {
+              setIsResizing(false);
+              document.removeEventListener("mousemove", handleMove);
+              document.removeEventListener("mouseup", handleUp);
+              document.body.style.cursor = "";
+              document.body.style.userSelect = "";
+            };
+            document.addEventListener("mousemove", handleMove, { passive: false });
+            document.addEventListener("mouseup", handleUp);
+          }}
+        />
+        <Box
+          px={1.5}
+          py={1}
+          sx={(theme) => ({
+            borderBottom: `1px solid ${theme.palette.divider}`,
+            flexShrink: 0,
+            position: "relative",
+            height: 40,
           })}
+          display="flex"
+          alignItems="center"
+          justifyContent="space-between"
         >
-          {/* Resize handle */}
+          {getDrawerTitle()}
+          <IconButton onClick={handleCloseDrawer} sx={{ ml: 1 }}>
+            ✕
+          </IconButton>
+        </Box>
+        <Box flex={1} overflow="auto" display="flex" flexDirection="column">
+          {/* Tool content sections (kept mounted) */}
           <Box
             sx={{
-              position: "absolute",
-              left: -4,
-              top: 0,
-              width: 8,
-              height: "100%",
-              cursor: "ew-resize",
-              bgcolor: isResizing ? "rgba(24,144,255,0.3)" : "transparent",
-              transition: isResizing ? "none" : "background-color 0.2s ease",
+              flex: 1,
+              display: drawerState.type === "ai" ? "flex" : "none",
+              flexDirection: "column",
+              minHeight: 0,
             }}
-            onMouseDown={(e) => {
-              setIsResizing(true);
-              e.preventDefault();
-              const startX = e.clientX;
-              const startWidth = drawerState.width;
-              document.body.style.cursor = "ew-resize";
-              document.body.style.userSelect = "none";
-              const handleMove = (me: MouseEvent) => {
-                me.preventDefault();
-                const delta = startX - me.clientX;
-                const newWidth = Math.max(300, Math.min(800, startWidth + delta));
-                requestAnimationFrame(() =>
-                  setDrawerState((prev) => ({ ...prev, width: newWidth })),
-                );
-              };
-              const handleUp = () => {
-                setIsResizing(false);
-                document.removeEventListener("mousemove", handleMove);
-                document.removeEventListener("mouseup", handleUp);
-                document.body.style.cursor = "";
-                document.body.style.userSelect = "";
-              };
-              document.addEventListener("mousemove", handleMove, {
-                passive: false,
-              });
-              document.addEventListener("mouseup", handleUp);
-            }}
-          />
-          <Box
-            px={1.5}
-            py={1}
-            sx={(theme) => ({
-              borderBottom: `1px solid ${theme.palette.divider}`,
-              flexShrink: 0,
-              position:'relative',
-                height: 40,
-            })}
-            display="flex"
-            alignItems="center"
-            justifyContent="space-between"
           >
-            {getDrawerTitle()}
-            <IconButton onClick={handleCloseDrawer} sx={{ ml: 1 }}>
-              ✕
-            </IconButton>
+            <AiAssistant
+              tabs={tabs}
+              activeTabKey={activeTabKey}
+              visible={drawerState.open && drawerState.type === "ai"}
+            />
           </Box>
-          <Box flex={1} overflow="auto">
-            {getDrawerContent()}
+          <Box
+            sx={{
+              flex: 1,
+              display: drawerState.type === "quickcmd" ? "flex" : "none",
+              flexDirection: "column",
+              minHeight: 0,
+            }}
+          >
+            <QuickCommandsPanel activeTabKey={activeTabKey} />
           </Box>
         </Box>
-      )}
+      </Box>
     </Box>
   );
 };

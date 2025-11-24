@@ -59,6 +59,14 @@ export interface ModelConfig {
   extra: Record<string, any>;
 }
 
+// Extended thread data including timestamps and asset session id
+interface ExtendedThreadData extends ExternalStoreThreadData<"regular"> {
+  createdAt: Date;
+  updatedAt: Date;
+  assetId?: string;
+  assetSessionId?: string;
+}
+
 export default function AiAssistant({
   tabs,
   activeTabKey,
@@ -72,9 +80,7 @@ export default function AiAssistant({
   const [selectedTerminals, setSelectedTerminals] = useState<string[]>([]);
 
   // Conversations state
-  const [threads, setThreads] = useState<ExternalStoreThreadData<"regular">[]>(
-    [],
-  );
+  const [threads, setThreads] = useState<ExtendedThreadData[]>([]);
   // Conversation state (only current conversation id)
   const [currentConversationId, setCurrentConversationId] =
     useState<string>("");
@@ -148,6 +154,7 @@ export default function AiAssistant({
               body: JSON.stringify({
                 title: "New Conversation",
                 asset_id: assetId,
+                asset_session_id: currentTerminal, // use current tab key
               }),
             },
           );
@@ -467,6 +474,7 @@ export default function AiAssistant({
           createdAt: new Date(conv.created_at),
           updatedAt: new Date(conv.updated_at),
           assetId: conv.asset_id,
+          assetSessionId: conv.asset_session_id, // preserve asset session id for matching
         }));
         setThreads(threadListData);
       }
@@ -529,6 +537,7 @@ export default function AiAssistant({
           body: JSON.stringify({
             title: "New Conversation",
             asset_id: assetId,
+            asset_session_id: currentTerminal, // use tab key as session id
           }),
         },
       );
@@ -681,6 +690,32 @@ export default function AiAssistant({
     fetchModels();
   }, [visible]);
 
+  // Auto-select latest conversation matching current tab session id when tab changes or threads refresh
+  useEffect(() => {
+    if (!currentTerminal) return;
+    // Find conversations with assetSessionId === currentTerminal
+    const matched = (threads as ExtendedThreadData[])
+      .filter((t) => t.assetSessionId === currentTerminal)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    if (matched.length > 0) {
+      const latestId = matched[0].id;
+      if (latestId !== currentConversationId) {
+        setCurrentConversationId(latestId);
+        // Load messages for latest conversation
+        (async () => {
+          const msgs = await loadMessages(latestId);
+            setMessages(msgs);
+        })();
+      }
+    } else {
+      // If no matched conversation, clear current conversation context
+      if (currentConversationId) {
+        setCurrentConversationId("");
+        setMessages([]);
+      }
+    }
+  }, [currentTerminal, threads, loadMessages]);
+
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <div className="h-full flex flex-col">
@@ -706,5 +741,3 @@ export default function AiAssistant({
     </AssistantRuntimeProvider>
   );
 }
-
-

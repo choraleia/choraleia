@@ -211,8 +211,9 @@ func (s *Server) getConversations(chatService *service.ChatStoreService) gin.Han
 func (s *Server) createConversation(chatService *service.ChatStoreService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req struct {
-			Title   string `json:"title" binding:"required"`
-			AssetID string `json:"asset_id" binding:"required"`
+			Title          string `json:"title" binding:"required"`
+			AssetID        string `json:"asset_id" binding:"required"`
+			AssetSessionID string `json:"asset_session_id" binding:"required"`
 		}
 
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -220,7 +221,7 @@ func (s *Server) createConversation(chatService *service.ChatStoreService) gin.H
 			return
 		}
 
-		conversation, err := chatService.CreateConversation(req.Title, req.AssetID)
+		conversation, err := chatService.CreateConversation(req.Title, req.AssetID, req.AssetSessionID)
 		if err != nil {
 			s.logger.Error("Failed to create conversation", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create conversation"})

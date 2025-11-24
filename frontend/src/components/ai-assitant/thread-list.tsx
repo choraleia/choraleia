@@ -1,21 +1,27 @@
-import type { FC } from "react";
+import React, { FC, useState } from "react";
 import {
   ThreadListItemPrimitive,
   ThreadListPrimitive,
   useAssistantState,
 } from "@assistant-ui/react";
 import { AddIcon, DeleteIcon } from "./assistant-icons";
-import { Button } from "./ui/button";
-import { TooltipIconButton } from "./tooltip-icon-button";
-import { Skeleton } from "./ui/skeleton";
-import React, { useState, useRef, useEffect } from "react";
+import {
+  Box,
+  Typography,
+  IconButton,
+  Menu,
+  List,
+  ListItem,
+  ListItemButton,
+  Skeleton as MUISkeleton,
+} from "@mui/material";
 
 export const ThreadList: FC = () => {
   // Get current conversation title
   const currentThreadTitle = useAssistantState(({ threads }) => {
     const mainId = threads.mainThreadId;
     const thread = threads.threadItems?.find(
-      (item) => item.id === mainId && item.id != "DEFAULT_THREAD_ID",
+      (item) => item.id === mainId && item.id !== "DEFAULT_THREAD_ID",
     );
     return thread ? thread.title : "New Conversation";
   });
@@ -23,165 +29,186 @@ export const ThreadList: FC = () => {
   const threadItems = useAssistantState(
     ({ threads }) => threads.threadItems || [],
   );
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setShowDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const menuOpen = Boolean(menuAnchor);
 
-  // Close dropdown after selecting history item
-  const handleSelectThread = () => setShowDropdown(false);
+  const handleOpenMenu = (e: React.MouseEvent<HTMLElement>) =>
+    setMenuAnchor(e.currentTarget);
+  const handleCloseMenu = () => setMenuAnchor(null);
+  const handleSelectThread = () => handleCloseMenu();
 
   return (
-    <div className="flex-shrink-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-2 py-1">
-      <div className="flex items-center justify-between">
-        {/* Left: current conversation title */}
-        <div className="flex-1 min-w-0">
-          <h1
-            className="font-medium text-gray-900 dark:text-gray-100 truncate"
-            style={{ userSelect: "none", fontSize: "13px", lineHeight: "1.2" }}
-          >
-            {currentThreadTitle}
-          </h1>
-        </div>
-        {/* Right button area */}
-        <div className="flex items-center gap-1 ml-2">
-          {/* Conversation history button */}
-          <div className="relative" ref={dropdownRef}>
-            <button
-              onClick={() => setShowDropdown(!showDropdown)}
-              className="p-1.5 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-              title="Conversation History"
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-            </button>
-            {/* Dropdown list */}
-            {showDropdown && (
-              <div className="absolute right-0 mt-1 w-72 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 max-h-80 overflow-y-auto">
-                <div className="py-1">
-                  {isLoading ? (
-                    <ThreadListSkeleton />
-                  ) : threadItems.length === 0 ? (
-                    <div className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-                      No conversation history
-                    </div>
-                  ) : (
-                    <div className="py-1 pr-3">
-                      {/* Reserve right padding for scrollbar */}
-                      <ThreadListPrimitive.Items
-                        components={{
-                          ThreadListItem: (props) => (
-                            <ThreadListItem
-                              {...props}
-                              onSelect={handleSelectThread}
-                            />
-                          ),
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-          {/* New conversation button */}
-          <ThreadListPrimitive.New asChild>
-            <Button
-              className="flex items-center gap-1 rounded-lg px-2.5 py-2 text-start hover:bg-muted data-active:bg-muted"
-              variant="ghost"
-              title="New Conversation"
-            >
-              <AddIcon />
-            </Button>
-          </ThreadListPrimitive.New>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const ThreadListSkeleton: FC = () => {
-  return (
-    <>
-      {Array.from({ length: 5 }, (_, i) => (
-        <div
-          key={i}
-          role="status"
-          aria-label="Loading threads"
-          aria-live="polite"
-          className="aui-thread-list-skeleton-wrapper flex items-center gap-2 rounded-md px-3 py-2"
+    <Box
+      component="header"
+      sx={{
+        px: 1.5,
+        py: 1,
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexShrink: 0,
+      }}
+    >
+      <Typography
+        variant="subtitle2"
+        noWrap
+        sx={{ userSelect: "none", fontWeight: 500 }}
+      >
+        {currentThreadTitle}
+      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        {/* Conversation history button */}
+        <IconButton
+          size="small"
+          onClick={handleOpenMenu}
+          aria-label="Conversation History"
+          title="Conversation History"
         >
-          <Skeleton className="aui-thread-list-skeleton h-[22px] flex-grow" />
-        </div>
-      ))}
-    </>
+          {/* Simple clock/history icon using current DeleteIcon path fallback if needed */}
+          <svg
+            width={18}
+            height={18}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <polyline points="12 7 12 12 16 14" />
+          </svg>
+        </IconButton>
+        {/* New conversation button */}
+        <ThreadListPrimitive.New asChild>
+          <IconButton
+            size="small"
+            aria-label="New Conversation"
+            title="New Conversation"
+          >
+            <AddIcon />
+          </IconButton>
+        </ThreadListPrimitive.New>
+      </Box>
+      {/* Dropdown menu for conversation history */}
+      <Menu
+        anchorEl={menuAnchor}
+        open={menuOpen}
+        onClose={handleCloseMenu}
+        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        transformOrigin={{ vertical: "top", horizontal: "right" }}
+        slotProps={{ paper: { sx: { width: 300, maxHeight: 320, overflowY: 'auto', p: 0 } } }}
+      >
+        <Box sx={{ width: '100%' }}>
+          {isLoading ? (
+            <Box sx={{ p: 1 }}>
+              <ThreadListSkeleton />
+            </Box>
+          ) : threadItems.length === 0 ? (
+            <Box sx={{ px: 2, py: 1.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                No conversation history
+              </Typography>
+            </Box>
+          ) : (
+            <List dense disablePadding sx={{ py: 0 }}>
+              <ThreadListPrimitive.Items
+                components={{
+                  ThreadListItem: (props) => (
+                    <ThreadListItem {...props} onSelect={handleSelectThread} />
+                  ),
+                }}
+              />
+            </List>
+          )}
+        </Box>
+      </Menu>
+    </Box>
   );
 };
 
-const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({ id, onSelect }) => {
+const ThreadListSkeleton: FC = () => (
+  <Box>
+    {Array.from({ length: 5 }).map((_, i) => (
+      <Box
+        key={i}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1,
+          px: 1.5,
+          py: 0.75,
+        }}
+      >
+        <MUISkeleton variant="text" width="100%" height={22} />
+      </Box>
+    ))}
+  </Box>
+);
+
+const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({
+  id,
+  onSelect,
+}) => {
   const mainThreadId = useAssistantState(({ threads }) => threads.mainThreadId);
   const isActive = id === mainThreadId;
   return (
-    <ThreadListItemPrimitive.Root
-      className={`aui-thread-list-item flex items-center gap-2 rounded-lg transition-colors cursor-pointer relative ${isActive ? "text-gray-800 dark:text-gray-100 font-medium" : "text-gray-300 dark:text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"}`}
-    >
-      <ThreadListItemPrimitive.Trigger
-        className="aui-thread-list-item-trigger flex-grow px-3 py-2 text-start pr-8"
-        onClick={onSelect}
-      >
-        <ThreadListItemTitle isActive={isActive} />
-      </ThreadListItemPrimitive.Trigger>
-      <ThreadListItemDelete />
+    <ThreadListItemPrimitive.Root>
+      <ListItem disablePadding>
+        <ListItemButton
+          selected={isActive}
+          onClick={onSelect}
+          sx={{
+            py: 0.75,
+            px: 1.5,
+            '&.Mui-selected': { bgcolor: 'action.selected', fontWeight: 500 },
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-start', // ensure left alignment
+            gap: 1,
+            textAlign: 'left', // left-align any inline text
+            '& .thread-delete-btn': {
+              opacity: 0,
+              pointerEvents: 'none',
+              transition: 'opacity 0.15s',
+            },
+            '&:hover .thread-delete-btn': {
+              opacity: 1,
+              pointerEvents: 'auto',
+            },
+          }}
+        >
+          <ThreadListItemPrimitive.Trigger style={{ width: '100%', display: 'flex', flexGrow: 1 }}>
+            <ThreadListItemTitle />
+          </ThreadListItemPrimitive.Trigger>
+          <ThreadListItemDelete />
+        </ListItemButton>
+      </ListItem>
     </ThreadListItemPrimitive.Root>
   );
 };
 
-const ThreadListItemTitle: FC<{ isActive?: boolean }> = ({ isActive }) => {
-  return (
-    <span
-      className="aui-thread-list-item-title truncate select-none"
-      style={{ fontSize: "13px", lineHeight: "1.2" }}
-    >
-      <ThreadListItemPrimitive.Title fallback="New Conversation" />
-    </span>
-  );
-};
+const ThreadListItemTitle: FC = () => (
+  <Typography variant="body2" noWrap sx={{ fontSize: 13, width: '100%', textAlign: 'left' }}>
+    <ThreadListItemPrimitive.Title fallback="New Conversation" />
+  </Typography>
+);
 
-const ThreadListItemDelete: FC = () => {
-  return (
-    <ThreadListItemPrimitive.Delete asChild>
-      <TooltipIconButton
-        className="aui-thread-list-item-delete absolute right-2 top-1/2 -translate-y-1/2 size-4 p-0 text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 transition-all z-10"
-        variant="ghost"
-        tooltip="Delete Conversation"
-      >
-        <DeleteIcon />
-      </TooltipIconButton>
-    </ThreadListItemPrimitive.Delete>
-  );
-};
+// Adjust delete button styling for MUI
+const ThreadListItemDelete: FC = () => (
+  <ThreadListItemPrimitive.Delete asChild>
+    <IconButton
+      size="small"
+      aria-label="Delete Conversation"
+      title="Delete Conversation"
+      className="thread-delete-btn"
+      onClick={(e) => e.stopPropagation()}
+      sx={{ color: 'error.main' }}
+    >
+      <DeleteIcon />
+    </IconButton>
+  </ThreadListItemPrimitive.Delete>
+);

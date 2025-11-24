@@ -18,11 +18,12 @@ import (
 
 // Conversation table-top level entity
 type Conversation struct {
-	ID        string    `json:"id" gorm:"primaryKey"`
-	Title     string    `json:"title" gorm:"not null"`
-	AssetID   string    `json:"asset_id" gorm:"index"` // related asset ID
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string    `json:"id" gorm:"primaryKey"`
+	Title          string    `json:"title" gorm:"not null"`
+	AssetID        string    `json:"asset_id" gorm:"index"`         // related asset ID
+	AssetSessionID string    `json:"asset_session_id" gorm:"index"` // session ID per terminal tab
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (Conversation) TableName() string {
@@ -119,11 +120,12 @@ func NewChatStore() (*ChatStoreService, error) {
 }
 
 // CreateConversation create new conversation
-func (cs *ChatStoreService) CreateConversation(title, assetID string) (*Conversation, error) {
+func (cs *ChatStoreService) CreateConversation(title, assetID, assetSessionID string) (*Conversation, error) {
 	conversation := &Conversation{
-		ID:      uuid.New().String(),
-		Title:   title,
-		AssetID: assetID,
+		ID:             uuid.New().String(),
+		Title:          title,
+		AssetID:        assetID,
+		AssetSessionID: assetSessionID,
 	}
 
 	err := cs.db.Create(conversation).Error
