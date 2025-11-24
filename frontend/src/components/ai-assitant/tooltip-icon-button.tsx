@@ -1,36 +1,49 @@
 "use client";
 
-import { ComponentPropsWithoutRef, forwardRef } from "react";
-import { Slottable } from "@radix-ui/react-slot";
+import { forwardRef } from "react";
+import Tooltip from "@mui/material/Tooltip";
+import IconButton, { IconButtonProps } from "@mui/material/IconButton";
 
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip.tsx";
-import { Button } from "./ui/button.tsx";
 import { cn } from "./lib/utils.ts";
 
-export type TooltipIconButtonProps = ComponentPropsWithoutRef<typeof Button> & {
+export type TooltipIconButtonProps = Omit<IconButtonProps, "color"> & {
   tooltip: string;
   side?: "top" | "bottom" | "left" | "right";
+  // legacy variant prop from previous Button implementation; ignored but accepted to avoid TS errors
+  variant?: string;
 };
 
 export const TooltipIconButton = forwardRef<
   HTMLButtonElement,
   TooltipIconButtonProps
->(({ children, tooltip, side = "bottom", className, ...rest }, ref) => {
+>(({ children, tooltip, side = "bottom", className, variant: _variant, ...rest }, ref) => {
+  const placementMap: Record<string, any> = {
+    top: "top",
+    bottom: "bottom",
+    left: "left",
+    right: "right",
+  };
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          {...rest}
-          className={cn("size-6 p-1", className)}
-          ref={ref}
-        >
-          <Slottable>{children}</Slottable>
-          <span className="sr-only">{tooltip}</span>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side={side}>{tooltip}</TooltipContent>
+    <Tooltip
+      title={tooltip}
+      placement={placementMap[side] || "bottom"}
+      enterDelay={0}
+      leaveDelay={0}
+    >
+      <IconButton
+        aria-label={tooltip}
+        ref={ref}
+        {...rest}
+        className={cn("p-0", className)}
+        sx={{
+          width: 24,
+          height: 24,
+          padding: "4px",
+          "& .MuiSvgIcon-root": { fontSize: 16 },
+        }}
+      >
+        {children}
+      </IconButton>
     </Tooltip>
   );
 });

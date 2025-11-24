@@ -1,13 +1,13 @@
+import * as React from 'react';
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
   ComposerPrimitive,
-  ErrorPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
 } from "@assistant-ui/react";
 import type { FC, PropsWithChildren } from "react";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState } from "react";
 import {
   ArrowDownIcon,
   CheckIcon,
@@ -19,13 +19,25 @@ import {
   PencilIcon,
   RefreshCwIcon,
   SendHorizontalIcon,
-} from "lucide-react";
+  AddIcon,
+  ComputerIcon,
+  CloseIcon,
+} from "./assistant-icons.tsx";
 import { cn } from "./lib/utils.ts";
+import Paper from '@mui/material/Paper';
+import Select from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
+import FormControl from '@mui/material/FormControl';
+import Chip from '@mui/material/Chip';
+import Menu from '@mui/material/Menu';
+import Stack from '@mui/material/Stack';
+import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import { Button as ShadButton } from "./ui/button.tsx"; // custom button for ghost variant
 
-import { Button } from "./ui/button.tsx";
+// import { Button } from "./ui/button.tsx";
 import { TooltipIconButton } from "./tooltip-icon-button.tsx";
 import { ToolFallback } from "./tool-fallback.tsx";
-import { TextMessagePartAdapter } from "./text-adapter.tsx";
 import { ReasoningContent } from "./reasoning-content.tsx";
 import { MarkdownText } from "./markdown-text.tsx";
 import type { ModelConfig } from "./ai-assistant.tsx";
@@ -51,8 +63,6 @@ interface ThreadProps {
   selectedTerminals: string[];
   currentTerminal: string;
   onTerminalSelectionChange: (selectedTerminals: string[]) => void;
-  includeCurrentTerminal: boolean;
-  onIncludeCurrentTerminalChange: (include: boolean) => void;
 }
 
 export const Thread: FC<ThreadProps> = ({
@@ -66,8 +76,6 @@ export const Thread: FC<ThreadProps> = ({
   selectedTerminals,
   currentTerminal,
   onTerminalSelectionChange,
-  includeCurrentTerminal,
-  onIncludeCurrentTerminalChange,
 }) => {
   // Compute disabled state: loading or conversation not ready
   const isDisabled = isLoading;
@@ -134,8 +142,6 @@ export const Thread: FC<ThreadProps> = ({
               selectedTerminals={selectedTerminals}
               currentTerminal={currentTerminal}
               onSelectionChange={onTerminalSelectionChange}
-              includeCurrentTerminal={includeCurrentTerminal}
-              onIncludeCurrentTerminalChange={onIncludeCurrentTerminalChange}
               disabled={isDisabled}
             />
           )}
@@ -177,61 +183,81 @@ const AgentModeSelector: FC<{
   isLoading,
   disabled,
 }) => {
+  const modelMenuItems: React.ReactElement[] = [];
+  Object.entries(groupedModelOptions).forEach(([provider, models]) => {
+    modelMenuItems.push(
+      <MenuItem key={`provider-${provider}`} disabled divider>
+        {provider}
+      </MenuItem>,
+    );
+    models.forEach((m) => {
+      modelMenuItems.push(
+        <MenuItem key={m.name} value={m.name}>
+          {m.name}
+        </MenuItem>,
+      );
+    });
+  });
   return (
-    <div className="px-3 pb-2 w-full">
-      <div className="flex items-center justify-between w-full">
-        {/* Left side: agent mode & model selection */}
-        <div className="flex items-center gap-4">
-          {/* Agent mode selection */}
-          <div className="flex items-center gap-2">
-            <select
+    <Box px={2} py={1} width="100%">
+      <Stack direction="row" alignItems="center" justifyContent="space-between" width="100%">
+        <Stack direction="row" spacing={2} alignItems="center">
+          <FormControl size="small" disabled={isLoading || disabled} sx={{ width: 'auto', minWidth: 0, flexShrink: 0 }}>
+            {/*<InputLabel id="agent-mode-label">Mode</InputLabel>*/}
+            <Select
+              labelId="agent-mode-label"
               id="agent-mode"
               value={agentMode}
+              placeholder="Mode"
               onChange={(e) => setAgentMode(e.target.value as AgentMode)}
-              className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-transparent text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading || disabled}
+              size="small"
+              autoWidth
+              sx={{ width: 'auto' }}
+              MenuProps={{
+                MenuListProps: { dense: true },
+                sx: {
+                  '& .MuiMenuItem-root': {
+                    minHeight: 16,
+                  },
+                },
+              }}
             >
-              <option value="tools">Tool</option>
-              <option value="react">Agent</option>
-            </select>
-          </div>
-
-          {/* Model selection grouped by provider */}
-          <div className="flex items-center gap-2">
-            <select
+              <MenuItem value="tools">Tool</MenuItem>
+              <MenuItem value="react">ReAct</MenuItem>
+            </Select>
+          </FormControl>
+          <FormControl size="small" disabled={isLoading || disabled} sx={{ width: 'auto', minWidth: 0, flexShrink: 0 }}>
+            {/*<InputLabel id="model-select-label">Model</InputLabel>*/}
+            <Select
+              labelId="model-select-label"
               id="model-select"
               value={selectedModel}
+              placeholder="Model"
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-transparent text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 focus:border-transparent"
-              disabled={isLoading || disabled}
+              size="small"
+              autoWidth
+              sx={{ width: 'auto' }}
+              MenuProps={{
+                MenuListProps: { dense: true },
+                sx: {
+                  '& .MuiMenuItem-root': {
+                    minHeight: 16,
+                  },
+                },
+              }}
             >
-              {Object.entries(groupedModelOptions).length === 0 ? (
-                <option value="" disabled>
-                  No models available
-                </option>
-              ) : (
-                Object.entries(groupedModelOptions).map(
-                  ([provider, models]) => (
-                    <optgroup key={provider} label={provider}>
-                      {models.map((model) => (
-                        <option key={model.name} value={model.name}>
-                          {model.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ),
-                )
+              {modelMenuItems.length === 0 && (
+                <MenuItem value="" disabled>
+                  No models
+                </MenuItem>
               )}
-            </select>
-          </div>
-        </div>
-
-        {/* Right side: send button */}
-        <div className="flex items-center">
-          <ComposerAction disabled={disabled} />
-        </div>
-      </div>
-    </div>
+              {modelMenuItems}
+            </Select>
+          </FormControl>
+        </Stack>
+        <ComposerAction disabled={disabled} />
+      </Stack>
+    </Box>
   );
 };
 
@@ -291,7 +317,7 @@ const ThreadScrollToBottom: FC = () => {
 
 const Composer: FC<{ disabled?: boolean }> = ({ disabled }) => {
   return (
-    <div className="px-3">
+    <div className="px-3 pt-2">
       <ComposerPrimitive.Root className="focus-within:border-ring/20 flex w-full flex-wrap items-end rounded-lg border bg-inherit px-2.5 shadow-sm transition-colors ease-in">
         <ComposerPrimitive.Input
           rows={1}
@@ -342,9 +368,20 @@ const UserMessage: FC = () => {
     <MessagePrimitive.Root className="grid w-full auto-rows-auto grid-cols-[minmax(72px,1fr)_auto] gap-y-2 py-4 [&:where(>*)]:col-start-2">
       <UserActionBar />
 
-      <div className="bg-muted text-foreground col-start-2 row-start-2 break-words rounded-3xl px-5 py-2.5">
-        <MessagePrimitive.Parts />
-      </div>
+      <Paper
+        elevation={0}
+        className="col-start-2 row-start-2 break-words"
+        sx={(theme) => ({
+          backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
+          padding: '4px 12px',
+          boxShadow: 'none',
+          border: `1px solid ${theme.palette.divider}`,
+          borderRadius: 2,
+          fontSize: theme.typography.fontSize,
+        })}
+      >
+        <MessagePrimitive.Parts components={{ Text: MarkdownText }} />
+      </Paper>
 
       <BranchPicker className="col-span-full col-start-1 row-start-3 -mr-1 justify-end" />
     </MessagePrimitive.Root>
@@ -374,36 +411,15 @@ const EditComposer: FC = () => {
 
       <div className="mx-3 mb-3 flex items-center justify-center gap-2 self-end">
         <ComposerPrimitive.Cancel asChild>
-          <Button variant="ghost">Cancel</Button>
+          <ShadButton variant="ghost">Cancel</ShadButton>
         </ComposerPrimitive.Cancel>
         <ComposerPrimitive.Send asChild>
-          <Button>Send</Button>
+          <ShadButton>Send</ShadButton>
         </ComposerPrimitive.Send>
       </div>
     </ComposerPrimitive.Root>
   );
 };
-
-// const AssistantMessage: FC = () => {
-//   return (
-//     <MessagePrimitive.Root className="relative grid w-full grid-cols-[auto_auto_1fr] grid-rows-[auto_1fr] py-4">
-//       <div className="text-foreground col-span-2 col-start-2 row-start-1 my-1.5 break-words leading-7">
-//         <MessagePrimitive.Parts
-//           components={{
-//             Text: TextMessagePartAdapter,
-//             tools: { Fallback: ToolFallback },
-//             Reasoning: ReasoningContent
-//           }}
-//         />
-//         <MessageError />
-//       </div>
-//
-//       <AssistantActionBar />
-//
-//       <BranchPicker className="col-start-2 row-start-2 -ml-2 mr-2" />
-//     </MessagePrimitive.Root>
-//   );
-// };
 
 // Custom Group component for parent ID grouping
 const ParentIdGroup: FC<
@@ -453,7 +469,18 @@ const ParentIdGroup: FC<
 const AssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root className="relative grid w-full max-w-[var(--thread-max-width)] grid-cols-[auto_auto_1fr] grid-rows-[auto_1fr] py-4">
-      <div className="text-foreground col-span-2 col-start-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.8)] break-words leading-7">
+      <Paper
+        className="col-span-2 col-start-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.8)] break-words"
+        elevation={0}
+        sx={(theme) => ({
+          backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
+          padding: '4px 12px',
+          boxShadow: 'none',
+          border: `1px solid ${theme.palette.divider}`,
+          borderRadius: 2,
+          fontSize: theme.typography.fontSize,
+        })}
+      >
         <MessagePrimitive.Unstable_PartsGroupedByParentId
           components={{
             Text: MarkdownText,
@@ -476,22 +503,12 @@ const AssistantMessage: FC = () => {
             },
           }}
         />
-      </div>
+      </Paper>
 
       <AssistantActionBar />
 
       <BranchPicker className="col-start-2 row-start-2 -ml-2 mr-2" />
     </MessagePrimitive.Root>
-  );
-};
-
-const MessageError: FC = () => {
-  return (
-    <MessagePrimitive.Error>
-      <ErrorPrimitive.Root className="border-destructive bg-destructive/10 dark:bg-destructive/5 text-destructive mt-2 rounded-md border p-3 text-sm dark:text-red-200">
-        <ErrorPrimitive.Message className="line-clamp-2" />
-      </ErrorPrimitive.Root>
-    </MessagePrimitive.Error>
   );
 };
 
@@ -569,220 +586,126 @@ const CircleStopIcon = () => {
 // Terminal selector component
 const TerminalSelector: FC<{
   availableTerminals: TerminalOption[];
-  selectedTerminals: string[];
+  selectedTerminals: string[]; // NOTE: now represents ONLY manually added terminals (does NOT auto-include currentTerminal)
   currentTerminal: string;
   onSelectionChange: (selectedTerminals: string[]) => void;
-  includeCurrentTerminal: boolean;
-  onIncludeCurrentTerminalChange: (include: boolean) => void;
   disabled: boolean;
 }> = ({
   availableTerminals,
   selectedTerminals,
   currentTerminal,
   onSelectionChange,
-  includeCurrentTerminal,
-  onIncludeCurrentTerminalChange,
   disabled,
 }) => {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [dropdownPosition, setDropdownPosition] = useState<"bottom" | "top">(
-    "bottom",
-  );
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const open = Boolean(menuAnchor);
 
-  // Get current terminal info
-  const currentTerminalInfo = availableTerminals.find(
-    (t) => t.key === currentTerminal,
-  );
+  // Removed previous auto-add effect. We now derive display list = currentTerminal + manual selections.
+  // This matches requirement: selectedTerminals only hold manually added terminals; current active always shown separately.
 
-  // Other selected terminals (excluding current)
-  const otherSelectedTerminals = selectedTerminals.filter(
-    (key) => key !== currentTerminal,
-  );
-
-  // Other available terminals (excluding current & already selected)
+  const currentTerminalInfo = availableTerminals.find((t) => t.key === currentTerminal);
+  // Manual selections excluding current (avoid duplicate chip when manually added same as current)
+  const otherSelectedTerminals = selectedTerminals.filter((key) => key !== currentTerminal);
+  // Available terminals that can still be added (exclude current and already manually selected)
   const otherAvailableTerminals = availableTerminals.filter(
     (t) => t.key !== currentTerminal && !selectedTerminals.includes(t.key),
   );
 
-  // Add terminal to selection list
   const addTerminal = (terminalKey: string) => {
-    const newSelected = [...selectedTerminals, terminalKey];
-    onSelectionChange(newSelected);
-    setDropdownOpen(false);
+    // Add only if not already manually selected
+    const next = selectedTerminals.includes(terminalKey)
+      ? selectedTerminals
+      : [...selectedTerminals, terminalKey];
+    onSelectionChange(next);
+    setMenuAnchor(null);
   };
-
-  // Remove terminal from selection list (except current)
   const removeTerminal = (terminalKey: string) => {
-    if (terminalKey === currentTerminal) {
-      onIncludeCurrentTerminalChange(false);
-    } else {
-      const newSelected = selectedTerminals.filter(
-        (key) => key !== terminalKey,
-      );
-      onSelectionChange(newSelected);
-    }
+    // Can't remove current implicit terminal; only manual selections
+    if (terminalKey === currentTerminal) return;
+    onSelectionChange(selectedTerminals.filter((k) => k !== terminalKey));
   };
-
-  // Toggle inclusion of current terminal
-  const toggleCurrentTerminal = () => {
-    onIncludeCurrentTerminalChange(!includeCurrentTerminal);
-  };
-
-  // Compute optimal dropdown position
-  const calculateDropdownPosition = useCallback(() => {
-    if (!buttonRef.current) return "bottom";
-    const buttonRect = buttonRef.current.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
-    const estimatedDropdownHeight = Math.min(
-      otherAvailableTerminals.length * 32 + 8,
-      192,
-    );
-    const spaceBelow = viewportHeight - buttonRect.bottom;
-    const spaceAbove = buttonRect.top;
-    if (spaceBelow < estimatedDropdownHeight && spaceAbove > spaceBelow) {
-      return "top";
-    }
-    return "bottom";
-  }, [otherAvailableTerminals.length]);
-
-  // Calculate position when opening
-  const handleDropdownToggle = () => {
-    if (!dropdownOpen) {
-      const position = calculateDropdownPosition();
-      setDropdownPosition(position);
-    }
-    setDropdownOpen(!dropdownOpen);
-  };
-
-  // Recalculate position on window resize
-  useEffect(() => {
-    if (dropdownOpen) {
-      const position = calculateDropdownPosition();
-      setDropdownPosition(position);
-    }
-  }, [dropdownOpen, calculateDropdownPosition]);
 
   return (
-    <div className="w-full px-3 py-2 rounded-lg">
-      <div className="flex flex-col gap-2">
-        {/* Header row */}
-        {/*<div className="flex items-center justify-between">*/}
-        {/*  <label className="text-xs font-medium text-gray-600 dark:text-gray-400">*/}
-        {/*    Select Terminals:*/}
-        {/*  </label>*/}
-        {/*  <span className="text-xs text-gray-500 dark:text-gray-500">*/}
-        {/*    ({(includeCurrentTerminal ? 1 : 0) + otherSelectedTerminals.length} terminals)*/}
-        {/*  </span>*/}
-        {/*</div>*/}
-
-        {/* Selected terminals display */}
-        <div className="flex flex-wrap gap-1 min-h-[24px] items-center">
-          {/* Current terminal - always shown */}
-          {currentTerminalInfo && (
-            <div
-              className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded ${
-                includeCurrentTerminal
-                  ? "bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 border border-blue-300 dark:border-blue-700"
-                  : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-300 dark:border-gray-600"
-              }`}
-            >
-              <span className="text-xs">🖥️</span>
-              <span>{currentTerminalInfo.label}</span>
-              <span className="text-xs font-semibold">(current)</span>
-              <button
-                onClick={toggleCurrentTerminal}
-                disabled={disabled}
-                className={`ml-1 w-3 h-3 rounded-sm flex items-center justify-center text-xs ${
-                  includeCurrentTerminal
-                    ? "bg-blue-600 text-white hover:bg-blue-700"
-                    : "bg-gray-400 text-white hover:bg-gray-500"
-                } disabled:opacity-50 disabled:cursor-not-allowed transition-colors`}
-                title={includeCurrentTerminal ? "Click to deselect" : "Click to select"}
-              >
-                {includeCurrentTerminal ? "✓" : "○"}
-              </button>
-            </div>
-          )}
-
-          {/* Other selected terminals */}
-          {otherSelectedTerminals.map((terminalKey) => {
-            const terminal = availableTerminals.find(
-              (t) => t.key === terminalKey,
-            );
-            if (!terminal) return null;
-
-            return (
-              <div
-                key={terminalKey}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 border border-green-300 dark:border-green-700"
-              >
-                <span className="text-xs">🖥️</span>
-                <span>{terminal.label}</span>
-                <button
-                  onClick={() => removeTerminal(terminalKey)}
-                  disabled={disabled}
-                  className="ml-1 w-3 h-3 rounded-sm bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-xs transition-colors"
-                  title="Remove terminal"
-                >
-                  ×
-                </button>
-              </div>
-            );
-          })}
-
-          {/* Add terminal button */}
-          {otherAvailableTerminals.length > 0 && (
-            <div className="relative">
-              <button
-                ref={buttonRef}
-                onClick={handleDropdownToggle}
-                disabled={disabled}
-                className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded text-gray-500 dark:text-gray-400 hover:text-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <span>+</span>
-                <span>Add Terminal</span>
-              </button>
-
-              {/* Auto-positioned dropdown */}
-              {dropdownOpen && (
-                <div
-                  ref={dropdownRef}
-                  className={`absolute left-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg z-50 min-w-[120px] max-h-48 overflow-y-auto ${
-                    dropdownPosition === "top"
-                      ? "bottom-full mb-1 mt-0"
-                      : "top-full"
-                  }`}
-                >
-                  {otherAvailableTerminals.map((terminal) => (
-                    <button
-                      key={terminal.key}
-                      onClick={() => addTerminal(terminal.key)}
-                      className="w-full px-3 py-2 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 text-gray-700 dark:text-gray-300"
-                    >
-                      <span className="text-xs">🖥️</span>
-                      <span>{terminal.label}</span>
-                      {!terminal.isActive && (
-                        <span className="text-xs text-orange-500">
-                          (not connected)
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Hint when no terminals selected */}
-          {!includeCurrentTerminal && otherSelectedTerminals.length === 0 && (
-            <span className="text-xs text-orange-500 dark:text-orange-400">
-              No terminal selected
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
+    <Box px={2} pt={1}>
+      <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" minHeight={24}>
+        {currentTerminalInfo && (
+          <Chip
+            size="small"
+            icon={<ComputerIcon />}
+            label={`${currentTerminalInfo.label} (current)`}
+            color="default"
+            variant="outlined"
+            disabled={disabled}
+            sx={(theme) => ({
+              borderRadius: 1,
+              backgroundColor: 'transparent',
+              borderColor: theme.palette.divider,
+              color: theme.palette.text.primary,
+              fontWeight: 600,
+            })}
+          />
+        )}
+        {otherSelectedTerminals.map((terminalKey) => {
+          const terminal = availableTerminals.find((t) => t.key === terminalKey);
+          if (!terminal) return null;
+          return (
+            <Chip
+              key={terminalKey}
+              size="small"
+              icon={<ComputerIcon />}
+              label={terminal.label}
+              color="default"
+              variant="outlined"
+              onDelete={() => removeTerminal(terminalKey)}
+              disabled={disabled}
+              deleteIcon={<CloseIcon />}
+              sx={(theme) => ({
+                borderRadius: 1,
+                backgroundColor: 'transparent',
+                borderColor: theme.palette.divider,
+                color: theme.palette.text.primary,
+                fontWeight: 600,
+              })}
+            />
+          );
+        })}
+        {otherAvailableTerminals.length > 0 && (
+          <IconButton
+            size="small"
+            aria-label="Add Terminal"
+            disabled={disabled}
+            onClick={(e) => setMenuAnchor(e.currentTarget)}
+            sx={(theme) => ({
+              border: `1px solid ${theme.palette.divider}`,
+              width: 26,
+              height: 26,
+              borderRadius: 1,
+              p: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            })}
+          >
+            <AddIcon />
+          </IconButton>
+        )}
+      </Stack>
+      <Menu
+        anchorEl={menuAnchor}
+        open={open}
+        onClose={() => setMenuAnchor(null)}
+        MenuListProps={{ dense: true }}
+      >
+        {otherAvailableTerminals.map((terminal) => (
+          <MenuItem
+            key={terminal.key}
+            onClick={() => addTerminal(terminal.key)}
+            disabled={disabled}
+          >
+            {terminal.label}
+          </MenuItem>
+        ))}
+      </Menu>
+    </Box>
   );
 };

@@ -68,11 +68,8 @@ export default function AiAssistant({
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [agentMode, setAgentMode] = useState<AgentMode>("tools");
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [selectedTerminals, setSelectedTerminals] = useState<string[]>([]);
-  const [includeCurrentTerminal, setIncludeCurrentTerminal] =
-    useState<boolean>(true);
 
   // Conversations state
   const [threads, setThreads] = useState<ExternalStoreThreadData<"regular">[]>(
@@ -89,11 +86,9 @@ export default function AiAssistant({
   const [currentTerminal, setCurrentTerminal] = useState<string>("welcome");
 
   // Model configuration state
-  const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
   const [groupedModelOptions, setGroupedModelOptions] = useState<
     Record<string, ModelConfig[]>
   >({});
-
   const sseRef = useRef<SSE | null>(null); // define sseRef
 
   // Sync terminal state when props update
@@ -111,11 +106,7 @@ export default function AiAssistant({
     const newCurrentTerminal =
       activeTabKey === "welcome" ? "welcome" : activeTabKey;
     setCurrentTerminal(newCurrentTerminal);
-
-    if (newCurrentTerminal === "welcome" && includeCurrentTerminal) {
-      setIncludeCurrentTerminal(false);
-    }
-  }, [tabs, activeTabKey, includeCurrentTerminal]);
+  }, [tabs, activeTabKey]);
 
   // Extract text from AppendMessage parts
   const extractTextFromAppendMessage = (msg: AppendMessage): string => {
@@ -192,7 +183,8 @@ export default function AiAssistant({
           agentMode,
           selectedModel,
           currentTerminal,
-          selectedTerminals: selectedTerminals.join(","),
+          // send union of current active terminal + manually selected terminals (dedup)
+          selectedTerminals: [currentTerminal, ...selectedTerminals.filter(t => t !== currentTerminal)].join(","),
         });
         const url = `http://wails.localhost:8088/api/chat?${params.toString()}`;
         const source = new SSE(url, {
@@ -244,15 +236,10 @@ export default function AiAssistant({
           try {
             // Check model overdue error
             if (event.data) {
-              const errorObj =
-                typeof event.data === "string"
-                  ? JSON.parse(event.data)
-                  : event.data;
+              const errorObj = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
               if (errorObj.error && typeof errorObj.error === "string") {
                 // Extract nested JSON error
-                const match = errorObj.error.match(
-                  /Error code: 403 - (\{.*\})/,
-                );
+                const match = errorObj.error.match(/Error code: 403 - ({.*})/); // simplified regex
                 if (match && match[1]) {
                   const innerError = JSON.parse(match[1]);
                   if (innerError.code === "AccountOverdueError") {
@@ -261,9 +248,7 @@ export default function AiAssistant({
                 }
               }
             }
-          } catch (e) {
-            // Keep default if parse fails
-          }
+          } catch (_) {}
           const errorMessage: ThreadMessageLike = {
             id: uuidv4(),
             role: "assistant",
@@ -299,7 +284,6 @@ export default function AiAssistant({
       agentMode,
       selectedModel,
       selectedTerminals,
-      includeCurrentTerminal,
       currentTerminal,
       tabs,
     ],
@@ -495,7 +479,7 @@ export default function AiAssistant({
 
   // Auto load conversation list on mount
   useEffect(() => {
-    loadThreads().then((r) => {
+    loadThreads().then(() => {
       console.log("Loaded threads on mount.");
     });
   }, [loadThreads]);
@@ -681,7 +665,6 @@ export default function AiAssistant({
         if (resp.ok) {
           const data = await resp.json();
           if (Array.isArray(data.data)) {
-            setModelConfigs(data.data);
             const groups: Record<string, ModelConfig[]> = {};
             data.data.forEach((m: ModelConfig) => {
               if (!groups[m.provider]) groups[m.provider] = [];
@@ -717,11 +700,11 @@ export default function AiAssistant({
             selectedTerminals={selectedTerminals}
             currentTerminal={currentTerminal}
             onTerminalSelectionChange={setSelectedTerminals}
-            includeCurrentTerminal={includeCurrentTerminal}
-            onIncludeCurrentTerminalChange={setIncludeCurrentTerminal}
           />
         </div>
       </div>
     </AssistantRuntimeProvider>
   );
 }
+
+

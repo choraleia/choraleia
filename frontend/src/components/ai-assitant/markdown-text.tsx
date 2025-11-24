@@ -10,10 +10,10 @@ import {
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
 import { type FC, memo, useState } from "react";
-import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "./tooltip-icon-button.tsx";
 import { cn } from "./lib/utils.ts";
+import { CheckIcon, CopyIcon } from "./assistant-icons.tsx";
 
 const MarkdownTextImpl = () => {
   return (

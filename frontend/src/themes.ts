@@ -183,6 +183,22 @@ export const lightTheme = createTheme({
         marginDense: { marginTop: 0, marginBottom: 0 },
       },
     },
+    MuiPaper: {
+      variants: [
+        {
+          props: { variant: 'assistantMessage' },
+          style: ({ theme }) => ({
+            backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
+            padding: '4px 12px',
+            borderRadius: theme.shape.borderRadius * 3,
+            boxShadow: 'none',
+            border: `1px solid ${theme.palette.divider}`,
+            fontSize: theme.typography.fontSize,
+            lineHeight: 1.6,
+          }),
+        },
+      ],
+    },
   },
 });
 
@@ -362,6 +378,22 @@ export const darkTheme = createTheme({
         },
         marginDense: { marginTop: 0, marginBottom: 0 },
       },
+    },
+    MuiPaper: {
+      variants: [
+        {
+          props: { variant: 'assistantMessage' },
+          style: ({ theme }) => ({
+            backgroundColor: theme.palette.background.paper,
+            padding: '4px 12px',
+            borderRadius: theme.shape.borderRadius * 3,
+            boxShadow: 'none',
+            border: `1px solid ${theme.palette.divider}`,
+            fontSize: theme.typography.fontSize,
+            lineHeight: 1.6,
+          }),
+        },
+      ],
     },
   },
 });
