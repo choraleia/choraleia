@@ -109,7 +109,6 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
               variant="body2"
               sx={{
                 whiteSpace: 'pre-wrap',
-                lineHeight: 1.2,
                 color: theme.palette.text.secondary,
                 fontFamily: theme.typography.fontFamily,
               }}

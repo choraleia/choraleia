@@ -75,7 +75,7 @@ export const lightTheme = createTheme({
     },
     MuiSelect: {
       defaultProps: { size: "small" },
-      styleOverrides: { },
+      styleOverrides: { root: { fontSize: 12 } },
     },
     MuiAutocomplete: { defaultProps: { size: "small" } },
     MuiSwitch: { defaultProps: { size: "small" } },
@@ -258,7 +258,7 @@ export const darkTheme = createTheme({
     },
     MuiSelect: {
       defaultProps: { size: "small" },
-      styleOverrides: { root: { }, select: { } },
+      styleOverrides: { root: { fontSize: 12 }, select: { } },
     },
     MuiAutocomplete: { defaultProps: { size: "small" } },
     MuiSwitch: { defaultProps: { size: "small" } },
