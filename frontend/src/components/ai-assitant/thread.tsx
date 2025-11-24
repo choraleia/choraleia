@@ -1,4 +1,4 @@
-import * as React from 'react';
+import * as React from "react";
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -24,15 +24,15 @@ import {
   CloseIcon,
 } from "./assistant-icons.tsx";
 import { cn } from "./lib/utils.ts";
-import Paper from '@mui/material/Paper';
-import Select from '@mui/material/Select';
-import MenuItem from '@mui/material/MenuItem';
-import FormControl from '@mui/material/FormControl';
-import Chip from '@mui/material/Chip';
-import Menu from '@mui/material/Menu';
-import Stack from '@mui/material/Stack';
-import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton';
+import Paper from "@mui/material/Paper";
+import Select from "@mui/material/Select";
+import MenuItem from "@mui/material/MenuItem";
+import FormControl from "@mui/material/FormControl";
+import Chip from "@mui/material/Chip";
+import Menu from "@mui/material/Menu";
+import Stack from "@mui/material/Stack";
+import Box from "@mui/material/Box";
+import IconButton from "@mui/material/IconButton";
 import { Button as ShadButton } from "./ui/button.tsx"; // custom button for ghost variant
 
 // import { Button } from "./ui/button.tsx";
@@ -200,9 +200,18 @@ const AgentModeSelector: FC<{
   });
   return (
     <Box px={2} py={1} width="100%">
-      <Stack direction="row" alignItems="center" justifyContent="space-between" width="100%">
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        width="100%"
+      >
         <Stack direction="row" spacing={2} alignItems="center">
-          <FormControl size="small" disabled={isLoading || disabled} sx={{ width: 'auto', minWidth: 0, flexShrink: 0 }}>
+          <FormControl
+            size="small"
+            disabled={isLoading || disabled}
+            sx={{ width: "auto", minWidth: 0, flexShrink: 0 }}
+          >
             {/*<InputLabel id="agent-mode-label">Mode</InputLabel>*/}
             <Select
               labelId="agent-mode-label"
@@ -212,11 +221,11 @@ const AgentModeSelector: FC<{
               onChange={(e) => setAgentMode(e.target.value as AgentMode)}
               size="small"
               autoWidth
-              sx={{ width: 'auto' }}
+              sx={{ width: "auto" }}
               MenuProps={{
                 MenuListProps: { dense: true },
                 sx: {
-                  '& .MuiMenuItem-root': {
+                  "& .MuiMenuItem-root": {
                     minHeight: 16,
                   },
                 },
@@ -226,7 +235,11 @@ const AgentModeSelector: FC<{
               <MenuItem value="react">ReAct</MenuItem>
             </Select>
           </FormControl>
-          <FormControl size="small" disabled={isLoading || disabled} sx={{ width: 'auto', minWidth: 0, flexShrink: 0 }}>
+          <FormControl
+            size="small"
+            disabled={isLoading || disabled}
+            sx={{ width: "auto", minWidth: 0, flexShrink: 0 }}
+          >
             {/*<InputLabel id="model-select-label">Model</InputLabel>*/}
             <Select
               labelId="model-select-label"
@@ -236,11 +249,11 @@ const AgentModeSelector: FC<{
               onChange={(e) => setSelectedModel(e.target.value)}
               size="small"
               autoWidth
-              sx={{ width: 'auto' }}
+              sx={{ width: "auto" }}
               MenuProps={{
                 MenuListProps: { dense: true },
                 sx: {
-                  '& .MuiMenuItem-root': {
+                  "& .MuiMenuItem-root": {
                     minHeight: 16,
                   },
                 },
@@ -372,9 +385,12 @@ const UserMessage: FC = () => {
         elevation={0}
         className="col-start-2 row-start-2 break-words"
         sx={(theme) => ({
-          backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
-          padding: '4px 12px',
-          boxShadow: 'none',
+          backgroundColor:
+            theme.palette.mode === "light"
+              ? "#fafafa"
+              : theme.palette.background.paper,
+          padding: "4px 12px",
+          boxShadow: "none",
           border: `1px solid ${theme.palette.divider}`,
           borderRadius: 2,
         })}
@@ -472,9 +488,12 @@ const AssistantMessage: FC = () => {
         className="col-span-2 col-start-2 row-start-1 my-1.5 max-w-[calc(var(--thread-max-width)*0.8)] break-words"
         elevation={0}
         sx={(theme) => ({
-          backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
-          padding: '4px 12px',
-          boxShadow: 'none',
+          backgroundColor:
+            theme.palette.mode === "light"
+              ? "#fafafa"
+              : theme.palette.background.paper,
+          padding: "4px 12px",
+          boxShadow: "none",
           border: `1px solid ${theme.palette.divider}`,
           borderRadius: 2,
         })}
@@ -601,9 +620,13 @@ const TerminalSelector: FC<{
   // Removed previous auto-add effect. We now derive display list = currentTerminal + manual selections.
   // This matches requirement: selectedTerminals only hold manually added terminals; current active always shown separately.
 
-  const currentTerminalInfo = availableTerminals.find((t) => t.key === currentTerminal);
+  const currentTerminalInfo = availableTerminals.find(
+    (t) => t.key === currentTerminal,
+  );
   // Manual selections excluding current (avoid duplicate chip when manually added same as current)
-  const otherSelectedTerminals = selectedTerminals.filter((key) => key !== currentTerminal);
+  const otherSelectedTerminals = selectedTerminals.filter(
+    (key) => key !== currentTerminal,
+  );
   // Available terminals that can still be added (exclude current and already manually selected)
   const otherAvailableTerminals = availableTerminals.filter(
     (t) => t.key !== currentTerminal && !selectedTerminals.includes(t.key),
@@ -625,7 +648,13 @@ const TerminalSelector: FC<{
 
   return (
     <Box px={2} pt={1}>
-      <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" minHeight={24}>
+      <Stack
+        direction="row"
+        flexWrap="wrap"
+        gap={1}
+        alignItems="center"
+        minHeight={24}
+      >
         {currentTerminalInfo && (
           <Chip
             size="small"
@@ -636,7 +665,7 @@ const TerminalSelector: FC<{
             disabled={disabled}
             sx={(theme) => ({
               borderRadius: 1,
-              backgroundColor: 'transparent',
+              backgroundColor: "transparent",
               borderColor: theme.palette.divider,
               color: theme.palette.text.primary,
               fontWeight: 600,
@@ -644,7 +673,9 @@ const TerminalSelector: FC<{
           />
         )}
         {otherSelectedTerminals.map((terminalKey) => {
-          const terminal = availableTerminals.find((t) => t.key === terminalKey);
+          const terminal = availableTerminals.find(
+            (t) => t.key === terminalKey,
+          );
           if (!terminal) return null;
           return (
             <Chip
@@ -659,7 +690,7 @@ const TerminalSelector: FC<{
               deleteIcon={<CloseIcon />}
               sx={(theme) => ({
                 borderRadius: 1,
-                backgroundColor: 'transparent',
+                backgroundColor: "transparent",
                 borderColor: theme.palette.divider,
                 color: theme.palette.text.primary,
                 fontWeight: 600,
@@ -679,9 +710,9 @@ const TerminalSelector: FC<{
               height: 26,
               borderRadius: 1,
               p: 0,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
             })}
           >
             <AddIcon />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Box, Typography, IconButton, Tooltip } from "@mui/material"; // Removed Drawer
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import BoltIcon from "@mui/icons-material/Bolt";
 import AiAssistant from "../ai-assitant/ai-assistant.tsx";
@@ -60,7 +60,12 @@ const Toolbar: React.FC<RightToolbarProps> = ({
 
   const shortcutHints: Record<string, string[]> = {
     ai: ["Ctrl+Shift+L Toggle"],
-    quickcmd: ["Ctrl+Shift+K Toggle", "Ctrl+K Search", "Enter Insert", "Ctrl/Shift+Enter Execute"],
+    quickcmd: [
+      "Ctrl+Shift+K Toggle",
+      "Ctrl+K Search",
+      "Enter Insert",
+      "Ctrl/Shift+Enter Execute",
+    ],
     // other panels can be added later
   };
 
@@ -78,23 +83,33 @@ const Toolbar: React.FC<RightToolbarProps> = ({
   const getDrawerTitle = () => {
     const btn = toolButtons.find((b) => b.key === drawerState.type);
     if (!btn) return "";
-    const hints = (shortcutHints[btn.key] || []).filter(h => !/^\(No preset/.test(h));
+    const hints = (shortcutHints[btn.key] || []).filter(
+      (h) => !/^\(No preset/.test(h),
+    );
     return (
       <Box display="flex" alignItems="center" gap={1}>
-        <Typography variant="subtitle2" fontSize={14}>{btn.title}</Typography>
+        <Typography variant="subtitle2" fontSize={14}>
+          {btn.title}
+        </Typography>
         {hints.length > 0 && (
           <Tooltip
             placement="bottom"
             arrow
             title={
               <Box display="flex" flexDirection="column" gap={0.5}>
-                {hints.map(h => (
-                  <Typography key={h} variant="caption" sx={{ lineHeight: 1.2 }}>{h}</Typography>
+                {hints.map((h) => (
+                  <Typography
+                    key={h}
+                    variant="caption"
+                    sx={{ lineHeight: 1.2 }}
+                  >
+                    {h}
+                  </Typography>
                 ))}
               </Box>
             }
           >
-            <IconButton size="small" sx={{ p:0.5 }}>
+            <IconButton size="small" sx={{ p: 0.5 }}>
               <HelpOutlineIcon fontSize="inherit" />
             </IconButton>
           </Tooltip>
@@ -106,29 +121,29 @@ const Toolbar: React.FC<RightToolbarProps> = ({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Quick Commands toggle
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'k') {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        setDrawerState(prev => {
-          if (prev.type === 'quickcmd') {
+        setDrawerState((prev) => {
+          if (prev.type === "quickcmd") {
             return { ...prev, open: !prev.open };
           }
-          return { open: true, type: 'quickcmd', width: prev.width };
+          return { open: true, type: "quickcmd", width: prev.width };
         });
         return;
       }
-      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'l') {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "l") {
         e.preventDefault();
-        setDrawerState(prev => {
-          if (prev.type === 'ai') {
+        setDrawerState((prev) => {
+          if (prev.type === "ai") {
             return { ...prev, open: !prev.open };
           }
-          return { open: true, type: 'ai', width: prev.width };
+          return { open: true, type: "ai", width: prev.width };
         });
         return;
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   return (
@@ -241,11 +256,15 @@ const Toolbar: React.FC<RightToolbarProps> = ({
               const desiredWidth = startWidth + delta;
               // Maximum width so drawer's left edge never crosses left menu right edge.
               // Drawer left edge = window.innerWidth - dockWidth - currentWidth
-              const computedMax = window.innerWidth - dockWidth - LEFT_MENU_WIDTH;
+              const computedMax =
+                window.innerWidth - dockWidth - LEFT_MENU_WIDTH;
               const maxWidth = Math.max(minWidth, computedMax);
-              const newWidth = Math.min(maxWidth, Math.max(minWidth, desiredWidth));
+              const newWidth = Math.min(
+                maxWidth,
+                Math.max(minWidth, desiredWidth),
+              );
               requestAnimationFrame(() =>
-                setDrawerState((prev) => ({ ...prev, width: newWidth }))
+                setDrawerState((prev) => ({ ...prev, width: newWidth })),
               );
             };
             const handleUp = () => {
@@ -255,7 +274,9 @@ const Toolbar: React.FC<RightToolbarProps> = ({
               document.body.style.cursor = "";
               document.body.style.userSelect = "";
             };
-            document.addEventListener("mousemove", handleMove, { passive: false });
+            document.addEventListener("mousemove", handleMove, {
+              passive: false,
+            });
             document.addEventListener("mouseup", handleUp);
           }}
         />

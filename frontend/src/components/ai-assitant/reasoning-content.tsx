@@ -1,5 +1,9 @@
 import { FC, useEffect, useRef, useState } from "react";
-import { ChevronDownIcon, ChevronRightIcon, BrainIcon } from "./assistant-icons.tsx";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  BrainIcon,
+} from "./assistant-icons.tsx";
 import { cn } from "./lib/utils.ts";
 import Paper from "@mui/material/Paper";
 import Box from "@mui/material/Box";
@@ -13,7 +17,10 @@ interface ReasoningContentProps {
   className?: string;
 }
 
-export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className }) => {
+export const ReasoningContent: FC<ReasoningContentProps> = ({
+  text,
+  className,
+}) => {
   const [isExpanded, setIsExpanded] = useState(true);
   const theme = useTheme();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -24,14 +31,20 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
   const normalizeIndentation = (input: string): string => {
     const lines = input.replace(/\r\n?/g, "\n").split("\n");
     while (lines.length && lines[0].trim() === "") lines.shift();
-    const indents = lines.filter(l => l.trim() !== "").map(l => (l.match(/^(\s*)/) || [""])[0]);
-    const minIndentLength = indents.length ? Math.min(...indents.map(i => i.length)) : 0;
-    return minIndentLength > 0 ? lines.map(l => l.slice(minIndentLength)).join("\n") : lines.join("\n");
+    const indents = lines
+      .filter((l) => l.trim() !== "")
+      .map((l) => (l.match(/^(\s*)/) || [""])[0]);
+    const minIndentLength = indents.length
+      ? Math.min(...indents.map((i) => i.length))
+      : 0;
+    return minIndentLength > 0
+      ? lines.map((l) => l.slice(minIndentLength)).join("\n")
+      : lines.join("\n");
   };
 
   const displayText = normalizeIndentation(text).trimStart();
 
-  const toggleExpanded = () => setIsExpanded(prev => !prev);
+  const toggleExpanded = () => setIsExpanded((prev) => !prev);
 
   // Auto-scroll to bottom when text updates and expanded
   useEffect(() => {
@@ -51,8 +64,12 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
       variant="outlined"
       sx={{
         mt: 1,
-        backgroundColor: theme.palette.mode === "light" ? "#f9f9f9" : theme.palette.primary.dark + "20",
-        borderColor: theme.palette.mode === "light" ? "#f0f0f0" : theme.palette.divider,
+        backgroundColor:
+          theme.palette.mode === "light"
+            ? "#f9f9f9"
+            : theme.palette.primary.dark + "20",
+        borderColor:
+          theme.palette.mode === "light" ? "#f0f0f0" : theme.palette.divider,
         p: 0,
         overflow: "hidden",
       }}
@@ -73,23 +90,43 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
           px: 1.5,
           py: 1,
           textAlign: "left",
-          backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.06)',
+          backgroundColor:
+            theme.palette.mode === "light"
+              ? "rgba(0,0,0,0.03)"
+              : "rgba(255,255,255,0.06)",
           border: "none",
           outline: "none",
           fontWeight: 500,
-          color: theme.palette.mode === "light" ? theme.palette.primary.main : theme.palette.primary.light,
-          '&:hover': {
-            backgroundColor: theme.palette.mode === 'light' ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.10)',
+          color:
+            theme.palette.mode === "light"
+              ? theme.palette.primary.main
+              : theme.palette.primary.light,
+          "&:hover": {
+            backgroundColor:
+              theme.palette.mode === "light"
+                ? "rgba(0,0,0,0.05)"
+                : "rgba(255,255,255,0.10)",
           },
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', color: 'inherit' }}>
+        <Box sx={{ display: "flex", alignItems: "center", color: "inherit" }}>
           <BrainIcon />
         </Box>
-        <Typography component="span" variant="body2" sx={{ fontWeight: 500, color: 'inherit' }}>
+        <Typography
+          component="span"
+          variant="body2"
+          sx={{ fontWeight: 500, color: "inherit" }}
+        >
           AI Reasoning Process
         </Typography>
-        <Box sx={{ ml: 'auto', display: 'flex', alignItems: 'center', color: 'inherit' }}>
+        <Box
+          sx={{
+            ml: "auto",
+            display: "flex",
+            alignItems: "center",
+            color: "inherit",
+          }}
+        >
           {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </Box>
       </Box>
@@ -99,16 +136,19 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({ text, className })
           sx={{
             px: 1.5,
             py: 1.5,
-            backgroundColor: theme.palette.mode === 'dark' ? theme.palette.primary.dark + '30' : undefined,
+            backgroundColor:
+              theme.palette.mode === "dark"
+                ? theme.palette.primary.dark + "30"
+                : undefined,
           }}
         >
           {/* Scroll container with max height 400px */}
-          <Box ref={scrollRef} sx={{ maxHeight: 400, overflowY: 'auto' }}>
+          <Box ref={scrollRef} sx={{ maxHeight: 400, overflowY: "auto" }}>
             <Typography
               component="div"
               variant="body2"
               sx={{
-                whiteSpace: 'pre-wrap',
+                whiteSpace: "pre-wrap",
                 color: theme.palette.text.secondary,
                 fontFamily: theme.typography.fontFamily,
               }}

@@ -100,9 +100,13 @@ export const ThreadList: FC = () => {
         onClose={handleCloseMenu}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
         transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{ paper: { sx: { width: 300, maxHeight: 320, overflowY: 'auto', p: 0 } } }}
+        slotProps={{
+          paper: {
+            sx: { width: 300, maxHeight: 320, overflowY: "auto", p: 0 },
+          },
+        }}
       >
-        <Box sx={{ width: '100%' }}>
+        <Box sx={{ width: "100%" }}>
           {isLoading ? (
             <Box sx={{ p: 1 }}>
               <ThreadListSkeleton />
@@ -164,24 +168,26 @@ const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({
           sx={{
             py: 0.75,
             px: 1.5,
-            '&.Mui-selected': { bgcolor: 'action.selected', fontWeight: 500 },
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'flex-start', // ensure left alignment
+            "&.Mui-selected": { bgcolor: "action.selected", fontWeight: 500 },
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-start", // ensure left alignment
             gap: 1,
-            textAlign: 'left', // left-align any inline text
-            '& .thread-delete-btn': {
+            textAlign: "left", // left-align any inline text
+            "& .thread-delete-btn": {
               opacity: 0,
-              pointerEvents: 'none',
-              transition: 'opacity 0.15s',
+              pointerEvents: "none",
+              transition: "opacity 0.15s",
             },
-            '&:hover .thread-delete-btn': {
+            "&:hover .thread-delete-btn": {
               opacity: 1,
-              pointerEvents: 'auto',
+              pointerEvents: "auto",
             },
           }}
         >
-          <ThreadListItemPrimitive.Trigger style={{ width: '100%', display: 'flex', flexGrow: 1 }}>
+          <ThreadListItemPrimitive.Trigger
+            style={{ width: "100%", display: "flex", flexGrow: 1 }}
+          >
             <ThreadListItemTitle />
           </ThreadListItemPrimitive.Trigger>
           <ThreadListItemDelete />
@@ -192,7 +198,11 @@ const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({
 };
 
 const ThreadListItemTitle: FC = () => (
-  <Typography variant="body2" noWrap sx={{ fontSize: 13, width: '100%', textAlign: 'left' }}>
+  <Typography
+    variant="body2"
+    noWrap
+    sx={{ fontSize: 13, width: "100%", textAlign: "left" }}
+  >
     <ThreadListItemPrimitive.Title fallback="New Conversation" />
   </Typography>
 );
@@ -206,7 +216,7 @@ const ThreadListItemDelete: FC = () => (
       title="Delete Conversation"
       className="thread-delete-btn"
       onClick={(e) => e.stopPropagation()}
-      sx={{ color: 'error.main' }}
+      sx={{ color: "error.main" }}
     >
       <DeleteIcon />
     </IconButton>

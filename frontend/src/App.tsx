@@ -12,10 +12,16 @@ import SettingsIcon from "@mui/icons-material/Settings";
 
 // App
 const App: React.FC = () => {
-  const [selectedMenu, setSelectedMenu] = useState<"assets" | "settings">("assets");
+  const [selectedMenu, setSelectedMenu] = useState<"assets" | "settings">(
+    "assets",
+  );
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
   // Preserve app statistics
-  const [appStats, setAppStats] = useState({ memoryUsage: 0, cpuUsage: 0, version: "v1.0.0" });
+  const [appStats, setAppStats] = useState({
+    memoryUsage: 0,
+    cpuUsage: 0,
+    version: "v1.0.0",
+  });
   // Asset page ref
   const assetPageRef = useRef<AssetPageHandle>(null);
 
@@ -36,16 +42,21 @@ const App: React.FC = () => {
     const trigger = () => {
       const tabKey = assetPageRef.current?.getActiveTabKey();
       if (!tabKey) return;
-      window.dispatchEvent(new CustomEvent("terminal-resize", { detail: { tabKey } }));
+      window.dispatchEvent(
+        new CustomEvent("terminal-resize", { detail: { tabKey } }),
+      );
     };
-    if (selectedMenu === "assets") [0, 60, 150].forEach((d) => setTimeout(trigger, d));
+    if (selectedMenu === "assets")
+      [0, 60, 150].forEach((d) => setTimeout(trigger, d));
   }, [selectedMenu]);
   useEffect(() => {
     if (selectedMenu === "assets" && assetsVisible) {
       const trigger = () => {
         const tabKey = assetPageRef.current?.getActiveTabKey();
         if (!tabKey) return;
-        window.dispatchEvent(new CustomEvent("terminal-resize", { detail: { tabKey } }));
+        window.dispatchEvent(
+          new CustomEvent("terminal-resize", { detail: { tabKey } }),
+        );
       };
       [0, 80, 180].forEach((d) => setTimeout(trigger, d));
     }
@@ -53,7 +64,8 @@ const App: React.FC = () => {
 
   const currentTerminal = assetPageRef.current?.getCurrentTerminalStatus();
   const totalTerminals = assetPageRef.current?.getTotalTerminals() || 0;
-  const activeConnections = assetPageRef.current?.getActiveConnectionsCount() || 0;
+  const activeConnections =
+    assetPageRef.current?.getActiveConnectionsCount() || 0;
 
   return (
     <Box display="flex" flexDirection="column" height="100%">
@@ -89,7 +101,9 @@ const App: React.FC = () => {
                     ? theme.palette.primary.main
                     : theme.palette.text.secondary
                   : theme.palette.text.secondary,
-                bgcolor: assetShown ? theme.palette.action.selected : "transparent",
+                bgcolor: assetShown
+                  ? theme.palette.action.selected
+                  : "transparent",
                 borderRadius: 6,
                 transition: "background-color 0.15s, color 0.15s",
                 "&:hover": { bgcolor: theme.palette.action.hover },
@@ -103,8 +117,14 @@ const App: React.FC = () => {
           <IconButton
             onClick={() => setSelectedMenu("settings")}
             sx={(theme) => ({
-              color: selectedMenu === "settings" ? theme.palette.primary.main : theme.palette.text.secondary,
-              bgcolor: selectedMenu === "settings" ? theme.palette.action.selected : "transparent",
+              color:
+                selectedMenu === "settings"
+                  ? theme.palette.primary.main
+                  : theme.palette.text.secondary,
+              bgcolor:
+                selectedMenu === "settings"
+                  ? theme.palette.action.selected
+                  : "transparent",
               borderRadius: 6,
               mt: "auto",
               transition: "background-color 0.15s, color 0.15s",
@@ -120,7 +140,12 @@ const App: React.FC = () => {
         <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
           <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
             {/* Asset view */}
-            <Box display={selectedMenu === "assets" ? "flex" : "none"} flex={1} flexDirection="column" minHeight={0}>
+            <Box
+              display={selectedMenu === "assets" ? "flex" : "none"}
+              flex={1}
+              flexDirection="column"
+              minHeight={0}
+            >
               <AssetPage ref={assetPageRef} assetsVisible={assetsVisible} />
             </Box>
             {/* Settings view */}

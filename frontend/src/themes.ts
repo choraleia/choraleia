@@ -88,7 +88,12 @@ export const lightTheme = createTheme({
     MuiTab: {
       defaultProps: { iconPosition: "start", disableRipple: true },
       styleOverrides: {
-        root: { minHeight: 24, padding: "6px 12px", transition: "none", textTransform: 'none' },
+        root: {
+          minHeight: 24,
+          padding: "6px 12px",
+          transition: "none",
+          textTransform: "none",
+        },
       },
     },
     MuiDialogTitle: { styleOverrides: { root: { padding: "12px 16px" } } },
@@ -104,8 +109,8 @@ export const lightTheme = createTheme({
     MuiChip: {
       defaultProps: { size: "small" },
       styleOverrides: {
-        root: { },
-        label: { },
+        root: {},
+        label: {},
       },
     },
     MuiAlert: {
@@ -141,8 +146,8 @@ export const lightTheme = createTheme({
         root: { minHeight: 24, transition: "none" },
         input: {
           padding: "7px 8px",
-          boxSizing: 'border-box',
-          '&::placeholder': {
+          boxSizing: "border-box",
+          "&::placeholder": {
             opacity: 0.5,
           },
         },
@@ -154,8 +159,8 @@ export const lightTheme = createTheme({
         root: { minHeight: 18, transition: "none" },
         input: {
           padding: "7px 8px",
-          boxSizing: 'border-box',
-          '&::placeholder': {
+          boxSizing: "border-box",
+          "&::placeholder": {
             opacity: 0.5,
           },
         },
@@ -173,12 +178,15 @@ export const lightTheme = createTheme({
     MuiPaper: {
       variants: [
         {
-          props: { variant: 'assistantMessage' },
+          props: { variant: "assistantMessage" },
           style: ({ theme }) => ({
-            backgroundColor: theme.palette.mode === 'light' ? '#fafafa' : theme.palette.background.paper,
-            padding: '4px 12px',
+            backgroundColor:
+              theme.palette.mode === "light"
+                ? "#fafafa"
+                : theme.palette.background.paper,
+            padding: "4px 12px",
             borderRadius: 3,
-            boxShadow: 'none',
+            boxShadow: "none",
             border: `1px solid ${theme.palette.divider}`,
           }),
         },
@@ -258,7 +266,7 @@ export const darkTheme = createTheme({
     },
     MuiSelect: {
       defaultProps: { size: "small" },
-      styleOverrides: { root: { fontSize: 12 }, select: { } },
+      styleOverrides: { root: { fontSize: 12 }, select: {} },
     },
     MuiAutocomplete: { defaultProps: { size: "small" } },
     MuiSwitch: { defaultProps: { size: "small" } },
@@ -271,7 +279,12 @@ export const darkTheme = createTheme({
     MuiTab: {
       defaultProps: { iconPosition: "start", disableRipple: true },
       styleOverrides: {
-        root: { minHeight: 24, padding: "6px 12px", transition: "none", textTransform: 'none' },
+        root: {
+          minHeight: 24,
+          padding: "6px 12px",
+          transition: "none",
+          textTransform: "none",
+        },
       },
     },
     MuiDialogTitle: { styleOverrides: { root: { padding: "12px 16px" } } },
@@ -324,8 +337,8 @@ export const darkTheme = createTheme({
         root: { minHeight: 24, transition: "none" },
         input: {
           padding: "7px 8px",
-          boxSizing: 'border-box',
-          '&::placeholder': {
+          boxSizing: "border-box",
+          "&::placeholder": {
             opacity: 0.5,
           },
         },
@@ -337,8 +350,8 @@ export const darkTheme = createTheme({
         root: { minHeight: 24, transition: "none" },
         input: {
           padding: "7px 8px",
-          boxSizing: 'border-box',
-          '&::placeholder': {
+          boxSizing: "border-box",
+          "&::placeholder": {
             opacity: 0.5,
           },
         },
@@ -356,12 +369,12 @@ export const darkTheme = createTheme({
     MuiPaper: {
       variants: [
         {
-          props: { variant: 'assistantMessage' },
+          props: { variant: "assistantMessage" },
           style: ({ theme }) => ({
             backgroundColor: theme.palette.background.paper,
-            padding: '4px 12px',
+            padding: "4px 12px",
             borderRadius: 3,
-            boxShadow: 'none',
+            boxShadow: "none",
             border: `1px solid ${theme.palette.divider}`,
           }),
         },

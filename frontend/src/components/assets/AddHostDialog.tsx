@@ -18,8 +18,12 @@ import {
 } from "@mui/material";
 import DesktopMacIcon from "@mui/icons-material/DesktopMac";
 import SecurityIcon from "@mui/icons-material/Security";
-import FolderIcon from '@mui/icons-material/Folder';
-import { buildFolderTreeItems, getFolderPath, BasicFolder } from './folderUtils';
+import FolderIcon from "@mui/icons-material/Folder";
+import {
+  buildFolderTreeItems,
+  getFolderPath,
+  BasicFolder,
+} from "./folderUtils";
 
 // Component props type
 interface AddHostWindowProps {
@@ -139,7 +143,10 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
     }
   };
 
-  const folderTreeItems = React.useMemo(() => buildFolderTreeItems(folderOptions), [folderOptions]);
+  const folderTreeItems = React.useMemo(
+    () => buildFolderTreeItems(folderOptions),
+    [folderOptions],
+  );
 
   // Basic config form
   function renderBasicConfigForm() {
@@ -148,17 +155,19 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
         <Select
           value={parentFolder}
           renderValue={(value) => {
-            if (value === 'root') return '/';
-            if (typeof value === 'string') return '/' + getFolderPath(value, folderOptions);
-            return '';
+            if (value === "root") return "/";
+            if (typeof value === "string")
+              return "/" + getFolderPath(value, folderOptions);
+            return "";
           }}
           onChange={(e) => setParentFolder(e.target.value)}
         >
           <MenuItem value="root">/</MenuItem>
-          {folderTreeItems.map(item => (
+          {folderTreeItems.map((item) => (
             <MenuItem key={item.id} value={item.id}>
               <Box pl={item.depth * 1.5} display="flex" alignItems="center">
-                <FolderIcon fontSize="small" style={{ marginRight: 4 }} />{item.name}
+                <FolderIcon fontSize="small" style={{ marginRight: 4 }} />
+                {item.name}
               </Box>
             </MenuItem>
           ))}
@@ -166,29 +175,108 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
       </FormControl>
     );
     switch (selectedType) {
-      case 'ssh':
+      case "ssh":
         return (
           <Box display="flex" flexDirection="column" gap={2}>
             {folderSelect}
-            <TextField placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <TextField
+              placeholder="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
             <Box display="flex" gap={2}>
-              <TextField placeholder="Username" value={config.username || ''} onChange={(e) => setConfig((c: any) => ({ ...c, username: e.target.value }))} required sx={{ flex: 1 }} />
-              <TextField placeholder="Host" value={config.host || ''} onChange={(e) => setConfig((c: any) => ({ ...c, host: e.target.value }))} required sx={{ flex: 1 }} />
-              <TextField placeholder="Port" type="number" value={config.port || 22} onChange={(e) => setConfig((c: any) => ({ ...c, port: Number(e.target.value) }))} required sx={{ width: 120 }} />
+              <TextField
+                placeholder="Username"
+                value={config.username || ""}
+                onChange={(e) =>
+                  setConfig((c: any) => ({ ...c, username: e.target.value }))
+                }
+                required
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                placeholder="Host"
+                value={config.host || ""}
+                onChange={(e) =>
+                  setConfig((c: any) => ({ ...c, host: e.target.value }))
+                }
+                required
+                sx={{ flex: 1 }}
+              />
+              <TextField
+                placeholder="Port"
+                type="number"
+                value={config.port || 22}
+                onChange={(e) =>
+                  setConfig((c: any) => ({
+                    ...c,
+                    port: Number(e.target.value),
+                  }))
+                }
+                required
+                sx={{ width: 120 }}
+              />
             </Box>
-            <TextField placeholder="Password" type="password" value={config.password || ''} onChange={(e) => setConfig((c: any) => ({ ...c, password: e.target.value }))} />
-            <TextField placeholder="Private Key Path" value={config.private_key_path || ''} onChange={(e) => setConfig((c: any) => ({ ...c, private_key_path: e.target.value }))} />
-            <TextField placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} multiline minRows={2} />
+            <TextField
+              placeholder="Password"
+              type="password"
+              value={config.password || ""}
+              onChange={(e) =>
+                setConfig((c: any) => ({ ...c, password: e.target.value }))
+              }
+            />
+            <TextField
+              placeholder="Private Key Path"
+              value={config.private_key_path || ""}
+              onChange={(e) =>
+                setConfig((c: any) => ({
+                  ...c,
+                  private_key_path: e.target.value,
+                }))
+              }
+            />
+            <TextField
+              placeholder="Description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              multiline
+              minRows={2}
+            />
           </Box>
         );
-      case 'local':
+      case "local":
         return (
           <Box display="flex" flexDirection="column" gap={2}>
             {folderSelect}
-            <TextField placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
-            <TextField placeholder="Shell" value={config.shell || ''} onChange={(e) => setConfig((c: any) => ({ ...c, shell: e.target.value }))} required />
-            <TextField placeholder="Working Dir" value={config.working_dir || ''} onChange={(e) => setConfig((c: any) => ({ ...c, working_dir: e.target.value }))} />
-            <TextField placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} multiline minRows={2} />
+            <TextField
+              placeholder="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
+            <TextField
+              placeholder="Shell"
+              value={config.shell || ""}
+              onChange={(e) =>
+                setConfig((c: any) => ({ ...c, shell: e.target.value }))
+              }
+              required
+            />
+            <TextField
+              placeholder="Working Dir"
+              value={config.working_dir || ""}
+              onChange={(e) =>
+                setConfig((c: any) => ({ ...c, working_dir: e.target.value }))
+              }
+            />
+            <TextField
+              placeholder="Description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              multiline
+              minRows={2}
+            />
           </Box>
         );
     }
@@ -241,7 +329,12 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
             orientation="vertical"
             value={selectedType}
             onChange={(_, v) => setSelectedType(v as AssetType)}
-            sx={{ borderRight: 1, borderColor: 'divider', minWidth: 160, alignItems: 'flex-start' }}
+            sx={{
+              borderRight: 1,
+              borderColor: "divider",
+              minWidth: 160,
+              alignItems: "flex-start",
+            }}
           >
             {Object.entries(assetTypeConfig).map(([k, v]) => (
               <Tab
@@ -250,28 +343,33 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
                 label={v.name}
                 iconPosition="start"
                 icon={v.icon as any}
-                sx={{ justifyContent: 'flex-start', alignItems: 'center', pl: 1, textAlign: 'left' }}
+                sx={{
+                  justifyContent: "flex-start",
+                  alignItems: "center",
+                  pl: 1,
+                  textAlign: "left",
+                }}
               />
             ))}
           </Tabs>
           {/* Right side content */}
           <Box flex={1} display="flex" flexDirection="column" gap={2}>
-            <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} sx={{ mb: 1 }}>
+            <Tabs
+              value={activeTab}
+              onChange={(_, v) => setActiveTab(v)}
+              sx={{ mb: 1 }}
+            >
               <Tab label="Basic" value="basic" />
               <Tab label="Advanced" value="advanced" />
             </Tabs>
-            {activeTab === 'basic' && renderBasicConfigForm()}
-            {activeTab === 'advanced' && renderAdvancedConfigForm()}
+            {activeTab === "basic" && renderBasicConfigForm()}
+            {activeTab === "advanced" && renderAdvancedConfigForm()}
           </Box>
         </Box>
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose}>Cancel</Button>
-        <Button
-          variant="contained"
-          onClick={createAsset}
-          disabled={loading}
-        >
+        <Button variant="contained" onClick={createAsset} disabled={loading}>
           {loading ? "Saving..." : "Save"}
         </Button>
       </DialogActions>

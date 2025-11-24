@@ -30,7 +30,11 @@ const terminalInstances = new Map<
   }
 >();
 
-export function sendToTerminal(tabKey: string, text: string, execute: boolean = false) {
+export function sendToTerminal(
+  tabKey: string,
+  text: string,
+  execute: boolean = false,
+) {
   const data = terminalInstances.get(tabKey);
   if (!data) return false;
   const { terminal, socket } = data;
@@ -576,15 +580,18 @@ function TerminalComponent({
       }
     };
     window.addEventListener("asset-tree-resize", handleResize as EventListener);
-    window.addEventListener("asset-tree-visible", handleResize as EventListener);
+    window.addEventListener(
+      "asset-tree-visible",
+      handleResize as EventListener,
+    );
     return () => {
       window.removeEventListener(
         "asset-tree-resize",
         handleResize as EventListener,
       );
       window.removeEventListener(
-          "asset-tree-visible",
-          handleResize as EventListener,
+        "asset-tree-visible",
+        handleResize as EventListener,
       );
     };
   }, [isActive]);

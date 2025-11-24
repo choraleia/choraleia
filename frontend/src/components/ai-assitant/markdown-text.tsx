@@ -56,7 +56,10 @@ const CodeHeader: FC<CodeHeaderProps> = ({ language, code }) => {
         borderBottom: "none",
       })}
     >
-      <Box component="span" sx={{ textTransform: "lowercase", fontSize: "0.75em" }}>
+      <Box
+        component="span"
+        sx={{ textTransform: "lowercase", fontSize: "0.75em" }}
+      >
         {language}
       </Box>
       <TooltipIconButton tooltip="Copy" onClick={onCopy}>
@@ -120,7 +123,12 @@ const defaultComponents = memoizeMarkdownComponents({
     <Typography
       component="h3"
       variant="h6"
-      sx={(theme) => ({ mt: 2.5, mb: 1, fontWeight: 600, scrollMarginTop: theme.spacing(5) })}
+      sx={(theme) => ({
+        mt: 2.5,
+        mb: 1,
+        fontWeight: 600,
+        scrollMarginTop: theme.spacing(5),
+      })}
       className={className}
       {...props}
     />
@@ -231,8 +239,8 @@ const defaultComponents = memoizeMarkdownComponents({
           textAlign: align || "left",
           fontWeight: 700,
           border: `1px solid ${theme.palette.divider}`,
-          '&:first-of-type': { borderTopLeftRadius: theme.shape.borderRadius },
-          '&:last-of-type': { borderTopRightRadius: theme.shape.borderRadius },
+          "&:first-of-type": { borderTopLeftRadius: theme.shape.borderRadius },
+          "&:last-of-type": { borderTopRightRadius: theme.shape.borderRadius },
         })}
         className={className}
         {...rest}
@@ -247,7 +255,7 @@ const defaultComponents = memoizeMarkdownComponents({
         sx={(theme) => ({
           px: 2,
           py: 1,
-            textAlign: align || "left",
+          textAlign: align || "left",
           border: `1px solid ${theme.palette.divider}`,
         })}
         className={className}
@@ -258,7 +266,7 @@ const defaultComponents = memoizeMarkdownComponents({
   tr: ({ className, ...props }) => (
     <Box
       component="tr"
-      sx={{ m: 0, p: 0, '&:last-child td': { borderBottom: 'none' } }}
+      sx={{ m: 0, p: 0, "&:last-child td": { borderBottom: "none" } }}
       className={className}
       {...props}
     />
@@ -266,7 +274,7 @@ const defaultComponents = memoizeMarkdownComponents({
   sup: ({ className, ...props }) => (
     <Box
       component="sup"
-      sx={{ '& a': { fontSize: '0.65em', textDecoration: 'none' } }}
+      sx={{ "& a": { fontSize: "0.65em", textDecoration: "none" } }}
       className={className}
       {...props}
     />
@@ -278,10 +286,10 @@ const defaultComponents = memoizeMarkdownComponents({
         overflowX: "auto",
         m: 0,
         p: 2,
-        fontFamily: 'monospace',
+        fontFamily: "monospace",
         color: theme.palette.text.primary,
         backgroundColor:
-          theme.palette.mode === 'dark'
+          theme.palette.mode === "dark"
             ? theme.palette.grey[900]
             : theme.palette.grey[100],
         border: `1px solid ${theme.palette.divider}`,
@@ -301,13 +309,13 @@ const defaultComponents = memoizeMarkdownComponents({
       <Box
         component="code"
         sx={(theme) => ({
-          fontFamily: 'monospace',
+          fontFamily: "monospace",
           px: 0.75,
           py: 0.25,
           borderRadius: theme.shape.borderRadius,
           backgroundColor: theme.palette.action.hover,
           border: `1px solid ${theme.palette.divider}`,
-          fontSize: '0.85em',
+          fontSize: "0.85em",
           fontWeight: 600,
         })}
         className={className}
