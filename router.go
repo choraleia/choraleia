@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/imliuda/omniterm/pkg/handler"
 	"github.com/imliuda/omniterm/pkg/models"
 	"github.com/imliuda/omniterm/pkg/service"
 	"github.com/imliuda/omniterm/pkg/utils"
@@ -118,6 +119,9 @@ func (s *Server) SetupRoutes() {
 	// Create quick command service instance
 	quickCmdService := service.NewQuickCommandService()
 
+	assetHandler := handler.NewAssetHandler(assetService, s.logger)
+	quickCmdHandler := handler.NewQuickCmdHandler(quickCmdService, s.logger)
+
 	// Terminal connection routes
 	// /terminal
 	termGroups := s.ginEngine.Group("/terminal")
@@ -127,19 +131,21 @@ func (s *Server) SetupRoutes() {
 	// /api
 	apiGroup := s.ginEngine.Group("/api")
 
+	// AI Agent Chat API route
+	// /api/chat
+	apiGroup.POST("/chat", agentService.HandleAgentChat)
+
 	// Asset management API routes
 	// /api/assets
 	assetsGroup := apiGroup.Group("/assets")
-	{
-		assetsGroup.POST("", s.createAsset(assetService))
-		assetsGroup.GET("", s.listAssets(assetService))
-		assetsGroup.GET("/:id", s.getAsset(assetService))
-		assetsGroup.PUT("/:id", s.updateAsset(assetService))
-		assetsGroup.PUT("/:id/move", s.moveAsset(assetService)) // new move route
-		assetsGroup.DELETE("/:id", s.deleteAsset(assetService))
-		assetsGroup.POST("/import/ssh", s.importSSHConfig(assetService))
-		assetsGroup.GET("/ssh-config", s.parseSSHConfig(assetService))
-	}
+	assetsGroup.POST("", assetHandler.Create)
+	assetsGroup.GET("", assetHandler.List)
+	assetsGroup.GET(":id", assetHandler.Get)
+	assetsGroup.PUT(":id", assetHandler.Update)
+	assetsGroup.PUT(":id/move", assetHandler.Move)
+	assetsGroup.DELETE(":id", assetHandler.Delete)
+	assetsGroup.POST("/import/ssh", assetHandler.ImportSSH)
+	assetsGroup.GET("/ssh-config", assetHandler.ParseSSH)
 
 	// Model management API routes
 	// /api/models
@@ -153,6 +159,7 @@ func (s *Server) SetupRoutes() {
 	models.RegisterArkProviderRoutes(s.ginEngine)
 
 	// Conversation management API routes
+	// /api/conversations
 	conversationsGroup := apiGroup.Group("/conversations")
 	{
 		conversationsGroup.GET("", s.getConversations(chatStoreService))
@@ -164,18 +171,16 @@ func (s *Server) SetupRoutes() {
 		conversationsGroup.GET(":id/messages", s.getConversationMessages(chatStoreService))
 	}
 
-	// AI Agent Chat API route
-	apiGroup.POST("/chat", agentService.HandleAgentChat)
-
-	// Quick command management API routes (CRUD + reorder)
+	// Quick command management API routes
+	// /api/quickcmd
 	quickCmdGroup := apiGroup.Group("/quickcmd")
 	{
-		quickCmdGroup.GET("", s.listQuickCommands(quickCmdService))
-		quickCmdGroup.POST("", s.createQuickCommand(quickCmdService))
-		quickCmdGroup.GET(":id", s.getQuickCommand(quickCmdService))
-		quickCmdGroup.PUT(":id", s.updateQuickCommand(quickCmdService))
-		quickCmdGroup.DELETE(":id", s.deleteQuickCommand(quickCmdService))
-		quickCmdGroup.POST("/reorder", s.reorderQuickCommands(quickCmdService))
+		quickCmdGroup.GET("", quickCmdHandler.List)
+		quickCmdGroup.GET(":id", quickCmdHandler.Get)
+		quickCmdGroup.POST("", quickCmdHandler.Create)
+		quickCmdGroup.PUT(":id", quickCmdHandler.Update)
+		quickCmdGroup.DELETE(":id", quickCmdHandler.Delete)
+		quickCmdGroup.PUT("reorder", quickCmdHandler.Reorder)
 	}
 }
 
