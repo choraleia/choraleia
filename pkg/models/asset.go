@@ -31,14 +31,15 @@ type Asset struct {
 
 // SSHConfig SSH connection config
 type SSHConfig struct {
-	Host           string `json:"host"`
-	Port           int    `json:"port"`
-	Username       string `json:"username"`
-	Password       string `json:"password,omitempty"`
-	PrivateKey     string `json:"private_key,omitempty"`
-	PrivateKeyPath string `json:"private_key_path,omitempty"`
-	ProxyJump      string `json:"proxy_jump,omitempty"`
-	Timeout        int    `json:"timeout"`
+	Host                 string `json:"host"`
+	Port                 int    `json:"port"`
+	Username             string `json:"username"`
+	Password             string `json:"password,omitempty"`
+	PrivateKey           string `json:"private_key,omitempty"`
+	PrivateKeyPath       string `json:"private_key_path,omitempty"`
+	PrivateKeyPassphrase string `json:"private_key_passphrase,omitempty"` // added passphrase field
+	ProxyJump            string `json:"proxy_jump,omitempty"`
+	Timeout              int    `json:"timeout"`
 }
 
 // LocalConfig local terminal config
@@ -124,6 +125,12 @@ type ParsedSSHHost struct {
 	User         string `json:"user"`
 	IdentityFile string `json:"identity_file"`
 	ProxyJump    string `json:"proxy_jump"`
+}
+
+// SSHKeyInfo represents an SSH private key file and whether it's encrypted
+type SSHKeyInfo struct {
+	Path      string `json:"path"`
+	Encrypted bool   `json:"encrypted"`
 }
 
 // ValidateConfig validate config based on type

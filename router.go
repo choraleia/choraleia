@@ -146,6 +146,8 @@ func (s *Server) SetupRoutes() {
 	assetsGroup.DELETE(":id", assetHandler.Delete)
 	assetsGroup.POST("/import/ssh", assetHandler.ImportSSH)
 	assetsGroup.GET("/ssh-config", assetHandler.ParseSSH)
+	assetsGroup.GET("/user-ssh-keys", assetHandler.ListSSHKeys)          // added endpoint
+	assetsGroup.GET("/user-ssh-key-inspect", assetHandler.InspectSSHKey) // inspect single key
 
 	// Model management API routes
 	// /api/models

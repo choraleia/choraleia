@@ -140,6 +140,32 @@ func (h *AssetHandler) Move(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Code: 200, Message: "Moved successfully", Data: asset})
 }
 
+func (h *AssetHandler) ListSSHKeys(c *gin.Context) {
+	keys, err := h.Svc.ListSSHKeys()
+	if err != nil {
+		h.Logger.Error("Failed to list SSH keys", "error", err, "clientIP", c.ClientIP())
+		c.JSON(http.StatusInternalServerError, models.Response{Code: 500, Message: err.Error()})
+		return
+	}
+	h.Logger.Debug("SSH keys listed via API", "count", len(keys), "clientIP", c.ClientIP())
+	c.JSON(http.StatusOK, models.Response{Code: 200, Message: "Retrieved successfully", Data: map[string]interface{}{"keys": keys}})
+}
+
+func (h *AssetHandler) InspectSSHKey(c *gin.Context) {
+	path := c.Query("path")
+	if path == "" {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path query param required"})
+		return
+	}
+	info, err := h.Svc.InspectSSHKey(path)
+	if err != nil {
+		h.Logger.Warn("Failed to inspect SSH key", "path", path, "error", err, "clientIP", c.ClientIP())
+		c.JSON(http.StatusNotFound, models.Response{Code: 404, Message: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, models.Response{Code: 200, Message: "OK", Data: info})
+}
+
 func convertToAssetSlice(assets []*models.Asset) []models.Asset {
 	res := make([]models.Asset, len(assets))
 	for i, a := range assets {

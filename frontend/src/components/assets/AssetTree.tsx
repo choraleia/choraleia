@@ -160,6 +160,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     // Add host / folder
     const [addHostModalVisible, setAddHostModalVisible] = useState(false);
     const [addHostParentId, setAddHostParentId] = useState<string | null>(null);
+    const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
     const [addFolderDialogOpen, setAddFolderDialogOpen] = useState(false);
     const [newFolderName, setNewFolderName] = useState("");
     const [newFolderParentId, setNewFolderParentId] = useState<string | null>(
@@ -903,15 +904,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
             size="small"
             onClick={() => {
               setNewFolderParentId(null);
-              setAddFolderDialogOpen(true);
-            }}
-          >
-            <FolderIcon fontSize="small" />
-          </IconButton>
-          <IconButton
-            size="small"
-            onClick={() => {
-              setAddHostParentId(null);
+              setEditingAsset(null);
               setAddHostModalVisible(true);
             }}
           >
@@ -1204,6 +1197,20 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
               Rename
             </MenuItem>
           )}
+          {/* Edit asset */}
+          {contextNode?.asset && contextNode.asset.type !== "folder" && (
+            <MenuItem
+              onClick={() => {
+                setEditingAsset(contextNode!.asset!);
+                setAddHostParentId(contextNode!.asset!.parent_id || null);
+                setAddHostModalVisible(true);
+                closeMenu();
+              }}
+            >
+              <DriveFileRenameOutlineIcon fontSize="small" style={{ marginRight: 8 }} />
+              Edit
+            </MenuItem>
+          )}
           {canDelete && (
             <MenuItem
               onClick={() => contextNode && deleteNode(contextNode)}
@@ -1218,7 +1225,11 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
         <AddHostDialog
           open={addHostModalVisible}
           parentId={addHostParentId || undefined}
-          onClose={() => setAddHostModalVisible(false)}
+          asset={editingAsset}
+          onClose={() => {
+            setAddHostModalVisible(false);
+            setEditingAsset(null);
+          }}
           onSuccess={() => fetchAssets()}
         />
 

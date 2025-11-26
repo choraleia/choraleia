@@ -3,13 +3,14 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/imliuda/omniterm/pkg/models"
+	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // AssetService asset management service (in-memory + file persistence)
@@ -457,4 +458,60 @@ func (s *AssetService) ImportFromSSHConfig() (int, error) {
 	}
 
 	return imported, nil
+}
+
+// ListSSHKeys lists available SSH private key files in user's ~/.ssh directory
+func (s *AssetService) ListSSHKeys() ([]models.SSHKeyInfo, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	sshDir := filepath.Join(homeDir, ".ssh")
+	entries, err := os.ReadDir(sshDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []models.SSHKeyInfo{}, nil
+		}
+		return nil, err
+	}
+	var keys []models.SSHKeyInfo
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasSuffix(name, ".pub") || name == "known_hosts" || name == "authorized_keys" || strings.HasPrefix(name, "config") {
+			continue
+		}
+		fullPath := filepath.Join(sshDir, name)
+		info, ierr := s.InspectSSHKey(fullPath)
+		if ierr == nil {
+			keys = append(keys, info)
+		}
+	}
+	slices.SortFunc(keys, func(a, b models.SSHKeyInfo) int { return strings.Compare(a.Path, b.Path) })
+	return keys, nil
+}
+
+// InspectSSHKey inspects a single private key file and reports encryption status
+func (s *AssetService) InspectSSHKey(path string) (models.SSHKeyInfo, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return models.SSHKeyInfo{}, err
+	}
+	if len(data) > 128*1024 {
+		return models.SSHKeyInfo{}, fmt.Errorf("file too large to be a key")
+	}
+	_, parseErr := ssh.ParsePrivateKey(data)
+	if parseErr == nil {
+		return models.SSHKeyInfo{Path: path, Encrypted: false}, nil
+	}
+	errMsg := parseErr.Error()
+	encrypted := false
+	if strings.Contains(errMsg, "passphrase") || strings.Contains(errMsg, "encrypted") || strings.Contains(errMsg, "cannot decode") {
+		if strings.Contains(string(data), "PRIVATE KEY") || strings.Contains(string(data), "OPENSSH") {
+			encrypted = true
+		}
+	}
+	return models.SSHKeyInfo{Path: path, Encrypted: encrypted}, nil
 }

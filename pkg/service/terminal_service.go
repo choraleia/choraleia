@@ -369,19 +369,21 @@ func (t *Terminal) startSSHConnection(asset *models.Asset) error {
 		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(password))
 	}
 
+	passphrase, _ := config["private_key_passphrase"].(string) // optional passphrase for encrypted key
+
 	if privateKeyPath, ok := config["private_key_path"].(string); ok && privateKeyPath != "" {
-		if key, err := t.loadPrivateKey(privateKeyPath); err == nil {
+		if key, err := t.loadPrivateKey(privateKeyPath, passphrase); err == nil {
 			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
 		} else {
+			// warn but continue to try other methods
 			t.logger.Warn("Failed to load private key from file", "path", privateKeyPath, "error", err, "assetId", t.assetID)
 		}
 	}
-
 	if privateKey, ok := config["private_key"].(string); ok && privateKey != "" {
-		if key, err := t.parsePrivateKey(privateKey); err == nil {
+		if key, err := t.parsePrivateKey(privateKey, passphrase); err == nil {
 			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
 		} else {
-			t.logger.Warn("Failed to parse private key", "error", err, "assetId", t.assetID)
+			t.logger.Warn("Failed to parse provided private key", "error", err, "assetId", t.assetID)
 		}
 	}
 
@@ -478,23 +480,30 @@ func (t *Terminal) startSSHConnection(asset *models.Asset) error {
 	return nil
 }
 
-// loadPrivateKey loads private key from file
-func (t *Terminal) loadPrivateKey(path string) (ssh.Signer, error) {
+// loadPrivateKey loads private key from file (supports optional passphrase)
+func (t *Terminal) loadPrivateKey(path string, passphrase string) (ssh.Signer, error) {
 	key, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return t.parsePrivateKey(string(key))
+	return t.parsePrivateKey(string(key), passphrase)
 }
 
-// parsePrivateKey parses private key
-func (t *Terminal) parsePrivateKey(keyData string) (ssh.Signer, error) {
+// parsePrivateKey parses private key; if encrypted and passphrase provided, attempts decryption
+func (t *Terminal) parsePrivateKey(keyData string, passphrase string) (ssh.Signer, error) {
 	signer, err := ssh.ParsePrivateKey([]byte(keyData))
-	if err != nil {
-		// Attempt to parse encrypted private key (simplified; should prompt passphrase)
-		return nil, err
+	if err == nil {
+		return signer, nil
 	}
-	return signer, nil
+	// Attempt encrypted key parsing if passphrase given
+	if passphrase != "" {
+		signerWithPw, perr := ssh.ParsePrivateKeyWithPassphrase([]byte(keyData), []byte(passphrase))
+		if perr == nil {
+			return signerWithPw, nil
+		}
+		return nil, perr
+	}
+	return nil, err
 }
 
 // WaitForReady waits terminal ready
