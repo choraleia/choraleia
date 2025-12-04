@@ -203,13 +203,43 @@ export default function AiAssistant({
       );
       if (resp.ok) {
         const data = await resp.json();
-        return (data || []).map((msg: any) => ({
-          id: msg.id || `msg_${Date.now()}_${Math.random()}`,
-          role: msg.role as "user" | "assistant",
-          content: msg.content,
-          createdAt: new Date(msg.created_at || Date.now()),
-          metadata: { custom: {} },
-        }));
+        return (data || []).map((msg: any) => {
+          // Normalize content into ThreadMessageLike parts array
+          let parts: any[] = [];
+          if (Array.isArray(msg.content)) {
+            parts = msg.content.map((part: any) => {
+              if (part.type === "text") return { type: "text", text: part.text || "" };
+              if (part.type === "reasoning") return { type: "reasoning", text: part.text || "" };
+              if (part.type === "image_url") return { type: "image_url", imageURL: part.imageURL };
+              if (part.type === "audio_url") return { type: "audio_url", audioURL: part.audioURL };
+              if (part.type === "video_url") return { type: "video_url", videoURL: part.videoURL };
+              if (part.type === "file_url") return { type: "file_url", fileURL: part.fileURL };
+              if (part.type === "tool-call") {
+                return {
+                  type: "tool-call",
+                  toolCallId: part.toolCallId || part.id,
+                  toolName: part.toolName,
+                  arguments: part.arguments,
+                  result: part.result,
+                };
+              }
+              return { type: part.type, ...part };
+            });
+          } else if (typeof msg.content === "string" && msg.content.length > 0) {
+            parts = [{ type: "text", text: msg.content }];
+          } else if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) {
+            parts = [{ type: "reasoning", text: msg.reasoning_content }];
+          } else {
+            parts = [];
+          }
+          return {
+            id: msg.id || `msg_${Date.now()}_${Math.random()}`,
+            role: (msg.role as "user" | "assistant") || "assistant",
+            content: parts,
+            createdAt: new Date(msg.created_at || Date.now()),
+            metadata: { custom: {} },
+          };
+        });
       }
     } catch (e) {
       console.error("Failed to load messages:", e);
@@ -911,3 +941,4 @@ export default function AiAssistant({
     </AssistantRuntimeProvider>
   );
 }
+
