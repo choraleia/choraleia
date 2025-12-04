@@ -14,6 +14,7 @@ import { type FC, memo, useState } from "react";
 import { TooltipIconButton } from "./tooltip-icon-button.tsx";
 import { CheckIcon, CopyIcon } from "./assistant-icons.tsx";
 import { Box, Typography, Link as MuiLink, Divider } from "@mui/material";
+import { MermaidDiagram } from "./mermaid-diagram.tsx";
 
 const MarkdownTextImpl = () => {
   return (
@@ -21,6 +22,11 @@ const MarkdownTextImpl = () => {
       remarkPlugins={[remarkGfm]}
       className="aui-md"
       components={defaultComponents}
+      componentsByLanguage={{
+        mermaid: {
+          SyntaxHighlighter: MermaidDiagram,
+        },
+      }}
     />
   );
 };
