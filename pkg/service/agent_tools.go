@@ -146,9 +146,6 @@ func ReadFile(_ context.Context, params *ReadFileInput) (string, error) {
 	if !exists || session.term == nil {
 		return "", fmt.Errorf("terminal not ready: %s", params.TerminalId)
 	}
-	if ok, _ := regexp.MatchString(`^[A-Za-z0-9._/\-]+$`, params.Path); !ok {
-		return "", fmt.Errorf("invalid path characters")
-	}
 	if params.MaxBytes <= 0 || params.MaxBytes > 200000 {
 		params.MaxBytes = 200000
 	}
@@ -204,9 +201,6 @@ func WriteFile(_ context.Context, params *WriteFileInput) (string, error) {
 	GlobalTerminalManager.mutex.RUnlock()
 	if !exists || session.term == nil {
 		return "", fmt.Errorf("terminal not ready: %s", params.TerminalId)
-	}
-	if ok, _ := regexp.MatchString(`^[A-Za-z0-9._/\-]+$`, params.Path); !ok {
-		return "", fmt.Errorf("invalid path characters")
 	}
 	delimiter := "OMNI_EOF"
 	if strings.Contains(params.Content, delimiter) {
