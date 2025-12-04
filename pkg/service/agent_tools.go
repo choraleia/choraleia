@@ -29,7 +29,7 @@ type ExecCommandInput struct {
 type ReadFileInput struct {
 	TerminalId string `json:"terminal_id"`
 	Path       string `json:"path"`
-	MaxBytes   int    `json:"max_bytes"`
+	MaxBytes   *int   `json:"max_bytes"`
 }
 
 type WriteFileInput struct {
@@ -146,9 +146,6 @@ func ReadFile(_ context.Context, params *ReadFileInput) (string, error) {
 	if !exists || session.term == nil {
 		return "", fmt.Errorf("terminal not ready: %s", params.TerminalId)
 	}
-	if params.MaxBytes <= 0 || params.MaxBytes > 200000 {
-		params.MaxBytes = 200000
-	}
 	marker := "__OMNITERM_EXIT_CODE__"
 	cmd := fmt.Sprintf("cat -- %s; echo %s$?", params.Path, marker)
 	session.mutex.RLock()
@@ -186,8 +183,8 @@ func ReadFile(_ context.Context, params *ReadFileInput) (string, error) {
 	if exitCode != 0 {
 		return fmt.Sprintf("Failed to read file (exit code %d)\nOutput:\n%s", exitCode, content), nil
 	}
-	if len(content) > params.MaxBytes {
-		content = content[:params.MaxBytes] + "\n...[truncated]"
+	if params.MaxBytes != nil && len(content) > *params.MaxBytes {
+		content = content[:*params.MaxBytes] + "\n...[truncated]"
 	}
 	return content, nil
 }
@@ -291,7 +288,7 @@ func NewReadFileTool() tool.InvokableTool {
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"terminal_id": {Type: schema.String, Required: true, Desc: "Terminal ID to use."},
 			"path":        {Type: schema.String, Required: true, Desc: "Absolute or relative file path."},
-			"max_bytes":   {Type: schema.Integer, Required: false, Desc: "Limit output size (default 200000)."},
+			"max_bytes":   {Type: schema.Integer, Required: false, Desc: "Limit output size (default no limit)."},
 		}),
 	}, ReadFile)
 	return readTool
