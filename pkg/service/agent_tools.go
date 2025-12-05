@@ -268,12 +268,18 @@ func NewTerminalOutputTool() tool.InvokableTool {
 
 func NewExecCommandTool() tool.InvokableTool {
 	cmdTool := utils.NewTool(&schema.ToolInfo{
-		Name:  "terminal_exec_command",
-		Desc:  "Execute a shell command in a terminal and return exit code & output. Use for diagnosis, file inspection, running scripts.",
+		Name: "terminal_exec_command",
+		Desc: "Execute a shell command in a terminal and return exit code & output. Use for diagnosis, file inspection, running scripts." +
+			"JSON & shell escaping guidance:" +
+			"- Provide a SINGLE tool call per command (do not concatenate multiple tool calls in one arguments string)." +
+			"- Arguments must be valid JSON; escape quotes and backslashes inside strings." +
+			"- Prefer single quotes in shell to reduce escaping needs, e.g.: grep -En 'pattern1|pattern2' --include='*.py' ." +
+			"- For alternations, use grep -E with single-quoted patterns without backslashes: 'a|b|c' (avoid writing a\\|b)." +
+			"- If a literal backslash is required, double-escape it in JSON.",
 		Extra: map[string]any{},
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"terminal_id":     {Type: schema.String, Required: true, Desc: "Target terminal ID from context."},
-			"command":         {Type: schema.String, Required: true, Desc: "Shell command to execute (no newline)."},
+			"command":         {Type: schema.String, Required: true, Desc: "Shell command to execute (no newline). Prefer single-quoted strings."},
 			"timeout_seconds": {Type: schema.Integer, Required: false, Desc: "Timeout waiting for command output (seconds), default 30"},
 		}),
 	}, ExecTerminalCommand)

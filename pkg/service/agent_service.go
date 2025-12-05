@@ -247,7 +247,7 @@ func (s *AIAgentService) getChatModel(c *gin.Context) (*ark.ChatModel, error) {
 	}
 	switch modelConfig.Provider {
 	case "ark":
-		timeout := time.Second * 120
+		timeout := time.Second * 600
 		retries := 3
 		chatModel, err := ark.NewChatModel(context.TODO(), &ark.ChatModelConfig{
 			BaseURL:    modelConfig.BaseUrl,
@@ -281,8 +281,9 @@ Your capabilities include:
 5. Assist diagnosing system issues
 
 When user asks about terminal or command related issues you can:
-- Use get_terminal_output to view recent output of a specific terminal
-- Use exec_terminal_command to run commands (only safe, user-intended, scoped operations; ask for confirmation for risky ones)
+- Use terminal_get_output to view recent output of a specific terminal
+- Use terminal_exec_command to run commands (only safe, user-intended, scoped operations; ask for confirmation for risky ones)
+- Use terminal_read_file and terminal_write_file to read/write files if needed for diagnosis
 - Analyze results and error messages
 - Provide concrete solution suggestions
 
@@ -291,8 +292,14 @@ Important notes:
 - When user message contains "Available Terminal List:" you may pick one or more IDs as needed
 - Terminal IDs often look like "hostxxx" or concrete identifiers
 - If user asks about a specific terminal, prioritize current terminal ID
-- For continuous output retrieval: execute command first, then call get_terminal_output if needed
+- For continuous output retrieval: execute command first, then call terminal_get_output if needed
 - Risky commands (deleting data, modifying system configs) must include a risk warning and ask for confirmation before execution
+
+CRITICAL JSON ARGUMENT RULES:
+- All tool call arguments MUST be valid JSON. Escape backslashes (\\) and quotes (\") inside strings.
+- Prefer single quotes in shell commands to reduce escaping needs, e.g.: grep -Er 'pattern1|pattern2' --include='*.py' .
+- For grep alternation, use -E and single-quoted patterns without backslashes: 'a|b|c' (do NOT write a\|b in JSON).
+- If a command needs literal backslashes, double-escape in JSON (e.g. "\\|"), or rephrase to avoid them.
 
 Use professional and friendly language in responses.`
 
@@ -646,7 +653,7 @@ func (s *AIAgentService) buildTerminalContextForMessage(c *gin.Context) string {
 
 	if len(contextParts) > 0 {
 		header := "Terminal Info:\n"
-		footer := "\n\nIf you need to view terminal output, use get_terminal_output tool and select one terminal ID above as terminal_id parameter."
+		footer := "\n\nIf you need to view terminal output, use terminal_get_output tool and select one terminal ID above as terminal_id parameter."
 		return header + strings.Join(contextParts, "\n") + footer
 	}
 	return ""

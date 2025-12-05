@@ -11,14 +11,14 @@ You now have a powerful AI Agent terminal assistant built with `NewChatModelAgen
 
 ### 🛠 Built-in Tools
 
-#### 1. get_terminal_output
+#### 1. terminal_get_output
 - **Purpose**: Fetch recent output of a specified terminal session
 - **Use Case**: Analyze command results, diagnose errors, interpret output
 - **Parameters**:
   - `terminal_id`: Terminal session ID (required)
   - `lines`: Number of lines to retrieve, default 20 (optional)
 
-#### 2. exec_terminal_command
+#### 2. terminal_exec_command
 - **Purpose**: Execute a shell command inside a specified terminal and return output & exit code
 - **Use Case**: Diagnostics, file inspection, running scripts
 - **Parameters**:
@@ -57,7 +57,7 @@ POST http://localhost:8088/api/agent/chat/stream
 ## AI Agent Workflow
 1. **Receive user request**: "I just ran ls -la, help analyze the output"
 2. **Determine need for tools**: AI detects need to view terminal output
-3. **Invoke tool**: Calls `get_terminal_output` automatically
+3. **Invoke tool**: Calls `terminal_get_output` automatically
 4. **Analyze output**: Reads actual terminal output content
 5. **Provide suggestions**: Gives professional explanation & recommendations
 
@@ -96,7 +96,7 @@ const response = await fetch('http://localhost:8088/api/agent/chat', {
 ### 1. Error Diagnosis
 **User**: "My program build failed, can you check what's wrong?"
 **AI Agent**:
-1. Calls `get_terminal_output` to fetch build output
+1. Calls `terminal_get_output` to fetch build output
 2. Analyzes error lines
 3. Gives concrete fix suggestions
 
