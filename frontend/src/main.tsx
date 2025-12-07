@@ -4,6 +4,7 @@ import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import App from "./App";
 import { lightTheme, darkTheme } from "./themes";
+import { WorkspaceProvider } from "./state/workspaces";
 
 const Root = () => {
   const getPrefersDark = () =>
@@ -23,7 +24,9 @@ const Root = () => {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <App />
+      <WorkspaceProvider>
+        <App />
+      </WorkspaceProvider>
     </ThemeProvider>
   );
 };
