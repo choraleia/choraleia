@@ -349,26 +349,40 @@ export const createSpaceConfigTemplate = (name = "New Space"): SpaceConfigInput 
   tools: [],
 });
 
-const ensureChatPane = (pane: any): ChatPane => {
-  if (pane.sessions && pane.activeSessionId) return pane as ChatPane;
-  const legacyMessages: ChatMessage[] = pane.messages || [];
-  const sessionId = uuid();
-  return {
-    id: pane.id || uuid(),
-    kind: "chat",
-    title: pane.title || "AI Chat",
-    sessions: [
-      {
-        id: sessionId,
-        title: "Session 1",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        messages: legacyMessages,
-        activeTools: [],
-      },
-    ],
-    activeSessionId: sessionId,
-  };
+const ensureChatPane = (pane: any, availableTools: ToolSession[] = []): ChatPane => {
+  const fallbackTools = availableTools.slice(0, 2);
+  const normalizedPane: ChatPane = pane.sessions && pane.activeSessionId
+    ? ({
+        ...pane,
+        sessions: pane.sessions.map((session: ChatSession) => ({
+          ...session,
+          activeTools:
+            Array.isArray(session.activeTools) && session.activeTools.length > 0
+              ? session.activeTools
+              : fallbackTools,
+        })),
+      } as ChatPane)
+    : (() => {
+        const legacyMessages: ChatMessage[] = pane.messages || [];
+        const sessionId = uuid();
+        return {
+          id: pane.id || uuid(),
+          kind: "chat",
+          title: pane.title || "AI Chat",
+          sessions: [
+            {
+              id: sessionId,
+              title: "Session 1",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: legacyMessages,
+              activeTools: fallbackTools,
+            },
+          ],
+          activeSessionId: sessionId,
+        };
+      })();
+  return normalizedPane;
 };
 
 const normalizeWorkspace = (workspace: Workspace): Workspace => ({
@@ -381,7 +395,7 @@ const normalizeWorkspace = (workspace: Workspace): Workspace => ({
     ...space,
     panes: space.panes.map((pane) =>
       pane.kind === "chat"
-        ? ensureChatPane(pane)
+        ? ensureChatPane(pane, space.toolSessions)
         : pane,
     ),
   })),
@@ -739,13 +753,14 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         ...space,
         panes: space.panes.map((pane) => {
           if (pane.id !== paneId || pane.kind !== "chat") return pane;
+          const defaultTools = space.toolSessions.slice(0, 2);
           const newSession: ChatSession = {
             id: uuid(),
             title: `Session ${pane.sessions.length + 1}`,
             createdAt: Date.now(),
             updatedAt: Date.now(),
             messages: [],
-            activeTools: [],
+            activeTools: defaultTools,
           };
           return {
             ...pane,

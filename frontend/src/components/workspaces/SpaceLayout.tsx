@@ -34,13 +34,11 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
     <Box display="flex" height="100%">
       <RightInspector onBackToOverview={onBackToOverview} />
       <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
-        <SpaceTabs
-          onToggleChatHistory={toggleChatHistory}
-          chatHistoryOpen={isChatHistoryOpen}
-        />
+        <SpaceTabs />
         <SpaceCanvas
           chatHistoryOpen={isChatHistoryOpen}
           onCloseChatHistory={closeChatHistory}
+          onToggleChatHistory={toggleChatHistory}
         />
       </Box>
       {activeWorkspace && (

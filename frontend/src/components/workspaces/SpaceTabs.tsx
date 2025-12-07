@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, IconButton, Tab, Tabs, Tooltip, Typography, Button } from "@mui/material";
+import { Box, IconButton, Tab, Tabs, Tooltip, Typography } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import ArticleIcon from "@mui/icons-material/Article";
 import TerminalIcon from "@mui/icons-material/Terminal";
@@ -52,12 +52,7 @@ const ClosableLabel: React.FC<{ title: React.ReactNode; onClose: () => void }> =
   </Box>
 );
 
-interface SpaceTabsProps {
-  onToggleChatHistory?: () => void;
-  chatHistoryOpen?: boolean;
-}
-
-const SpaceTabs: React.FC<SpaceTabsProps> = ({ onToggleChatHistory, chatHistoryOpen }) => {
+const SpaceTabs: React.FC = () => {
   const { activeSpace, setActivePane, closePane } = useWorkspaces();
   if (!activeSpace) return null;
   return (
@@ -89,11 +84,6 @@ const SpaceTabs: React.FC<SpaceTabsProps> = ({ onToggleChatHistory, chatHistoryO
           />
         ))}
       </Tabs>
-      {onToggleChatHistory && (
-        <Button size="small" onClick={onToggleChatHistory}>
-          {chatHistoryOpen ? "Hide History" : "History"}
-        </Button>
-      )}
     </Box>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Accordion,
   AccordionDetails,
@@ -23,6 +23,9 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import FolderIcon from "@mui/icons-material/Folder";
 import DescriptionIcon from "@mui/icons-material/Description";
+import TerminalIcon from "@mui/icons-material/Terminal";
+import DnsOutlinedIcon from "@mui/icons-material/DnsOutlined";
+import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
 import { FileNode, useWorkspaces } from "../../state/workspaces";
 
 const renderTree = (
@@ -69,12 +72,35 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
   const {
     workspaces,
     activeWorkspaceId,
+    activeWorkspace,
     selectWorkspace,
     activeSpace,
     openFileFromTree,
+    openTerminalTab,
   } = useWorkspaces();
+  const [assetsExpanded, setAssetsExpanded] = useState(true);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
   const toggleWorkspace = (_event: React.SyntheticEvent, isExpanded: boolean) => setWorkspaceExpanded(isExpanded);
+  const toggleAssets = (_event: React.SyntheticEvent, isExpanded: boolean) => setAssetsExpanded(isExpanded);
+  const assetItems = useMemo(
+    () => {
+      if (!activeWorkspace) return [];
+      const hostAssets = (activeWorkspace.assets?.hosts || []).map((host) => ({
+        id: host.id,
+        name: host.name,
+        subtitle: host.address,
+        icon: <DnsOutlinedIcon fontSize="small" />,
+      }));
+      const k8sAssets = (activeWorkspace.assets?.k8s || []).map((cluster) => ({
+        id: cluster.id,
+        name: cluster.name,
+        subtitle: cluster.namespace,
+        icon: <HubOutlinedIcon fontSize="small" />,
+      }));
+      return [...hostAssets, ...k8sAssets];
+    },
+    [activeWorkspace],
+  );
   if (!activeSpace) return null;
   return (
     <Box
@@ -132,6 +158,11 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
               <PlaylistAddIcon fontSize="inherit" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="Open terminal tab">
+            <IconButton size="small" sx={{ p: 0.5 }} onClick={openTerminalTab}>
+              <TerminalIcon fontSize="inherit" />
+            </IconButton>
+          </Tooltip>
         </AccordionSummary>
         <AccordionDetails
           sx={{
@@ -152,6 +183,69 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
           >
             {renderTree(activeSpace.fileTree, openFileFromTree)}
           </List>
+        </AccordionDetails>
+      </Accordion>
+      <Accordion
+        disableGutters
+        expanded={assetsExpanded}
+        onChange={toggleAssets}
+        square
+        sx={{
+          flex: assetsExpanded ? "1 1 0%" : "0 auto",
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          transition: "flex 0.2s ease",
+        }}
+      >
+        <AccordionSummary
+          expandIcon={<ExpandMoreIcon fontSize="small" />}
+          sx={{ minHeight: 36, "& .MuiAccordionSummary-content": { my: 0 } }}
+        >
+          <Typography variant="subtitle2">Assets</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+            {assetItems.length}
+          </Typography>
+        </AccordionSummary>
+        <AccordionDetails
+          sx={{
+            flex: assetsExpanded ? 1 : 0,
+            minHeight: 0,
+            overflow: assetsExpanded ? "auto" : "hidden",
+            p: 0,
+          }}
+        >
+          {assetItems.length === 0 ? (
+            <Box px={1.5} py={1}>
+              <Typography variant="body2" color="text.secondary">
+                No assets configured for this workspace.
+              </Typography>
+            </Box>
+          ) : (
+            <List
+              dense
+              disablePadding
+              sx={{
+                "& .MuiListItemIcon-root": { minWidth: 24 },
+                "& .MuiListItem-root": { my: 0 },
+                "& .MuiListItemButton-root": { py: 0.25 },
+              }}
+            >
+              {assetItems.map((asset) => (
+                <ListItem disablePadding key={asset.id}>
+                  <ListItemButton dense>
+                    <ListItemIcon sx={{ minWidth: 28 }}>{asset.icon}</ListItemIcon>
+                    <ListItemText
+                      primary={asset.name}
+                      secondary={asset.subtitle}
+                      primaryTypographyProps={{ noWrap: true }}
+                      secondaryTypographyProps={{ noWrap: true }}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          )}
         </AccordionDetails>
       </Accordion>
     </Box>
