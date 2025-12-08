@@ -310,6 +310,7 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
         <Box>
           <ComposerContainer>
             <Textarea
+              sx={{ fontSize: 12 }}
               minRows={1}
               maxRows={5}
               value={draft}
@@ -318,6 +319,18 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
             />
             <Stack direction="row" alignItems="center" spacing={0.75}>
               <Select
+                sx={{
+                  boxShadow: "none",
+                  ".MuiOutlinedInput-notchedOutline": { border: 0 },
+                  "&.MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline":
+                      {
+                        border: 0,
+                      },
+                  "&.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
+                      {
+                        border: 0,
+                      },
+                }}
                 size="small"
                 placeholder="Agent mode"
                 value={agentMode}
@@ -335,6 +348,18 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
                 <MenuItem value="assistant">Assistant</MenuItem>
               </Select>
               <Select
+                sx={{
+                  boxShadow: "none",
+                  ".MuiOutlinedInput-notchedOutline": { border: 0 },
+                  "&.MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline":
+                      {
+                        border: 0,
+                      },
+                  "&.MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline":
+                      {
+                        border: 0,
+                      },
+                }}
                 size="small"
                 placeholder="Model"
                 value={modelChoice}
@@ -363,7 +388,6 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
                 }}
                 disabled={!draft.trim()}
               >
-                Send
               </Button>
             </Stack>
           </ComposerContainer>
