@@ -378,17 +378,16 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
                 <MenuItem value="local-mixtral">Local Mixtral</MenuItem>
               </Select>
               <Box flex={1} />
-              <Button
-                size="small"
-                variant="contained"
-                endIcon={<SendIcon />}
+              <IconButton
+                color="primary"
                 onClick={() => {
                   sendChatMessage(pane.id, draft);
                   setDraft("");
                 }}
                 disabled={!draft.trim()}
               >
-              </Button>
+                <SendIcon fontSize="small" />
+              </IconButton>
             </Stack>
           </ComposerContainer>
         </Box>

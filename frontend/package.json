@@ -61,6 +61,7 @@
     "prettier": "^3.2.5",
     "tw-animate-css": "^1.3.8",
     "typescript": "^5.2.2",
-    "vite": "^7.1.5"
+    "vite": "^7.1.5",
+    "vite-plugin-monaco-editor": "^1.1.0"
   }
 }

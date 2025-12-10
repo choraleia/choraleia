@@ -143,13 +143,23 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({ open, onClose, on
               onChange={(e) => handleChange({ name: e.target.value })}
               fullWidth
             />
-            <Editor
-              height="200px"
-              defaultLanguage="markdown"
-              value={state.description}
-              onChange={handleEditorChange}
-              options={{ minimap: { enabled: false }, fontSize: 14 }}
-            />
+            <Box sx={{ "& .monaco-editor .margin": { width: 0 }, "& .monaco-editor .margin-view-overlays": { width: 0 } }}>
+              <Editor
+                height="200px"
+                defaultLanguage="markdown"
+                value={state.description}
+                onChange={handleEditorChange}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  lineNumbers: "off",
+                  glyphMargin: false,
+                  lineDecorationsWidth: 0,
+                  lineNumbersMinChars: 0,
+                  folding: false,
+                }}
+              />
+            </Box>
           </Stack>
         )}
         {tab === 1 && (

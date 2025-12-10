@@ -4,6 +4,7 @@ import { ThemeProvider } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 import App from "./App";
 import { lightTheme, darkTheme } from "./themes";
+import "./monaco";
 import { WorkspaceProvider } from "./state/workspaces";
 
 const Root = () => {
