@@ -1,8 +1,27 @@
 import React, { useState, useEffect, useImperativeHandle } from "react";
-import { Box, Tabs, Tab, TextField, Typography, FormControl, MenuItem, RadioGroup, FormControlLabel, Radio, Select, Switch } from "@mui/material";
+import {
+  Box,
+  Tabs,
+  Tab,
+  TextField,
+  Typography,
+  FormControl,
+  MenuItem,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  Select,
+  Switch,
+} from "@mui/material";
 import Autocomplete from "@mui/material/Autocomplete";
 import FolderIcon from "@mui/icons-material/Folder";
-import { FolderTreeItem, listSSHKeys, inspectSSHKey, SSHKeyInfo, AssetLike } from "../api/assets";
+import {
+  FolderTreeItem,
+  listSSHKeys,
+  inspectSSHKey,
+  SSHKeyInfo,
+  AssetLike,
+} from "../api/assets";
 import { createAsset, updateAsset } from "../api/assets";
 
 export interface SshConfig {
@@ -32,12 +51,27 @@ interface Props {
 }
 
 const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
-  ({ asset, mode, folderTreeItems, defaultParentId = null, onSuccess, onValidityChange, folderPathResolver }, ref) => {
+  (
+    {
+      asset,
+      mode,
+      folderTreeItems,
+      defaultParentId = null,
+      onSuccess,
+      onValidityChange,
+      folderPathResolver,
+    },
+    ref,
+  ) => {
     const [tab, setTab] = useState<"basic" | "advanced">("basic");
 
     const [name, setName] = useState<string>(asset?.name || "");
-    const [description, setDescription] = useState<string>(asset?.description || "");
-    const [parentFolder, setParentFolder] = useState<string | null>(asset?.parent_id ?? defaultParentId ?? null);
+    const [description, setDescription] = useState<string>(
+      asset?.description || "",
+    );
+    const [parentFolder, setParentFolder] = useState<string | null>(
+      asset?.parent_id ?? defaultParentId ?? null,
+    );
     const [config, setConfig] = useState<SshConfig>(() => {
       const cfg = (asset?.config || {}) as any;
       return {
@@ -74,7 +108,10 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
         private_key: cfg.private_key || "",
         timeout: typeof cfg.timeout === "number" ? cfg.timeout : 30,
       } as any);
-      if (cfg.private_key_path && cfg.private_key_path !== "") setAuthMethod("keyFile"); else if (cfg.password && cfg.password !== "") setAuthMethod("password"); else setAuthMethod("password");
+      if (cfg.private_key_path && cfg.private_key_path !== "")
+        setAuthMethod("keyFile");
+      else if (cfg.password && cfg.password !== "") setAuthMethod("password");
+      else setAuthMethod("password");
     }, [asset, defaultParentId]);
 
     const isValid = React.useMemo(() => {
@@ -94,10 +131,15 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
           value={parentFolder ?? "root"}
           renderValue={(value) => {
             if (value === "root") return "/";
-            if (typeof value === "string") return "/" + folderPathResolver(value);
+            if (typeof value === "string")
+              return "/" + folderPathResolver(value);
             return "/";
           }}
-          onChange={(e) => setParentFolder(e.target.value === "root" ? null : (e.target.value as string))}
+          onChange={(e) =>
+            setParentFolder(
+              e.target.value === "root" ? null : (e.target.value as string),
+            )
+          }
         >
           <MenuItem value="root">/</MenuItem>
           {folderTreeItems.map((item) => (
@@ -156,22 +198,29 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
       return false;
     };
 
-    useImperativeHandle(ref, () => ({ submit, canSubmit: () => isValid }), [submit, isValid]);
+    useImperativeHandle(ref, () => ({ submit, canSubmit: () => isValid }), [
+      submit,
+      isValid,
+    ]);
 
     const [availableKeys, setAvailableKeys] = useState<SSHKeyInfo[]>([]);
     useEffect(() => {
-      listSSHKeys().then((keys) => setAvailableKeys(keys)).catch(() => {});
+      listSSHKeys()
+        .then((keys) => setAvailableKeys(keys))
+        .catch(() => {});
     }, []);
 
     // auto inspect when key path changes
     useEffect(() => {
       if (authMethod === "keyFile" && config.private_key_path) {
-        const match = availableKeys.find(k => k.path === config.private_key_path);
+        const match = availableKeys.find(
+          (k) => k.path === config.private_key_path,
+        );
         if (match) {
           setKeyEncrypted(match.encrypted);
         } else {
           inspectSSHKey(config.private_key_path)
-            .then(info => setKeyEncrypted(!!info?.encrypted))
+            .then((info) => setKeyEncrypted(!!info?.encrypted))
             .catch(() => setKeyEncrypted(false));
         }
       } else {
@@ -188,19 +237,28 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
         {tab === "basic" ? (
           <Box display="flex" flexDirection="column" gap={2}>
             {folderSelect}
-            <TextField placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <TextField
+              placeholder="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
             <Box display="flex" gap={2}>
               <TextField
                 placeholder="Username"
                 value={config.username || ""}
-                onChange={(e) => setConfig((c) => ({ ...c, username: e.target.value }))}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, username: e.target.value }))
+                }
                 required
                 sx={{ flex: 1 }}
               />
               <TextField
                 placeholder="Host"
                 value={config.host || ""}
-                onChange={(e) => setConfig((c) => ({ ...c, host: e.target.value }))}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, host: e.target.value }))
+                }
                 required
                 sx={{ flex: 1 }}
               />
@@ -208,16 +266,31 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
                 placeholder="Port"
                 type="number"
                 value={config.port || 22}
-                onChange={(e) => setConfig((c) => ({ ...c, port: Number(e.target.value) }))}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, port: Number(e.target.value) }))
+                }
                 required
                 sx={{ width: 120 }}
               />
             </Box>
             <FormControl size={"small"}>
               <Typography sx={{ mb: 0.5 }}>Authentication Method</Typography>
-              <RadioGroup row value={authMethod} onChange={(e) => setAuthMethod(e.target.value as any)} sx={{ '& .MuiFormControlLabel-label': { fontSize: 12 } }}>
-                <FormControlLabel value="password" control={<Radio size="small" />} label="Password" />
-                <FormControlLabel value="keyFile" control={<Radio size="small" />} label="Key File" />
+              <RadioGroup
+                row
+                value={authMethod}
+                onChange={(e) => setAuthMethod(e.target.value as any)}
+                sx={{ "& .MuiFormControlLabel-label": { fontSize: 12 } }}
+              >
+                <FormControlLabel
+                  value="password"
+                  control={<Radio size="small" />}
+                  label="Password"
+                />
+                <FormControlLabel
+                  value="keyFile"
+                  control={<Radio size="small" />}
+                  label="Key File"
+                />
               </RadioGroup>
             </FormControl>
             {authMethod === "password" && (
@@ -225,21 +298,34 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
                 placeholder="Password"
                 type="password"
                 value={config.password || ""}
-                onChange={(e) => setConfig((c) => ({ ...c, password: e.target.value }))}
+                onChange={(e) =>
+                  setConfig((c) => ({ ...c, password: e.target.value }))
+                }
                 required
                 size={"small"}
               />
             )}
             {authMethod === "keyFile" && (
-              <Box display="flex" flexDirection="row" gap={2} alignItems="flex-start">
+              <Box
+                display="flex"
+                flexDirection="row"
+                gap={2}
+                alignItems="flex-start"
+              >
                 <Box flex={1}>
                   <Autocomplete
                     freeSolo
-                    options={availableKeys.map(k => k.path)}
+                    options={availableKeys.map((k) => k.path)}
                     value={config.private_key_path || ""}
-                    onInputChange={(_, val) => setConfig((c) => ({ ...c, private_key_path: val }))}
+                    onInputChange={(_, val) =>
+                      setConfig((c) => ({ ...c, private_key_path: val }))
+                    }
                     renderInput={(params) => (
-                      <TextField {...params} placeholder="SSH Key File Path" required />
+                      <TextField
+                        {...params}
+                        placeholder="SSH Key File Path"
+                        required
+                      />
                     )}
                     size={"small"}
                   />
@@ -249,7 +335,12 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
                     placeholder="Passphrase"
                     type="password"
                     value={config.private_key_passphrase || ""}
-                    onChange={(e) => setConfig((c) => ({ ...c, private_key_passphrase: e.target.value }))}
+                    onChange={(e) =>
+                      setConfig((c) => ({
+                        ...c,
+                        private_key_passphrase: e.target.value,
+                      }))
+                    }
                     sx={{ minWidth: 180 }}
                     size={"small"}
                   />
@@ -270,14 +361,21 @@ const SshAssetForm = React.forwardRef<SshAssetFormHandle, Props>(
               placeholder="Timeout"
               type="number"
               value={config.timeout || 30}
-              onChange={(e) => setConfig((c) => ({ ...c, timeout: Number(e.target.value) }))}
+              onChange={(e) =>
+                setConfig((c) => ({ ...c, timeout: Number(e.target.value) }))
+              }
             />
             <Box display="flex" alignItems="center" gap={1}>
               <Typography variant="caption">Use Password</Typography>
               <Switch
                 size="small"
                 checked={!!config.password}
-                onChange={(e) => setConfig((c) => ({ ...c, password: e.target.checked ? c.password : "" }))}
+                onChange={(e) =>
+                  setConfig((c) => ({
+                    ...c,
+                    password: e.target.checked ? c.password : "",
+                  }))
+                }
               />
             </Box>
           </Box>

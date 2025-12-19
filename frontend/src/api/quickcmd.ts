@@ -1,3 +1,5 @@
+import { getApiUrl } from "./base";
+
 export interface QuickCommandDTO {
   id: string;
   name: string;
@@ -17,10 +19,10 @@ interface ListResponse {
   total: number;
 }
 
-const API_BASE = "http://wails.localhost:8088/api/quickcmd";
+const getApiBase = () => getApiUrl("/api/quickcmd");
 
 export async function fetchQuickCommands(): Promise<QuickCommandDTO[]> {
-  const resp = await fetch(API_BASE);
+  const resp = await fetch(getApiBase());
   if (!resp.ok) throw new Error("HTTP " + resp.status);
   const j: Response<ListResponse> = await resp.json();
   if (j.code !== 200) throw new Error(j.message || "load failed");
@@ -32,7 +34,7 @@ export async function createQuickCommand(payload: {
   content: string;
   tags: string[];
 }): Promise<QuickCommandDTO> {
-  const resp = await fetch(API_BASE, {
+  const resp = await fetch(getApiBase(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -47,7 +49,7 @@ export async function updateQuickCommand(
   id: string,
   payload: Partial<{ name: string; content: string; tags: string[] }>,
 ): Promise<QuickCommandDTO> {
-  const resp = await fetch(`${API_BASE}/${id}`, {
+  const resp = await fetch(`${getApiBase()}/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -58,7 +60,7 @@ export async function updateQuickCommand(
 }
 
 export async function deleteQuickCommand(id: string): Promise<void> {
-  const resp = await fetch(`${API_BASE}/${id}`, { method: "DELETE" });
+  const resp = await fetch(`${getApiBase()}/${id}`, { method: "DELETE" });
   const j: Response = await resp.json();
   if (j.code !== 200) throw new Error(j.message || "delete failed");
 }
@@ -66,7 +68,7 @@ export async function deleteQuickCommand(id: string): Promise<void> {
 export async function reorderQuickCommands(
   ids: string[],
 ): Promise<QuickCommandDTO[]> {
-  const resp = await fetch(`${API_BASE}/reorder`, {
+  const resp = await fetch(`${getApiBase()}/reorder`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ids }),

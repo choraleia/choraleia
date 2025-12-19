@@ -14,6 +14,7 @@ import {
   InputLabel,
   Chip,
 } from "@mui/material";
+import { getApiUrl } from "../../api/base";
 
 // Model provider enumeration
 const MODEL_PROVIDERS = [
@@ -132,7 +133,7 @@ const ModelManager: React.FC = () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("http://wails.localhost:8088/api/models");
+      const res = await fetch(getApiUrl("/api/models"));
       const data = await res.json();
       if (data.code === 200) {
         setModels(data.data || []);
@@ -149,7 +150,7 @@ const ModelManager: React.FC = () => {
   const handleDelete = async (id: string) => {
     if (!window.confirm("Are you sure you want to delete this model?")) return;
     try {
-      const res = await fetch(`http://wails.localhost:8088/api/models/${id}`, {
+      const res = await fetch(getApiUrl(`/api/models/${id}`), {
         method: "DELETE",
       });
       const data = await res.json();
@@ -213,7 +214,7 @@ const ModelManager: React.FC = () => {
 
   useEffect(() => {
     if (showAdd && providerTab === "ark") {
-      fetch("http://wails.localhost:8088/api/models/provider/ark/credentials")
+      fetch(getApiUrl("/api/models/provider/ark/credentials"))
         .then((r) => r.json())
         .then((data) => {
           setArkCredential(data);
@@ -233,7 +234,7 @@ const ModelManager: React.FC = () => {
     setError("");
     try {
       const res = await fetch(
-        "http://wails.localhost:8088/api/models/provider/ark/credentials",
+        getApiUrl("/api/models/provider/ark/credentials"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -264,7 +265,7 @@ const ModelManager: React.FC = () => {
     setAdding(true);
     setError("");
     try {
-      const res = await fetch("http://wails.localhost:8088/api/models", {
+      const res = await fetch(getApiUrl("/api/models"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(arkModelForm),
@@ -292,7 +293,7 @@ const ModelManager: React.FC = () => {
     try {
       let payload = { ...deepseekForm };
       if (!payload.base_url) payload.base_url = DEEPSEEK_DEFAULT_BASE_URL;
-      const res = await fetch("http://wails.localhost:8088/api/models", {
+      const res = await fetch(getApiUrl("/api/models"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -315,7 +316,9 @@ const ModelManager: React.FC = () => {
     try {
       const endpoint = arkModelForm.endpoint;
       const res = await fetch(
-        `http://wails.localhost:8088/api/models/provider/ark/models?endpoint=${endpoint}&pageNumber=${page}&pageSize=${pageSize}`,
+        getApiUrl(
+          `/api/models/provider/ark/models?endpoint=${endpoint}&pageNumber=${page}&pageSize=${pageSize}`,
+        ),
       );
       const data = await res.json();
       if (data.code === 200) {
@@ -370,7 +373,7 @@ const ModelManager: React.FC = () => {
           ? ARK_DEFAULT_BASE_URL
           : DEEPSEEK_DEFAULT_BASE_URL;
     try {
-      const res = await fetch("http://wails.localhost:8088/api/models/test", {
+      const res = await fetch(getApiUrl("/api/models/test"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -664,7 +667,9 @@ const ModelManager: React.FC = () => {
                             setError("");
                             try {
                               const res = await fetch(
-                                "http://wails.localhost:8088/api/models/provider/ark/credentials",
+                                getApiUrl(
+                                  "/api/models/provider/ark/credentials",
+                                ),
                                 { method: "DELETE" },
                               );
                               const data = await res.json();
@@ -790,139 +795,35 @@ const ModelManager: React.FC = () => {
                                         : "none",
                                     }}
                                   >
-                                    <Typography
-                                      fontSize={13}
-                                      fontWeight={500}
-                                      color="#1677ff"
-                                    >
-                                      {model.Name || model.DisplayName}{" "}
-                                      {model.PrimaryVersion && (
-                                        <Typography
-                                          component="span"
-                                          fontSize={11}
-                                          color="#999"
-                                          ml={1}
-                                        >
-                                          {model.PrimaryVersion}
-                                        </Typography>
-                                      )}
-                                    </Typography>
-                                    <Typography
-                                      fontSize={11}
-                                      color="text.secondary"
-                                    >
-                                      {model.Description ||
-                                        model.Introduction ||
-                                        ""}
-                                    </Typography>
-                                    {model.FoundationModelTag && (
-                                      <Box
-                                        mt={0.5}
-                                        display="flex"
-                                        flexWrap="wrap"
-                                        gap={0.5}
-                                      >
-                                        {model.FoundationModelTag.Domains?.map(
-                                          (d: string) => (
-                                            <Chip key={d} label={d} />
-                                          ),
-                                        )}
-                                        {model.FoundationModelTag.TaskTypes?.map(
-                                          (t: string) => (
-                                            <Chip
-                                              key={t}
-                                              label={t}
-                                              color="primary"
-                                            />
-                                          ),
-                                        )}
-                                        {model.FoundationModelTag.CustomizedTags?.map(
-                                          (c: string) => (
-                                            <Chip
-                                              key={c}
-                                              label={c}
-                                              color="secondary"
-                                            />
-                                          ),
-                                        )}
+                                    <Box display="flex" flexDirection="column">
+                                      <Box fontSize={13} fontWeight={500}>
+                                        {model.DisplayName ||
+                                          model.Name ||
+                                          modelFull}
                                       </Box>
-                                    )}
+                                      <Box fontSize={11} color="text.secondary">
+                                        ID: {modelFull}
+                                      </Box>
+                                      {model.Description && (
+                                        <Box
+                                          mt={0.5}
+                                          fontSize={11}
+                                          color="text.secondary"
+                                        >
+                                          {model.Description}
+                                        </Box>
+                                      )}
+                                    </Box>
                                   </Box>
                                 );
                               })}
                             </Box>
                           )}
-                          <Box
-                            mt={1}
-                            display="flex"
-                            alignItems="center"
-                            gap={1}
-                          >
-                            <Button
-                              disabled={arkModelPage <= 1}
-                              onClick={() => {
-                                if (arkModelPage > 1)
-                                  fetchArkModelData(
-                                    arkModelPage - 1,
-                                    arkModelPageSize,
-                                  );
-                              }}
-                            >
-                              Previous
-                            </Button>
-                            <Typography fontSize={12}>
-                              {arkModelPage} /{" "}
-                              {Math.max(
-                                1,
-                                Math.ceil(arkModelTotal / arkModelPageSize),
-                              )}
-                            </Typography>
-                            <Button
-                              disabled={
-                                arkModelPage >=
-                                  Math.ceil(arkModelTotal / arkModelPageSize) ||
-                                arkModelTotal === 0
-                              }
-                              onClick={() => {
-                                if (
-                                  arkModelPage <
-                                  Math.ceil(arkModelTotal / arkModelPageSize)
-                                )
-                                  fetchArkModelData(
-                                    arkModelPage + 1,
-                                    arkModelPageSize,
-                                  );
-                              }}
-                            >
-                              Next
-                            </Button>
-                          </Box>
                         </Box>
                       )}
                   </Box>
-                  <Box mt={2} display="flex" alignItems="center">
-                    <Button
-                      variant="contained"
-                      disabled={adding || testing}
-                      onClick={handleTestModelConnection}
-                    >
-                      Test Connection
-                    </Button>
-                    <Button
-                      sx={{ ml: 1 }}
-                      disabled={adding}
-                      variant="contained"
-                      onClick={handleAddArkModel}
-                    >
-                      Save
-                    </Button>
-                    <Button sx={{ ml: 1 }} onClick={() => setShowAdd(false)}>
-                      Cancel
-                    </Button>
-                  </Box>
                 </Box>
               ) : (
-                // DeepSeek form
                 <Box
                   display="flex"
                   flexDirection="column"
@@ -935,12 +836,14 @@ const ModelManager: React.FC = () => {
                       required
                       value={deepseekForm.name}
                       onChange={(e) =>
-                        setDeepseekForm((f) => ({ ...f, name: e.target.value }))
+                        setDeepseekForm((f) => ({
+                          ...f,
+                          name: e.target.value,
+                        }))
                       }
                     />
                     <TextField
                       label="Model ID"
-                      required
                       value={deepseekForm.model}
                       onChange={(e) =>
                         setDeepseekForm((f) => ({
@@ -950,7 +853,7 @@ const ModelManager: React.FC = () => {
                       }
                     />
                     <TextField
-                      label="API Endpoint"
+                      label="Base URL"
                       required
                       value={deepseekForm.base_url}
                       onChange={(e) =>
@@ -971,37 +874,31 @@ const ModelManager: React.FC = () => {
                         }))
                       }
                     />
-                    {error && (
-                      <Typography color="error" fontSize={12}>
-                        {error}
-                      </Typography>
-                    )}
-                  </Box>
-                  <Box mt={2} display="flex" alignItems="center">
-                    <Button
-                      variant="contained"
-                      disabled={adding || testing}
-                      onClick={handleTestModelConnection}
-                    >
-                      Test Connection
-                    </Button>
-                    <Button
-                      sx={{ ml: 1 }}
-                      disabled={adding}
-                      variant="contained"
-                      onClick={handleAddDeepseekModel}
-                    >
-                      Save
-                    </Button>
-                    <Button sx={{ ml: 1 }} onClick={() => setShowAdd(false)}>
-                      Cancel
-                    </Button>
                   </Box>
                 </Box>
               )}
             </Box>
           </Box>
         </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowAdd(false)}>Cancel</Button>
+          <Button
+            variant="outlined"
+            onClick={handleTestModelConnection}
+            disabled={testing}
+          >
+            Test Connection
+          </Button>
+          <Button
+            variant="contained"
+            onClick={
+              providerTab === "ark" ? handleAddArkModel : handleAddDeepseekModel
+            }
+            disabled={adding}
+          >
+            Save
+          </Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );

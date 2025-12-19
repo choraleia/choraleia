@@ -1,3 +1,5 @@
+import { getApiUrl } from "../../../api/base";
+
 export type AssetType = "local" | "ssh" | "folder";
 
 export interface CreateAssetBody<TConfig = Record<string, any>> {
@@ -41,10 +43,11 @@ export interface AssetLike {
   parent_id?: string | null;
 }
 
-const API_BASE = "http://wails.localhost:8088";
+// Note: do not use getApiUrl("") + "/api/..." concatenation.
+// Always build full endpoints via getApiUrl("/api/..."), so URL joining stays correct.
 
 export async function listFolders(): Promise<BasicFolder[]> {
-  const resp = await fetch(`${API_BASE}/api/assets?type=folder`);
+  const resp = await fetch(getApiUrl("/api/assets?type=folder"));
   const json: ApiResponse<{ assets: BasicFolder[] }> = await resp.json();
   if (json.code === 200) return json.data?.assets || [];
   return [];
@@ -53,41 +56,54 @@ export async function listFolders(): Promise<BasicFolder[]> {
 export async function createAsset<TConfig = Record<string, any>>(
   body: CreateAssetBody<TConfig>,
 ): Promise<ApiResponse> {
-  const resp = await fetch(`${API_BASE}/api/assets`, {
+  const resp = await fetch(getApiUrl("/api/assets"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = await resp.json().catch(() => ({ code: resp.status, message: resp.statusText }));
+  const json = await resp
+    .json()
+    .catch(() => ({ code: resp.status, message: resp.statusText }));
   return json as ApiResponse;
 }
 
 export async function updateAsset<TConfig = Record<string, any>>(
   id: string,
-  body: Partial<CreateAssetBody<TConfig>> & { name?: string; description?: string; config?: TConfig; parent_id?: string | null },
+  body: Partial<CreateAssetBody<TConfig>> & {
+    name?: string;
+    description?: string;
+    config?: TConfig;
+    parent_id?: string | null;
+  },
 ): Promise<ApiResponse> {
-  const resp = await fetch(`${API_BASE}/api/assets/${id}`, {
+  const resp = await fetch(getApiUrl(`/api/assets/${id}`), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = await resp.json().catch(() => ({ code: resp.status, message: resp.statusText }));
+  const json = await resp
+    .json()
+    .catch(() => ({ code: resp.status, message: resp.statusText }));
   return json as ApiResponse;
 }
 
 export async function listSSHKeys(): Promise<SSHKeyInfo[]> {
-  const resp = await fetch(`${API_BASE}/api/assets/user-ssh-keys`);
-  const json: ApiResponse<{ keys: SSHKeyInfo[] }> = await resp.json().catch(() => ({ code: resp.status, message: resp.statusText } as any));
+  const resp = await fetch(getApiUrl("/api/assets/user-ssh-keys"));
+  const json: ApiResponse<{ keys: SSHKeyInfo[] }> = await resp
+    .json()
+    .catch(() => ({ code: resp.status, message: resp.statusText }) as any);
   if (json.code === 200) return json.data?.keys || [];
   return [];
 }
 
 export async function inspectSSHKey(path: string): Promise<SSHKeyInfo | null> {
   if (!path) return null;
-  const url = new URL(`${API_BASE}/api/assets/user-ssh-key-inspect`);
+  const url = new URL(getApiUrl("/api/assets/user-ssh-key-inspect"));
   url.searchParams.set("path", path);
   const resp = await fetch(url.toString());
-  const json: ApiResponse<SSHKeyInfo> = await resp.json().catch(() => ({ code: resp.status, message: resp.statusText } as any));
+  const json: ApiResponse<SSHKeyInfo> = await resp
+    .json()
+    .catch(() => ({ code: resp.status, message: resp.statusText }) as any);
   if (json.code === 200 && json.data) return json.data;
   return null;
 }
@@ -99,7 +115,9 @@ export function buildFolderTreeItems(folders: BasicFolder[]): FolderTreeItem[] {
     const pid = f.parent_id || "__root__";
     (childrenMap[pid] ||= []).push(f);
   });
-  Object.values(childrenMap).forEach((arr) => arr.sort((a, b) => a.name.localeCompare(b.name)));
+  Object.values(childrenMap).forEach((arr) =>
+    arr.sort((a, b) => a.name.localeCompare(b.name)),
+  );
   const res: FolderTreeItem[] = [];
   const dfs = (parentKey: string, depth: number) => {
     const arr = childrenMap[parentKey];

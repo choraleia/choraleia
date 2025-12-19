@@ -34,12 +34,12 @@ mermaid.initialize({ theme: "default", startOnLoad: false });
  * };
  */
 export const MermaidDiagram: FC<MermaidDiagramProps> = ({
-                                                          code,
-                                                          className,
-                                                          node: _node,
-                                                          components: _components,
-                                                          language: _language,
-                                                        }) => {
+  code,
+  className,
+  node: _node,
+  components: _components,
+  language: _language,
+}) => {
   const ref = useRef<HTMLPreElement>(null);
   // Detect when this code block is complete
   const isComplete = useAssistantState(({ part }) => {
@@ -69,13 +69,13 @@ export const MermaidDiagram: FC<MermaidDiagramProps> = ({
     })();
   }, [isComplete, code]);
   return (
-      <pre
-          ref={ref}
-          className={cn(
-              "aui-mermaid-diagram rounded-b-lg bg-muted p-2 text-center [&_svg]:mx-auto",
-              className,
-          )}
-      >
+    <pre
+      ref={ref}
+      className={cn(
+        "aui-mermaid-diagram rounded-b-lg bg-muted p-2 text-center [&_svg]:mx-auto",
+        className,
+      )}
+    >
       Drawing diagram...
     </pre>
   );

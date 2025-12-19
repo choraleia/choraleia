@@ -16,6 +16,7 @@ import "./globals.css";
 import { v4 as uuidv4 } from "uuid";
 import { ChatMessage, RoleType } from "./chat-message.ts";
 import { ThreadList } from "./thread-list.tsx";
+import { getApiUrl } from "../../api/base";
 
 // Tab pane data type (imported from App.tsx definitions)
 interface TabPane {
@@ -168,8 +169,10 @@ export default function AiAssistant({
         if (currentTab && currentTab.assetId) assetId = currentTab.assetId;
       }
       const url = assetId
-        ? `http://wails.localhost:8088/api/conversations?asset_id=${encodeURIComponent(assetId)}`
-        : "http://wails.localhost:8088/api/conversations";
+        ? getApiUrl(
+            `/api/conversations?asset_id=${encodeURIComponent(assetId)}`,
+          )
+        : getApiUrl("/api/conversations");
       const resp = await fetch(url);
       if (resp.ok) {
         const data = await resp.json();
@@ -199,7 +202,7 @@ export default function AiAssistant({
   const loadMessages = useCallback(async (conversationId: string) => {
     try {
       const resp = await fetch(
-        `http://wails.localhost:8088/api/conversations/${conversationId}/messages`,
+        getApiUrl(`/api/conversations/${conversationId}/messages`),
       );
       if (resp.ok) {
         const data = await resp.json();
@@ -208,12 +211,18 @@ export default function AiAssistant({
           let parts: any[] = [];
           if (Array.isArray(msg.content)) {
             parts = msg.content.map((part: any) => {
-              if (part.type === "text") return { type: "text", text: part.text || "" };
-              if (part.type === "reasoning") return { type: "reasoning", text: part.text || "" };
-              if (part.type === "image_url") return { type: "image_url", imageURL: part.imageURL };
-              if (part.type === "audio_url") return { type: "audio_url", audioURL: part.audioURL };
-              if (part.type === "video_url") return { type: "video_url", videoURL: part.videoURL };
-              if (part.type === "file_url") return { type: "file_url", fileURL: part.fileURL };
+              if (part.type === "text")
+                return { type: "text", text: part.text || "" };
+              if (part.type === "reasoning")
+                return { type: "reasoning", text: part.text || "" };
+              if (part.type === "image_url")
+                return { type: "image_url", imageURL: part.imageURL };
+              if (part.type === "audio_url")
+                return { type: "audio_url", audioURL: part.audioURL };
+              if (part.type === "video_url")
+                return { type: "video_url", videoURL: part.videoURL };
+              if (part.type === "file_url")
+                return { type: "file_url", fileURL: part.fileURL };
               if (part.type === "tool-call") {
                 return {
                   type: "tool-call",
@@ -225,9 +234,15 @@ export default function AiAssistant({
               }
               return { type: part.type, ...part };
             });
-          } else if (typeof msg.content === "string" && msg.content.length > 0) {
+          } else if (
+            typeof msg.content === "string" &&
+            msg.content.length > 0
+          ) {
             parts = [{ type: "text", text: msg.content }];
-          } else if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) {
+          } else if (
+            typeof msg.reasoning_content === "string" &&
+            msg.reasoning_content.length > 0
+          ) {
             parts = [{ type: "reasoning", text: msg.reasoning_content }];
           } else {
             parts = [];
@@ -263,18 +278,15 @@ export default function AiAssistant({
           if (currentTab && currentTab.assetId) assetId = currentTab.assetId;
         }
         try {
-          const createResponse = await fetch(
-            "http://wails.localhost:8088/api/conversations",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title: "New Conversation",
-                asset_id: assetId,
-                asset_session_id: tabKey,
-              }),
-            },
-          );
+          const createResponse = await fetch(getApiUrl("/api/conversations"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: "New Conversation",
+              asset_id: assetId,
+              asset_session_id: tabKey,
+            }),
+          });
           if (createResponse.ok) {
             const conversation = await createResponse.json();
             await loadThreads();
@@ -335,7 +347,7 @@ export default function AiAssistant({
             ...selectedTerminals.filter((t) => t !== tabKey),
           ].join(","),
         });
-        const url = `http://wails.localhost:8088/api/chat?${params.toString()}`;
+        const url = getApiUrl(`/api/chat?${params.toString()}`);
         const source = new SSE(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -548,7 +560,8 @@ export default function AiAssistant({
       const prev = parts[i - 1];
       const curr = parts[i];
       if (
-        (prev.type === curr.type && (curr.type === "text" || curr.type === "reasoning")) ||
+        (prev.type === curr.type &&
+          (curr.type === "text" || curr.type === "reasoning")) ||
         (curr.type === "tool-call" && curr.result !== undefined)
       ) {
         needsWork = true;
@@ -574,13 +587,18 @@ export default function AiAssistant({
         last = p;
         continue;
       }
-      if (last && last.type === p.type && (p.type === "text" || p.type === "reasoning")) {
+      if (
+        last &&
+        last.type === p.type &&
+        (p.type === "text" || p.type === "reasoning")
+      ) {
         last.text = (last.text || "") + (p.text || "");
         continue;
       }
-      const normalized = (p.type === "text" || p.type === "reasoning")
-        ? { type: p.type, text: p.text || "" }
-        : p;
+      const normalized =
+        p.type === "text" || p.type === "reasoning"
+          ? { type: p.type, text: p.text || "" }
+          : p;
       out.push(normalized);
       last = normalized;
     }
@@ -668,18 +686,15 @@ export default function AiAssistant({
           isLoading: true,
         },
       }));
-      const createResponse = await fetch(
-        "http://wails.localhost:8088/api/conversations",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: "New Conversation",
-            asset_id: assetId,
-            asset_session_id: currentTerminal,
-          }),
-        },
-      );
+      const createResponse = await fetch(getApiUrl("/api/conversations"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "New Conversation",
+          asset_id: assetId,
+          asset_session_id: currentTerminal,
+        }),
+      });
       if (createResponse.ok) {
         await loadThreads();
         const conversation = await createResponse.json();
@@ -752,22 +767,18 @@ export default function AiAssistant({
       }
     },
     onRename: async (threadId: string, newTitle: string) => {
-      await fetch(
-        `http://wails.localhost:8088/api/conversations/${threadId}/title`,
-        {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: newTitle }),
-        },
-      );
+      await fetch(getApiUrl(`/api/conversations/${threadId}/title`), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      });
       await loadThreads();
     },
     onDelete: async (threadId: string) => {
       try {
-        const resp = await fetch(
-          `http://wails.localhost:8088/api/conversations/${threadId}`,
-          { method: "DELETE" },
-        );
+        const resp = await fetch(getApiUrl(`/api/conversations/${threadId}`), {
+          method: "DELETE",
+        });
         if (resp.ok) {
           await loadThreads();
           setTabChatStates((prev) => {
@@ -817,7 +828,9 @@ export default function AiAssistant({
       setTitleGenerationStatus((prev) => ({ ...prev, [convoId]: "pending" }));
       try {
         const resp = await fetch(
-          `http://wails.localhost:8088/api/conversations/${convoId}/generateTitle?selectedModel=${encodeURIComponent(selectedModel)}`,
+          getApiUrl(
+            `/api/conversations/${convoId}/generateTitle?selectedModel=${encodeURIComponent(selectedModel)}`,
+          ),
         );
         if (resp.ok) {
           const data = await resp.json();
@@ -876,7 +889,7 @@ export default function AiAssistant({
     if (!visible) return;
     (async () => {
       try {
-        const resp = await fetch("http://wails.localhost:8088/api/models");
+        const resp = await fetch(getApiUrl("/api/models"));
         if (resp.ok) {
           const data = await resp.json();
           if (Array.isArray(data.data)) {
@@ -941,4 +954,3 @@ export default function AiAssistant({
     </AssistantRuntimeProvider>
   );
 }
-

@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useImperativeHandle } from "react";
-import { Box, Tabs, Tab, TextField, Typography, FormControl, Select, MenuItem } from "@mui/material";
+import {
+  Box,
+  Tabs,
+  Tab,
+  TextField,
+  Typography,
+  FormControl,
+  Select,
+  MenuItem,
+} from "@mui/material";
 import FolderIcon from "@mui/icons-material/Folder";
 import { FolderTreeItem } from "../api/assets";
 import { createAsset, updateAsset, AssetLike } from "../api/assets";
@@ -26,12 +35,27 @@ interface Props {
 }
 
 const LocalAssetForm = React.forwardRef<LocalAssetFormHandle, Props>(
-  ({ asset, mode, folderTreeItems, defaultParentId = null, onSuccess, onValidityChange, folderPathResolver }, ref) => {
+  (
+    {
+      asset,
+      mode,
+      folderTreeItems,
+      defaultParentId = null,
+      onSuccess,
+      onValidityChange,
+      folderPathResolver,
+    },
+    ref,
+  ) => {
     const [tab, setTab] = useState<"basic" | "advanced">("basic");
 
     const [name, setName] = useState<string>(asset?.name || "");
-    const [description, setDescription] = useState<string>(asset?.description || "");
-    const [parentFolder, setParentFolder] = useState<string | null>(asset?.parent_id ?? defaultParentId ?? null);
+    const [description, setDescription] = useState<string>(
+      asset?.description || "",
+    );
+    const [parentFolder, setParentFolder] = useState<string | null>(
+      asset?.parent_id ?? defaultParentId ?? null,
+    );
     const [config, setConfig] = useState<LocalConfig>(() => {
       const cfg = (asset?.config || {}) as any;
       return {
@@ -73,7 +97,11 @@ const LocalAssetForm = React.forwardRef<LocalAssetFormHandle, Props>(
             }
             return "/";
           }}
-          onChange={(e) => setParentFolder(e.target.value === "root" ? null : (e.target.value as string))}
+          onChange={(e) =>
+            setParentFolder(
+              e.target.value === "root" ? null : (e.target.value as string),
+            )
+          }
         >
           <MenuItem value="root">/</MenuItem>
           {folderTreeItems.map((item) => (
@@ -118,7 +146,10 @@ const LocalAssetForm = React.forwardRef<LocalAssetFormHandle, Props>(
       return false;
     };
 
-    useImperativeHandle(ref, () => ({ submit, canSubmit: () => isValid }), [submit, isValid]);
+    useImperativeHandle(ref, () => ({ submit, canSubmit: () => isValid }), [
+      submit,
+      isValid,
+    ]);
 
     return (
       <Box display="flex" flexDirection="column" gap={2}>
@@ -129,17 +160,26 @@ const LocalAssetForm = React.forwardRef<LocalAssetFormHandle, Props>(
         {tab === "basic" ? (
           <Box display="flex" flexDirection="column" gap={2}>
             {folderSelect}
-            <TextField placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
+            <TextField
+              placeholder="Name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+            />
             <TextField
               placeholder="Shell"
               value={config.shell || ""}
-              onChange={(e) => setConfig((c) => ({ ...c, shell: e.target.value }))}
+              onChange={(e) =>
+                setConfig((c) => ({ ...c, shell: e.target.value }))
+              }
               required
             />
             <TextField
               placeholder="Working Dir"
               value={config.working_dir || ""}
-              onChange={(e) => setConfig((c) => ({ ...c, working_dir: e.target.value }))}
+              onChange={(e) =>
+                setConfig((c) => ({ ...c, working_dir: e.target.value }))
+              }
             />
             <TextField
               placeholder="Description"

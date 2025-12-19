@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -21,20 +24,50 @@ type Server struct {
 	ginEngine *gin.Engine
 	upgrader  *websocket.Upgrader
 	logger    *slog.Logger
+	port      int
 }
 
 func NewServer() *Server {
 	ginEngine := gin.New()
 	ginEngine.Use(gin.Recovery())
 
-	// Add CORS middleware to support wails.localhost domain
+	// CORS middleware: allow Wails dev origins (wails://localhost:*) and common localhost origins.
+	// Note: if you don't need cookies/credentials, keep Allow-Credentials off.
 	ginEngine.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+		origin := c.Request.Header.Get("Origin")
+
+		// If there's no Origin header, it's not a browser CORS request.
+		if origin != "" {
+			allowed := false
+
+			// Allow Wails dev scheme.
+			if strings.HasPrefix(origin, "wails://localhost") || strings.HasPrefix(origin, "wails://127.0.0.1") {
+				allowed = true
+			}
+
+			// Allow typical localhost dev origins.
+			if strings.HasPrefix(origin, "http://localhost") ||
+				strings.HasPrefix(origin, "http://127.0.0.1") ||
+				strings.HasPrefix(origin, "https://localhost") ||
+				strings.HasPrefix(origin, "https://127.0.0.1") {
+				allowed = true
+			}
+
+			if allowed {
+				// Must echo the Origin when Origin is a custom scheme (like wails://) to satisfy browsers.
+				c.Header("Access-Control-Allow-Origin", origin)
+				c.Header("Vary", "Origin")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+			} else {
+				// Reject unknown origins.
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+		}
 
 		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
+			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
 
@@ -56,6 +89,7 @@ func NewServer() *Server {
 		ginEngine: ginEngine,
 		upgrader:  upgrader,
 		logger:    utils.GetLogger(),
+		port:      0,
 	}
 
 	server.SetupRoutes()
@@ -64,12 +98,30 @@ func NewServer() *Server {
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	srv := &http.Server{Addr: ":8088", Handler: s.ginEngine}
+	// Read port from environment variable OMNITERM_PORT, default to 8088 if unset or invalid
+	port := 8088
+	if v := os.Getenv("OMNITERM_PORT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p > 0 && p <= 65535 {
+			port = p
+		} else {
+			s.logger.Warn("Invalid OMNITERM_PORT value, falling back to default", "value", v)
+		}
+	}
+
+	addr := fmt.Sprintf(":%d", port)
+	srv := &http.Server{Addr: addr, Handler: s.ginEngine}
 
 	// Attempt to listen on port first; if occupied return error immediately
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
 		return err
+	}
+
+	// Record the actual port (useful if we ever switch to :0).
+	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
+		s.port = tcpAddr.Port
+	} else {
+		s.port = port
 	}
 
 	errChan := make(chan error, 1)
@@ -130,6 +182,24 @@ func (s *Server) SetupRoutes() {
 	// API group
 	// /api
 	apiGroup := s.ginEngine.Group("/api")
+
+	// Runtime info (for GUI/wails:// and headless clients to discover correct base URLs)
+	apiGroup.GET("/runtime", func(c *gin.Context) {
+		// Default to localhost because the backend is bound locally.
+		host := "127.0.0.1"
+		port := s.port
+		if port == 0 {
+			port = 8088
+		}
+
+		httpBase := fmt.Sprintf("http://%s:%d", host, port)
+		wsBase := fmt.Sprintf("ws://%s:%d", host, port)
+		c.JSON(http.StatusOK, models.RuntimeInfo{
+			HTTPBaseURL: httpBase,
+			WSBaseURL:   wsBase,
+			Port:        port,
+		})
+	})
 
 	// AI Agent Chat API route
 	// /api/chat

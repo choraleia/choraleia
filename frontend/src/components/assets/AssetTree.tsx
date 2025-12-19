@@ -35,9 +35,12 @@ import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
 import Popover from "@mui/material/Popover";
 import AddHostDialog from "./AddHostDialog.tsx";
+import { getApiUrl } from "../../api/base";
+
+// Remove old API_BASE constant and use getApiUrl("/api/...") at call sites.
 
 // Unified API base URL
-const API_BASE = "http://wails.localhost:8088";
+// (Avoid getApiUrl("") + "/api/..." concatenation; build endpoints with getApiUrl("/api/...") instead.)
 
 // Asset type interface
 export interface Asset {
@@ -254,7 +257,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       setLoading(true);
       setError("");
       try {
-        const resp = await fetch(`${API_BASE}/api/assets`);
+        const resp = await fetch(getApiUrl("/api/assets"));
         if (!resp.ok) {
           setError(`HTTP ${resp.status}`);
           setAllAssets([]);
@@ -493,7 +496,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
         parent_id: newFolderParentId,
       };
       try {
-        const resp = await fetch(`${API_BASE}/api/assets`, {
+        const resp = await fetch(getApiUrl("/api/assets"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -509,7 +512,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     // Delete node
     const deleteNode = async (node: HostNode) => {
       try {
-        const resp = await fetch(`${API_BASE}/api/assets/${node.key}`, {
+        const resp = await fetch(getApiUrl(`/api/assets/${node.key}`), {
           method: "DELETE",
         });
         if (resp.ok) await fetchAssets();
@@ -528,7 +531,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const submitRename = async () => {
       if (!renamingAssetId) return;
       try {
-        const resp = await fetch(`${API_BASE}/api/assets/${renamingAssetId}`, {
+        const resp = await fetch(getApiUrl(`/api/assets/${renamingAssetId}`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name: renameValue }),
@@ -557,7 +560,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       if (movePosition === "append") req.target_sibling_id = null;
       try {
         const resp = await fetch(
-          `${API_BASE}/api/assets/${contextNode.asset.id}/move`,
+          getApiUrl(`/api/assets/${contextNode.asset.id}/move`),
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -785,7 +788,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       };
       if (position === "append") req.target_sibling_id = null;
       try {
-        const resp = await fetch(`${API_BASE}/api/assets/${assetId}/move`, {
+        const resp = await fetch(getApiUrl(`/api/assets/${assetId}/move`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(req),
@@ -1207,7 +1210,10 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
                 closeMenu();
               }}
             >
-              <DriveFileRenameOutlineIcon fontSize="small" style={{ marginRight: 8 }} />
+              <DriveFileRenameOutlineIcon
+                fontSize="small"
+                style={{ marginRight: 8 }}
+              />
               Edit
             </MenuItem>
           )}

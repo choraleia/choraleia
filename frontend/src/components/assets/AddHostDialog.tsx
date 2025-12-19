@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Box, Tabs, Tab, Button, Dialog, DialogTitle, DialogContent, DialogActions } from "@mui/material";
+import {
+  Box,
+  Tabs,
+  Tab,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+} from "@mui/material";
 import DesktopMacIcon from "@mui/icons-material/DesktopMac";
 import SecurityIcon from "@mui/icons-material/Security";
 import SshAssetForm, { SshAssetFormHandle } from "./forms/SshAssetForm";
@@ -42,8 +51,12 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
       ? (asset.type as AssetType)
       : "local";
   const [selectedType, setSelectedType] = useState<AssetType>(initialType);
-  const [folderTreeItems, setFolderTreeItems] = useState<{ id: string; name: string; depth: number }[]>([]);
-  const [folderPathResolver, setFolderPathResolver] = useState<(id: string) => string>(() => () => "");
+  const [folderTreeItems, setFolderTreeItems] = useState<
+    { id: string; name: string; depth: number }[]
+  >([]);
+  const [folderPathResolver, setFolderPathResolver] = useState<
+    (id: string) => string
+  >(() => () => "");
   const [loading, setLoading] = useState(false);
   const [isValid, setIsValid] = useState(false);
 
@@ -60,7 +73,10 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
         setFolderTreeItems(buildFolderTreeItems(folders));
         setFolderPathResolver(() => (id: string) => {
           // Build path from latest fetched folders snapshot
-          const idMap: Record<string, { id: string; name: string; parent_id: string | null }> = {};
+          const idMap: Record<
+            string,
+            { id: string; name: string; parent_id: string | null }
+          > = {};
           folders.forEach((f) => {
             idMap[f.id] = f as any;
           });
@@ -91,9 +107,10 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
     if (loading) return;
     setLoading(true);
     try {
-      const ok = selectedType === "ssh"
-        ? await sshFormRef.current?.submit()
-        : await localFormRef.current?.submit();
+      const ok =
+        selectedType === "ssh"
+          ? await sshFormRef.current?.submit()
+          : await localFormRef.current?.submit();
       if (ok) return; // onSuccess closes dialog
     } finally {
       setLoading(false);
@@ -110,7 +127,12 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
             orientation="vertical"
             value={selectedType}
             onChange={(_, v) => !isEdit && setSelectedType(v as AssetType)}
-            sx={{ borderRight: 1, borderColor: "divider", minWidth: 160, alignItems: "flex-start" }}
+            sx={{
+              borderRight: 1,
+              borderColor: "divider",
+              minWidth: 160,
+              alignItems: "flex-start",
+            }}
           >
             <Tab
               key="local"
@@ -119,16 +141,26 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
               iconPosition="start"
               icon={<DesktopMacIcon />}
               disabled={isEdit}
-              sx={{ justifyContent: "flex-start", alignItems: "center", pl: 1, textAlign: "left" }}
+              sx={{
+                justifyContent: "flex-start",
+                alignItems: "center",
+                pl: 1,
+                textAlign: "left",
+              }}
             />
             <Tab
-                key="ssh"
-                value="ssh"
-                label="SSH"
-                iconPosition="start"
-                icon={<SecurityIcon />}
-                disabled={isEdit}
-                sx={{ justifyContent: "flex-start", alignItems: "center", pl: 1, textAlign: "left" }}
+              key="ssh"
+              value="ssh"
+              label="SSH"
+              iconPosition="start"
+              icon={<SecurityIcon />}
+              disabled={isEdit}
+              sx={{
+                justifyContent: "flex-start",
+                alignItems: "center",
+                pl: 1,
+                textAlign: "left",
+              }}
             />
           </Tabs>
           {/* Right side content: render type-specific form components with internal tabs */}
@@ -160,9 +192,21 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
         </Box>
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={loading}>Cancel</Button>
-        <Button variant="contained" onClick={handleSubmit} disabled={loading || !isValid}>
-          {loading ? (isEdit ? "Updating..." : "Saving...") : isEdit ? "Update" : "Save"}
+        <Button onClick={onClose} disabled={loading}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          onClick={handleSubmit}
+          disabled={loading || !isValid}
+        >
+          {loading
+            ? isEdit
+              ? "Updating..."
+              : "Saving..."
+            : isEdit
+              ? "Update"
+              : "Save"}
         </Button>
       </DialogActions>
     </Dialog>
