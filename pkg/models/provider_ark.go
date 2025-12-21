@@ -14,7 +14,7 @@ import (
 	"strconv"
 )
 
-const credFile = ".omniterm/model_provider.json"
+const credFile = ".choraleia/model_provider.json"
 
 type ArkCredentials struct {
 	AK string `json:"ak"`

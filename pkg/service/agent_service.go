@@ -12,6 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/api"
+	"github.com/choraleia/choraleia/pkg/message"
+	utils2 "github.com/choraleia/choraleia/pkg/utils"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/tool"
@@ -20,9 +23,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/imliuda/omniterm/pkg/api"
-	"github.com/imliuda/omniterm/pkg/message"
-	utils2 "github.com/imliuda/omniterm/pkg/utils"
 )
 
 // TerminalManager manages all active terminal sessions

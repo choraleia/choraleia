@@ -9,7 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/imliuda/omniterm/pkg/utils"
+	"github.com/choraleia/choraleia/pkg/utils"
 )
 
 // Backend-only mode entry: do not initialize Wails, only start API service (static assets served via Gin middleware AttachStatic)

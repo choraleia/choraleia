@@ -6,7 +6,7 @@
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10">
 
   <Identity
-    Name="com.wails.omniterm"
+    Name="com.choraleia.choraleia"
     Publisher="CN=My Company"
     Version="0.1.0.0"
     ProcessorArchitecture="x64" />
@@ -27,7 +27,7 @@
   </Resources>
 
   <Applications>
-    <Application Id="com.wails.omniterm" Executable="omniterm" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="com.choraleia.choraleia" Executable="choraleia" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="My Product"
         Description="My Product Description"
@@ -39,7 +39,7 @@
       </uap:VisualElements>
 
       <Extensions>
-        <desktop:Extension Category="windows.fullTrustProcess" Executable="omniterm" />
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="choraleia" />
 
       </Extensions>
     </Application>

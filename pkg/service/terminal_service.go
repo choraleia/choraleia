@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/message"
+	"github.com/choraleia/choraleia/pkg/models"
+	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/gin-gonic/gin"
-	"github.com/imliuda/omniterm/pkg/message"
-	"github.com/imliuda/omniterm/pkg/models"
-	"github.com/imliuda/omniterm/pkg/utils"
 
 	"github.com/aymanbagabas/go-pty"
 	"github.com/gorilla/websocket"

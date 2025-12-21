@@ -5,6 +5,6 @@ frontend/dist
 frontend/node_modules
 build/linux/appimage/build
 build/linux/appimage/appicon.png
-build/linux/appimage/omniterm
-build/linux/omniterm.desktop
+build/linux/appimage/choraleia
+build/linux/choraleia.desktop
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe

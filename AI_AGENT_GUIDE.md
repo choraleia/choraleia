@@ -131,8 +131,8 @@ Current Ark provider doubao model:
 ## Start & Test
 ### 1. Start Application
 ```bash
-go build -o bin/omniterm
-./bin/omniterm
+go build -o bin/choraleia
+./bin/choraleia
 ```
 ### 2. Test Agent API
 ```bash

@@ -3,8 +3,8 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/google/uuid"
-	"github.com/imliuda/omniterm/pkg/models"
 	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
@@ -22,7 +22,7 @@ type AssetService struct {
 // NewAssetService creates a new asset service instance
 func NewAssetService() *AssetService {
 	homeDir, _ := os.UserHomeDir()
-	dataDir := filepath.Join(homeDir, ".omniterm")
+	dataDir := filepath.Join(homeDir, ".choraleia")
 	_ = os.MkdirAll(dataDir, 0755)
 
 	service := &AssetService{

@@ -12,11 +12,11 @@ var logger *slog.Logger
 func InitLogger() {
 	// Get log directory under user home
 	homeDir, _ := os.UserHomeDir()
-	logDir := filepath.Join(homeDir, ".omniterm", "logs")
+	logDir := filepath.Join(homeDir, ".choraleia", "logs")
 	_ = os.MkdirAll(logDir, 0755)
 
 	// Create log file
-	logFile := filepath.Join(logDir, "omniterm.log")
+	logFile := filepath.Join(logDir, "choraleia.log")
 	file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 	if err != nil {
 		// Fallback to stdout when file cannot be created

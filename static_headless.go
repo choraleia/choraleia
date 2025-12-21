@@ -85,8 +85,12 @@ func attachStatic(engine *gin.Engine) {
 			c.Abort()
 			return
 		}
+
+		// SPA fallback: serve index.html for client-side routes.
+		// Some clients omit the Accept header on the initial navigation, so treat empty Accept as HTML.
 		if !strings.Contains(trimmed, ".") && acceptHTML(c.Request.Header.Get("Accept")) {
 			serveIndex(c, &indexOnce, loadIndex, &indexErr, indexModTime, indexETag, indexBytes)
+			return
 		}
 	})
 }
@@ -111,8 +115,9 @@ func serveIndex(c *gin.Context, once *sync.Once, loader func(), errPtr *error, m
 }
 
 func acceptHTML(accept string) bool {
+	// Treat missing Accept as HTML navigation (common in some embedded/webview cases).
 	if accept == "" {
-		return false
+		return true
 	}
 	for _, part := range strings.Split(accept, ",") {
 		p := strings.TrimSpace(strings.ToLower(part))

@@ -2,8 +2,8 @@ package service
 
 import (
 	"encoding/json"
-	"github.com/imliuda/omniterm/pkg/api"
-	"github.com/imliuda/omniterm/pkg/utils"
+	"github.com/choraleia/choraleia/pkg/api"
+	"github.com/choraleia/choraleia/pkg/utils"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -98,7 +98,7 @@ type ChatStoreService struct {
 // NewChatStore create chat service
 func NewChatStore() (*ChatStoreService, error) {
 	homeDir, _ := os.UserHomeDir()
-	dbFile := filepath.Join(homeDir, ".omniterm", "chat.db")
+	dbFile := filepath.Join(homeDir, ".choraleia", "chat.db")
 
 	// Ensure directory exists
 	_ = os.MkdirAll(filepath.Dir(dbFile), 0755)

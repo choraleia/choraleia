@@ -39,39 +39,39 @@ frontend/
 
 ### GUI (Wails desktop + API)
 ```bash
-go build -o bin/omniterm .
-./bin/omniterm
+go build -o bin/choraleia .
+./bin/choraleia
 ```
 
 ### Headless API server
 ```bash
-go build -tags headless -o bin/omniterm-headless .
-./bin/omniterm-headless
+go build -tags headless -o bin/choraleia-headless .
+./bin/choraleia-headless
 ```
 
 Disable static in headless mode (optional):
 ```bash
-OMNITERM_DISABLE_STATIC=1 go build -tags headless -o bin/omniterm-headless .
+OMNITERM_DISABLE_STATIC=1 go build -tags headless -o bin/choraleia-headless .
 ```
 
 ## Build Modes
-- GUI + API: `go build -o bin/omniterm .`
-- Headless API (with optional static): `go build -tags headless -o bin/omniterm-headless .`
+- GUI + API: `go build -o bin/choraleia .`
+- Headless API (with optional static): `go build -tags headless -o bin/choraleia-headless .`
 
 Explanation:
 - GUI build tag: `//go:build !headless`
 - Headless build tag: `//go:build headless`
 - Disable static: `OMNITERM_DISABLE_STATIC=1`
 - Static port override: `OMNITERM_HTTP_PORT` (default 8080)
-- Standalone server: `go build -o omniterm-headless -tags headless .`
+- Standalone server: `go build -o choraleia-headless -tags headless .`
 
 ## Quick Smoke Test
 ```bash
 # GUI
-go build -o bin/omniterm . && ./bin/omniterm &
+go build -o bin/choraleia . && ./bin/choraleia &
 
 # Headless
-go build -tags headless -o bin/omniterm-headless . && ./bin/omniterm-headless &
+go build -tags headless -o bin/choraleia-headless . && ./bin/choraleia-headless &
 
 # Check ports
 lsof -i:8088 -i:8080

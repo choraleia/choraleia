@@ -1,9 +1,9 @@
 package handler
 
 import (
+	"github.com/choraleia/choraleia/pkg/models"
+	"github.com/choraleia/choraleia/pkg/service"
 	"github.com/gin-gonic/gin"
-	"github.com/imliuda/omniterm/pkg/models"
-	"github.com/imliuda/omniterm/pkg/service"
 	"log/slog"
 	"net/http"
 )

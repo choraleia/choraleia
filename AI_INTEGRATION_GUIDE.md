@@ -31,8 +31,8 @@ export SERVER_PORT="8088"
 
 ### 2. Run Application
 ```bash
-go build -o bin/omniterm
-./bin/omniterm
+go build -o bin/choraleia
+./bin/choraleia
 ```
 
 ### 3. Use AI Assistant

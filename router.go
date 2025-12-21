@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/handler"
+	"github.com/choraleia/choraleia/pkg/models"
+	"github.com/choraleia/choraleia/pkg/service"
+	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/imliuda/omniterm/pkg/handler"
-	"github.com/imliuda/omniterm/pkg/models"
-	"github.com/imliuda/omniterm/pkg/service"
-	"github.com/imliuda/omniterm/pkg/utils"
 )
 
 type Server struct {

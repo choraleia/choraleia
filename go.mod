@@ -1,4 +1,4 @@
-module github.com/imliuda/omniterm
+module github.com/choraleia/choraleia
 
 go 1.24.0
 

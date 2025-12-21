@@ -1,4 +1,4 @@
-// filepath: /home/blue/codes/omniterm-new/frontend/src/types/mermaid.d.ts
+// filepath: /home/blue/codes/choraleia-new/frontend/src/types/mermaid.d.ts
 declare module "mermaid" {
   const mermaid: {
     initialize: (config: Record<string, any>) => void;

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/google/uuid"
-	"github.com/imliuda/omniterm/pkg/models"
 )
 
 // QuickCommandService manages quick commands in-memory with JSON file persistence.
@@ -24,7 +24,7 @@ type QuickCommandService struct {
 // NewQuickCommandService initializes service and loads persisted commands.
 func NewQuickCommandService() *QuickCommandService {
 	homeDir, _ := os.UserHomeDir()
-	dataDir := filepath.Join(homeDir, ".omniterm")
+	dataDir := filepath.Join(homeDir, ".choraleia")
 	_ = os.MkdirAll(dataDir, 0755)
 	svc := &QuickCommandService{store: make(map[string]*models.QuickCommand), order: []string{}, dataFile: filepath.Join(dataDir, "quickcmds.json")}
 	_ = svc.load() // best-effort load

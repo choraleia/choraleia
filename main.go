@@ -5,7 +5,7 @@ package main
 import (
 	"embed"
 	"fmt"
-	"github.com/imliuda/omniterm/pkg/utils"
+	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"log/slog"
 	"os"
@@ -33,8 +33,8 @@ func main() {
 	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
 	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
-		Name:        "omniterm",
-		Description: "The terminal application with ai support",
+		Name:        "choraleia",
+		Description: "Choraleia - The terminal application with AI support",
 		LogLevel:    slog.LevelDebug,
 		Services:    []application.Service{},
 		Assets: application.AssetOptions{
@@ -47,7 +47,7 @@ func main() {
 
 	// Create a new window with the necessary options.
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "OmniTerm - Multi-Functional AI Terminal Tool ",
+		Title: "Choraleia - Multi-Functional AI Terminal Tool",
 		Mac: application.MacWindow{
 			InvisibleTitleBarHeight: 50,
 			Backdrop:                application.MacBackdropTranslucent,

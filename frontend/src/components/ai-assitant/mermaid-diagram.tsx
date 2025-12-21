@@ -1,4 +1,4 @@
-// filepath: /home/blue/codes/omniterm-new/frontend/src/components/ai-assitant/mermaid-diagram.tsx
+// filepath: /home/blue/codes/choraleia-new/frontend/src/components/ai-assitant/mermaid-diagram.tsx
 "use client";
 import { useAssistantState } from "@assistant-ui/react";
 import type { SyntaxHighlighterProps } from "@assistant-ui/react-markdown";

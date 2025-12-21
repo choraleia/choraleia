@@ -3,7 +3,7 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "omniterm"
+name: "choraleia"
 arch: ${GOARCH}
 platform: "linux"
 version: "0.1.0"
@@ -17,12 +17,12 @@ license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/omniterm"
-    dst: "/usr/local/bin/omniterm"
+  - src: "./bin/choraleia"
+    dst: "/usr/local/bin/choraleia"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/omniterm.png"
-  - src: "./build/linux/omniterm.desktop"
-    dst: "/usr/share/applications/omniterm.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/choraleia.png"
+  - src: "./build/linux/choraleia.desktop"
+    dst: "/usr/share/applications/choraleia.desktop"
 
 # Default dependencies for Debian 12/Ubuntu 22.04+ with WebKit 4.1
 depends:

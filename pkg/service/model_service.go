@@ -1,13 +1,13 @@
 package service
 
 import (
+	"github.com/choraleia/choraleia/pkg/models"
+	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino-ext/components/model/deepseek"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/imliuda/omniterm/pkg/models"
-	"github.com/imliuda/omniterm/pkg/utils"
 	"log/slog"
 	"net/http"
 )

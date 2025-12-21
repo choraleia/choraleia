@@ -5,13 +5,13 @@ version: '3'
 
 # This information is used to generate the build assets.
 info:
-  companyName: "My Company" # The name of the company
-  productName: "My Product" # The name of the application
-  productIdentifier: "com.mycompany.myproduct" # The unique product identifier
-  description: "A program that does X" # The application description
-  copyright: "(c) 2025, My Company" # Copyright text
-  comments: "Some Product Comments" # Comments
-  version: "0.0.1" # The application version
+  companyName: "Choraleia" # The name of the company
+  productName: "Choraleia" # The name of the application
+  productIdentifier: "com.choraleia.choraleia" # The unique product identifier
+  description: "Choraleia - The terminal application with AI support" # The application description
+  copyright: "(c) 2025, Choraleia" # Copyright text
+  comments: "Choraleia" # Comments
+  version: "0.1.0" # The application version
 
 # Dev mode configuration
 dev_mode:
