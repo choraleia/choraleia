@@ -14,6 +14,8 @@ export default defineConfig(() => {
     process.env.VITE_API_BASE_URL ||
     'http://127.0.0.1:8088'
 
+  const backendWsTarget = backendTarget.replace(/^http/, 'ws')
+
   return {
     plugins: [react()],
     css: {
@@ -32,9 +34,9 @@ export default defineConfig(() => {
           target: backendTarget,
           changeOrigin: true
         },
-        // Websocket endpoints (adjust/extend if your backend uses different roots)
-        '/ws': {
-          target: backendTarget.replace(/^http/, 'ws'),
+        // Websocket endpoints
+        '/terminal': {
+          target: backendWsTarget,
           ws: true,
           changeOrigin: true
         }

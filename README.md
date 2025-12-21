@@ -1,4 +1,4 @@
-# OmnitTerm
+# Choraleia
 
 A multi-asset terminal and AI assistance tool built with Wails3 (Go + React, MUI, Xterm). It provides unified asset (hosts/local) management, WebSocket terminal sessions, multi-model AI chat, and an optional headless pure backend mode.
 
@@ -16,24 +16,60 @@ Themes live in `frontend/src/themes.ts`. The main terminal component is `fronten
 
 ## Directory Structure (Key)
 ```text
-backend
-  main.go / main_headless.go / router.go
+./
+  main.go / main_headless.go / router.go / static.go
   pkg/
-    service/terminal_service.go  # terminal core logic
-    message/term.go              # WebSocket protocol
-    models/asset.go, model.go    # data and config
-frontend/
-  src/App.tsx                    # root React component
-  src/components/assets/Terminal.tsx
-  src/themes.ts                  # theme customization
+    service/terminal_service.go      # terminal core logic
+    message/term.go                  # WebSocket protocol
+    models/asset.go, model.go        # data and config
+  frontend/
+    src/App.tsx                      # root React component
+    src/components/assets/Terminal.tsx
+    src/themes.ts                    # theme customization
 ```
 
 ## Environment Variables
-| Variable                | Purpose                                   | Default |
-|-------------------------|-------------------------------------------|---------|
-| OMNITERM_DISABLE_STATIC | Disable embedded static assets when `1`   | enabled |
-| (future) OMNITERM_PORT  | Override API port                         | 8088    |
-| OMNITERM_HTTP_PORT      | Static file HTTP server port (headless)   | 8080    |
+This project does not require any environment variables for normal use.
+
+For frontend development only, you can set:
+
+| Variable          | Purpose                                             |
+|------------------|-----------------------------------------------------|
+| VITE_API_BASE_URL | Override API base URL when running the frontend on a different origin (e.g. Vite dev server) |
+
+## Configuration (YAML)
+Choraleia reads its runtime configuration from a YAML file under your home directory:
+
+- Config file: `~/.choraleia/config.yaml`
+
+The file is created automatically on first start if it doesn't exist.
+
+Example:
+```yaml
+server:
+  host: 127.0.0.1
+  port: 8088
+```
+
+Defaults:
+- `server.host`: `127.0.0.1`
+- `server.port`: `8088`
+
+### GUI (Wails) URL behavior
+The desktop GUI loads the same HTTP server started by the backend.
+It opens:
+
+- `http://{server.host}:{server.port}`
+
+This means the frontend can use same-origin requests by default.
+
+### Frontend dev note (Vite)
+If you run `npm run dev`, the frontend will be on a different origin (usually `http://localhost:5173`).
+In that case, set `VITE_API_BASE_URL` so the frontend knows where the Go server is:
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8088
+```
 
 ## Run Modes
 
@@ -43,27 +79,21 @@ go build -o bin/choraleia .
 ./bin/choraleia
 ```
 
-### Headless API server
+### Headless API + static server
+The headless build starts the same Gin server (API + WebSocket + embedded frontend).
+
 ```bash
 go build -tags headless -o bin/choraleia-headless .
 ./bin/choraleia-headless
 ```
 
-Disable static in headless mode (optional):
-```bash
-OMNITERM_DISABLE_STATIC=1 go build -tags headless -o bin/choraleia-headless .
-```
-
 ## Build Modes
 - GUI + API: `go build -o bin/choraleia .`
-- Headless API (with optional static): `go build -tags headless -o bin/choraleia-headless .`
+- Headless API: `go build -tags headless -o bin/choraleia-headless .`
 
 Explanation:
 - GUI build tag: `//go:build !headless`
 - Headless build tag: `//go:build headless`
-- Disable static: `OMNITERM_DISABLE_STATIC=1`
-- Static port override: `OMNITERM_HTTP_PORT` (default 8080)
-- Standalone server: `go build -o choraleia-headless -tags headless .`
 
 ## Quick Smoke Test
 ```bash
@@ -73,8 +103,8 @@ go build -o bin/choraleia . && ./bin/choraleia &
 # Headless
 go build -tags headless -o bin/choraleia-headless . && ./bin/choraleia-headless &
 
-# Check ports
-lsof -i:8088 -i:8080
+# Check port (default)
+lsof -i:8088
 ```
 
 ## API Summary
@@ -159,7 +189,6 @@ See `SECURITY.md` to report vulnerabilities. Sensitive terminal data is not pers
 ## Roadmap
 
 See `ROADMAP.md` for the full roadmap. Summary of planned items:
-- Dynamic port and environment variable `OMNITERM_PORT`.
 - Multi-protocol terminal support (RDP/VNC/Database).
 - Asset config validation and encryption of sensitive fields.
 - Pluggable AI tool invocation.

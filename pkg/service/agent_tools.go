@@ -71,7 +71,7 @@ func ExecTerminalCommand(_ context.Context, params *ExecCommandInput) (string, e
 	startLen := len(session.Output)
 	session.mutex.RUnlock()
 
-	marker := "__OMNITERM_EXIT_CODE__"
+	marker := "__CHORALEIA_EXIT_CODE__"
 	augmentedCmd := fmt.Sprintf("%s; echo %s$?", params.Command, marker)
 
 	session.term.writeToTerminal([]byte(augmentedCmd + "\n"))
@@ -146,7 +146,7 @@ func ReadFile(_ context.Context, params *ReadFileInput) (string, error) {
 	if !exists || session.term == nil {
 		return "", fmt.Errorf("terminal not ready: %s", params.TerminalId)
 	}
-	marker := "__OMNITERM_EXIT_CODE__"
+	marker := "__CHORALEIA_EXIT_CODE__"
 	cmd := fmt.Sprintf("cat -- %s; echo %s$?", params.Path, marker)
 	session.mutex.RLock()
 	startLen := len(session.Output)
@@ -199,15 +199,15 @@ func WriteFile(_ context.Context, params *WriteFileInput) (string, error) {
 	if !exists || session.term == nil {
 		return "", fmt.Errorf("terminal not ready: %s", params.TerminalId)
 	}
-	delimiter := "OMNI_EOF"
+	delimiter := "CHORALEIA_EOF"
 	if strings.Contains(params.Content, delimiter) {
-		delimiter = "OMNI_EOF_" + uuid.New().String()
+		delimiter = "CHORALEIA_EOF_" + uuid.New().String()
 	}
 	redir := ">"
 	if !params.Overwrite {
 		redir = ">>"
 	}
-	marker := "__OMNITERM_EXIT_CODE__"
+	marker := "__CHORALEIA_EXIT_CODE__"
 	cmd := fmt.Sprintf("cat <<'%s' %s %s\n%s\n%s\necho %s$?", delimiter, redir, params.Path, params.Content, delimiter, marker)
 	session.mutex.RLock()
 	startLen := len(session.Output)

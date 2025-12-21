@@ -1,7 +1,6 @@
 # Roadmap
 
 ## Short Term (1-2 releases)
-- Configurable port (OMNITERM_PORT)
 - WebSocket authentication (token/header)
 - Persistent output buffering & paginated retrieval
 - Add unit and integration test coverage

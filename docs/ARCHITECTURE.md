@@ -17,8 +17,9 @@
 - HIGH=100000, LOW=20000 (terminal_service.go) pause/resume thresholds
 
 ## Static Asset Strategy
-- In headless mode frontend dist is embedded
-- Non /api /terminal requests follow SPA fallback logic returning index.html
+- The frontend build output (`frontend/dist`) is embedded into the Go binary and served by the Gin server in both GUI and headless builds.
+- Requests that do not match backend routes (and look like browser navigations) fall back to `index.html` (SPA routing).
+- The static middleware does not intercept backend endpoints such as `/api`, `/terminal`, and `/healthz`.
 
 ## Model Configuration
 - `~/.aitern/model.json` persists model list

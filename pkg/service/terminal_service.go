@@ -127,7 +127,15 @@ func (s *TerminalService) RunTerminal(c *gin.Context) {
 		return
 	}
 
-	s.logger.Info("WebSocket connection request", "assetId", assetID)
+	req := c.Request
+	s.logger.Info("WebSocket connection request",
+		"assetId", assetID,
+		"method", req.Method,
+		"path", req.URL.Path,
+		"host", req.Host,
+		"origin", req.Header.Get("Origin"),
+		"userAgent", req.Header.Get("User-Agent"),
+	)
 
 	// Configure WebSocket upgrade options
 	upgrader := &websocket.Upgrader{
@@ -138,7 +146,14 @@ func (s *TerminalService) RunTerminal(c *gin.Context) {
 		},
 		// Add error handling
 		Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
-			s.logger.Error("WebSocket upgrade error", "status", status, "reason", reason, "assetId", assetID)
+			s.logger.Error("WebSocket upgrade error",
+				"status", status,
+				"reason", reason,
+				"assetId", assetID,
+				"host", r.Host,
+				"origin", r.Header.Get("Origin"),
+				"userAgent", r.Header.Get("User-Agent"),
+			)
 			http.Error(w, reason.Error(), status)
 		},
 	}

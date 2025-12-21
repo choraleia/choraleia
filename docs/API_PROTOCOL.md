@@ -1,5 +1,23 @@
 # API & WebSocket Protocol
 
+## Server Address and Base URL
+The backend server bind address is configured via `~/.choraleia/config.yaml`:
+
+```yaml
+server:
+  host: 127.0.0.1
+  port: 8088
+```
+
+- REST base URL: `http://{server.host}:{server.port}`
+- WebSocket base URL: `ws://{server.host}:{server.port}`
+
+Notes:
+- If you serve the UI over HTTPS, use `https://...` for REST and `wss://...` for WebSocket.
+- `server.host` is a bind address. If you bind to `0.0.0.0`, clients must connect via a real IP or hostname (for example `http://192.168.1.10:8088`), not `http://0.0.0.0:8088`.
+
+In the desktop GUI, the frontend is loaded from the same HTTP server, so same-origin requests work by default.
+
 ## REST Paths
 | Resource | Method | Path | Description |
 |------|------|------|------|
@@ -28,7 +46,7 @@
 
 ### Message Base
 ```json
-{ "type": "TermInput", ... }
+{ "type": "TermInput" }
 ```
 
 ### Types & Examples

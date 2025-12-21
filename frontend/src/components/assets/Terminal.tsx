@@ -321,6 +321,14 @@ function TerminalComponent({
       const connectSocket = async () => {
         const socketUrl = getWsUrl(rawPath);
 
+        if (!socketUrl) {
+          terminalData?.terminal.writeln(
+            "\r\n\x1b[31mBackend WebSocket base URL is not configured. Please check VITE_API_BASE_URL or the current page origin.\x1b[m",
+          );
+          onConnectionStateChange?.(false);
+          return;
+        }
+
         const socket = new WebSocket(socketUrl);
         terminalData!.socket = socket;
         console.log("Connecting to asset:", assetId, "via URL:", socketUrl);
