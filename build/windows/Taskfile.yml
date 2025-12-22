@@ -59,8 +59,8 @@ tasks:
           PRODUCTION: "true"
     cmds:
       # Create the Microsoft WebView2 bootstrapper if it doesn't exist
-      - wails3 generate webview2bootstrapper -dir .
-      - makensis -DARG_WAILS_{{.ARG_FLAG}}_BINARY="../../../{{.BIN_DIR}}/{{.APP_NAME}}.exe" project.nsi
+      - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}\build\windows\nsis"
+      - makensis -DARG_WAILS_{{.ARG_FLAG}}_BINARY="{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" project.nsi
     vars:
       ARCH: '{{.ARCH | default ARCH}}'
       ARG_FLAG: '{{if eq .ARCH "amd64"}}AMD64{{else}}ARM64{{end}}'
@@ -74,11 +74,11 @@ tasks:
     cmds:
       - |-
         wails3 tool msix \
-          --config "./wails.json" \
+          --config "{{.ROOT_DIR}}\wails.json" \
           --name "{{.APP_NAME}}" \
-          --executable "./{{.BIN_DIR}}/{{.APP_NAME}}.exe" \
+          --executable "{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}.exe" \
           --arch "{{.ARCH}}" \
-          --out "./{{.BIN_DIR}}/{{.APP_NAME}}-{{.ARCH}}.msix" \
+          --out "{{.ROOT_DIR}}\{{.BIN_DIR}}\{{.APP_NAME}}-{{.ARCH}}.msix" \
           {{if .CERT_PATH}}--cert "{{.CERT_PATH}}"{{end}} \
           {{if .PUBLISHER}}--publisher "{{.PUBLISHER}}"{{end}} \
           {{if .USE_MSIX_TOOL}}--use-msix-tool{{else}}--use-makeappx{{end}}
