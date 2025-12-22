@@ -6,11 +6,35 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/choraleia/choraleia/pkg/config"
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+// resolveFrontendURL decides what URL the webview should load.
+//
+// In Wails dev mode, a Vite dev server is started (see build/config.yml + build/Taskfile.yml).
+// For hot reload to work, the webview must load the Vite server URL, not the Go backend URL.
+func resolveFrontendURL(serverURL string) string {
+	// 1) If a full dev server URL is explicitly provided, prefer it.
+	// These names are defensive; different launchers may set different env vars.
+	for _, k := range []string{"CHORALEIA_DEV_SERVER_URL", "WAILS_DEV_SERVER_URL", "WAILS_FRONTEND_URL"} {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+	}
+
+	// 2) If Wails provides the Vite port, use it.
+	// Taskfile.yml defines default WAILS_VITE_PORT=9245.
+	if p := strings.TrimSpace(os.Getenv("WAILS_VITE_PORT")); p != "" {
+		return fmt.Sprintf("http://localhost:%s", p)
+	}
+
+	// 3) Fallback to the built-in Go server URL (production / non-dev).
+	return serverURL
+}
 
 // main function serves as the application's entry point. It initializes the application, creates a window,
 // and starts a goroutine that emits a time-based event every second. It subsequently runs the application and
@@ -49,6 +73,7 @@ func main() {
 		cfg = &config.AppConfig{}
 	}
 	serverURL := fmt.Sprintf("http://%s:%d", cfg.Host(), cfg.Port())
+	frontendURL := resolveFrontendURL(serverURL)
 
 	// Create a new window with the necessary options.
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -58,7 +83,7 @@ func main() {
 			Backdrop:                application.MacBackdropTranslucent,
 			TitleBar:                application.MacTitleBarHiddenInset,
 		},
-		URL: serverURL,
+		URL: frontendURL,
 	})
 
 	// Run the application. This blocks until the application has been exited.

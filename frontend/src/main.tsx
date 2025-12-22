@@ -28,8 +28,15 @@ const Root = () => {
   );
 };
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <Root />
-  </React.StrictMode>,
-);
+const container = document.getElementById("root") as HTMLElement;
+const root = ReactDOM.createRoot(container);
+
+if (import.meta.env.DEV) {
+  root.render(<Root />);
+} else {
+  root.render(
+    <React.StrictMode>
+      <Root />
+    </React.StrictMode>,
+  );
+}
