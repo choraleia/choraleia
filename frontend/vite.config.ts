@@ -9,12 +9,13 @@ export default defineConfig(() => {
   //   VITE_BACKEND_TARGET=http://127.0.0.1:8088
   // or reuse:
   //   VITE_API_BASE_URL=http://127.0.0.1:8088
+  //
+  // Wails dev mode may provide its own backend URL via environment.
   const backendTarget =
+    process.env.WAILS_BACKEND_URL ||
     process.env.VITE_BACKEND_TARGET ||
     process.env.VITE_API_BASE_URL ||
     'http://127.0.0.1:8088'
-
-  const backendWsTarget = backendTarget.replace(/^http/, 'ws')
 
   return {
     plugins: [react()],
@@ -26,6 +27,7 @@ export default defineConfig(() => {
       }
     },
     server: {
+      // Port may be overridden by Wails via CLI args: `vite --port ...`
       port: 3000,
       host: true,
       proxy: {
@@ -35,8 +37,9 @@ export default defineConfig(() => {
           changeOrigin: true
         },
         // Websocket endpoints
+        // Vite expects an http(s) target here; `ws: true` enables websocket proxying.
         '/terminal': {
-          target: backendWsTarget,
+          target: backendTarget,
           ws: true,
           changeOrigin: true
         }
