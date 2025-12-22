@@ -74,11 +74,11 @@ tasks:
     cmds:
       - |-
         wails3 tool msix \
-          --config "{{.ROOT_DIR}}/wails.json" \
+          --config "./wails.json" \
           --name "{{.APP_NAME}}" \
-          --executable "{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}.exe" \
+          --executable "./{{.BIN_DIR}}/{{.APP_NAME}}.exe" \
           --arch "{{.ARCH}}" \
-          --out "{{.ROOT_DIR}}/{{.BIN_DIR}}/{{.APP_NAME}}-{{.ARCH}}.msix" \
+          --out "./{{.BIN_DIR}}/{{.APP_NAME}}-{{.ARCH}}.msix" \
           {{if .CERT_PATH}}--cert "{{.CERT_PATH}}"{{end}} \
           {{if .PUBLISHER}}--publisher "{{.PUBLISHER}}"{{end}} \
           {{if .USE_MSIX_TOOL}}--use-msix-tool{{else}}--use-makeappx{{end}}
