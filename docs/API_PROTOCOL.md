@@ -40,6 +40,25 @@ In the desktop GUI, the frontend is loaded from the same HTTP server, so same-or
 | Conversation | GET | /api/conversations/:id/messages | Message List |
 | Conversation | DELETE | /api/conversations/:id | Delete |
 | AI Chat | POST | /api/chat | Submit Message |
+| SFTP | GET | /api/sftp/ls | List remote directory entries (query: asset_id, path) |
+| SFTP | GET | /api/sftp/stat | Stat a remote path (query: asset_id, path) |
+| SFTP | GET | /api/sftp/download | Download a remote file (query: asset_id, path) |
+| SFTP | POST | /api/sftp/upload | Upload a file (multipart: file; query: asset_id, path, overwrite) |
+| SFTP | POST | /api/sftp/mkdir | Create directory (query: asset_id, path) |
+| SFTP | POST | /api/sftp/rm | Remove file or empty directory (query: asset_id, path) |
+| SFTP | POST | /api/sftp/rename | Rename/move path (query: asset_id, from, to) |
+| LocalFS | GET | /api/localfs/ls | List local directory entries (query: path; sandboxed) |
+| LocalFS | GET | /api/localfs/stat | Stat a local path (query: path; sandboxed) |
+| LocalFS | GET | /api/localfs/download | Download a local file (query: path; sandboxed) |
+| LocalFS | POST | /api/localfs/upload | Upload a file (multipart: file; query: path, overwrite; sandboxed) |
+| LocalFS | POST | /api/localfs/mkdir | Create local directory (query: path; sandboxed) |
+| LocalFS | POST | /api/localfs/rm | Remove local file or empty directory (query: path; sandboxed) |
+| LocalFS | POST | /api/localfs/rename | Rename/move local path (query: from, to; sandboxed) |
+
+Notes:
+- LocalFS paths are always relative to the LocalFS sandbox root: `~/.choraleia/localfs`.
+- The API accepts paths that start with `/` for convenience, but they are still treated as sandbox-relative.
+- Path traversal (e.g. `..`) is rejected.
 
 ## WebSocket
 `/terminal/connect/:assetId`

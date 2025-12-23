@@ -12,6 +12,7 @@ const (
 	AssetTypeFolder AssetType = "folder" // folder container
 	AssetTypeLocal  AssetType = "local"  // local terminal
 	AssetTypeSSH    AssetType = "ssh"    // SSH connection
+	AssetTypeDocker AssetType = "docker" // Docker container
 )
 
 // Asset generic asset structure (linked list for sibling ordering)
@@ -79,6 +80,17 @@ type DatabaseConfig struct {
 	Timeout  int    `json:"timeout"`
 }
 
+// DockerConfig docker connection config
+//
+// Container: required. Container name or ID.
+// User: optional user for docker exec (e.g. "root", "1000:1000").
+//
+// NOTE: This config is intended for filesystem operations only.
+type DockerConfig struct {
+	Container string `json:"container"`
+	User      string `json:"user,omitempty"`
+}
+
 // CreateAssetRequest create asset request
 type CreateAssetRequest struct {
 	Name        string                 `json:"name" binding:"required"`
@@ -142,6 +154,8 @@ func (a *Asset) ValidateConfig() error {
 		return a.validateSSHConfig()
 	case AssetTypeLocal:
 		return a.validateLocalConfig()
+	case AssetTypeDocker:
+		return a.validateDockerConfig()
 	}
 	return nil
 }
@@ -149,6 +163,7 @@ func (a *Asset) ValidateConfig() error {
 func (a *Asset) validateFolderConfig() error { return nil }
 func (a *Asset) validateSSHConfig() error    { return nil }
 func (a *Asset) validateLocalConfig() error  { return nil }
+func (a *Asset) validateDockerConfig() error { return nil }
 
 // GetTypedConfig decode generic map config into target struct
 func (a *Asset) GetTypedConfig(target interface{}) error {

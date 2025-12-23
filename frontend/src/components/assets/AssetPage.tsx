@@ -27,6 +27,13 @@ interface TabPane {
     name: string;
   };
   assetId?: string;
+  meta?: {
+    assetType?: string;
+    assetName?: string;
+    // Keep extra fields optional and shallow to avoid leaking secrets.
+    host?: string;
+    port?: number;
+  };
 }
 
 export interface AssetPageHandle {
@@ -232,6 +239,12 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
               name: asset.name,
             },
             assetId: asset.id,
+            meta: {
+              assetType: asset.type,
+              assetName: asset.name,
+              host: node.ip || "",
+              port: node.port || 0,
+            },
           };
           return [...prev, newTab];
         });

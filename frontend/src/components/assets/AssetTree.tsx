@@ -5,8 +5,8 @@ import React, {
   useRef,
   useMemo,
 } from "react";
-// Debug flag: drag log
-const DEBUG_DND = true;
+// Debug flag: drag log (enable only during development when needed).
+const DEBUG_DND = false;
 import {
   Box,
   IconButton,

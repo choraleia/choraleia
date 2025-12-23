@@ -1,7 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { tasksWSClient } from "./api/tasks_ws_client";
+import { tasksStore } from "./api/tasks_store";
 import StatusBar from "./components/StatusBar";
 import Models from "./components/settings/models";
 import AssetPage, { AssetPageHandle } from "./components/assets/AssetPage";
+import TaskCenter from "./components/TaskCenter";
 
 // MUI components
 import { Box, IconButton } from "@mui/material";
@@ -16,6 +19,8 @@ const App: React.FC = () => {
     "assets",
   );
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
+  const [taskCenterOpen, setTaskCenterOpen] = useState(false);
+  const [tasksActive, setTasksActive] = useState(0);
   // Preserve app statistics
   const [appStats, setAppStats] = useState({
     memoryUsage: 0,
@@ -66,6 +71,25 @@ const App: React.FC = () => {
   const totalTerminals = assetPageRef.current?.getTotalTerminals() || 0;
   const activeConnections =
     assetPageRef.current?.getActiveConnectionsCount() || 0;
+
+  // Start the shared tasks events websocket once.
+  // This avoids React StrictMode mount/unmount churn closing sockets.
+  useEffect(() => {
+    tasksWSClient.start();
+    return () => {
+      // Keep the socket alive even if App is remounted in dev; stop only on full teardown.
+      // In typical Wails apps, App stays mounted for the process lifetime.
+      tasksWSClient.stop();
+    };
+  }, []);
+
+  // Keep the status bar task count updated even when TaskCenter is closed.
+  useEffect(() => {
+    return tasksStore.subscribe((s) => {
+      const n = s.active.filter((t) => t.status === "running" || t.status === "queued").length;
+      setTasksActive(n);
+    });
+  }, []);
 
   return (
     <Box display="flex" flexDirection="column" height="100%">
@@ -162,6 +186,11 @@ const App: React.FC = () => {
         </Box>
       </Box>
 
+      <TaskCenter
+        open={taskCenterOpen}
+        onClose={() => setTaskCenterOpen(false)}
+      />
+
       {/* Bottom status bar */}
       <StatusBar
         currentTerminal={currentTerminal}
@@ -170,6 +199,8 @@ const App: React.FC = () => {
         appVersion={appStats.version}
         memoryUsage={appStats.memoryUsage}
         cpuUsage={appStats.cpuUsage}
+        tasksActive={tasksActive}
+        onTasksClick={() => setTaskCenterOpen(true)}
       />
     </Box>
   );
