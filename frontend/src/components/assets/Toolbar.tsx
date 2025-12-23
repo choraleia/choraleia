@@ -3,8 +3,10 @@ import { Box, Typography, IconButton, Tooltip } from "@mui/material"; // Removed
 import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import BoltIcon from "@mui/icons-material/Bolt";
+import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import AiAssistant from "../ai-assitant/ai-assistant.tsx";
 import QuickCommandsPanel from "./QuickCommandsPanel";
+import FileManagerPanel from "./FileManagerPanel";
 
 interface RightToolbarProps {
   style?: React.CSSProperties;
@@ -39,8 +41,18 @@ const Toolbar: React.FC<RightToolbarProps> = ({
   });
   const [isResizing, setIsResizing] = useState(false);
 
+  const [drawerHeaderAction, setDrawerHeaderAction] = useState<
+    React.ReactNode | null
+  >(null);
+
+  // Remember width per tool so switching panels doesn't feel like it "can't resize".
+  const [toolWidths, setToolWidths] = useState<Record<string, number>>({
+    ai: 400,
+    quickcmd: 400,
+    "file-transfer": 400,
+  });
+
   const toolButtons = [
-    // { key: 'file-transfer', icon: <InsertDriveFileIcon fontSize="small" />, title: 'File Transfer', tooltip: 'File transfer tool' },
     // { key: 'monitor', icon: <MonitorIcon fontSize="small" />, title: 'Host Monitor', tooltip: 'Host monitor panel' },
     {
       key: "ai",
@@ -54,11 +66,18 @@ const Toolbar: React.FC<RightToolbarProps> = ({
       title: "Quick Commands",
       tooltip: "Quick Commands Panel",
     },
+    {
+      key: "file-transfer",
+      icon: <FolderOpenIcon fontSize="small" />,
+      title: "File Manager",
+      tooltip: "Browse remote files via SFTP",
+    },
     // { key: 'tools', icon: <BuildIcon fontSize="small" />, title: 'Toolbox', tooltip: 'System toolbox' },
     // { key: 'settings', icon: <SettingsIcon fontSize="small" />, title: 'Settings', tooltip: 'Application settings' },
   ];
 
   const shortcutHints: Record<string, string[]> = {
+    "file-transfer": ["(No preset shortcuts yet)"],
     ai: ["Ctrl+Shift+L Toggle"],
     quickcmd: [
       "Ctrl+Shift+K Toggle",
@@ -73,12 +92,19 @@ const Toolbar: React.FC<RightToolbarProps> = ({
     setDrawerState((prev) => ({
       open: prev.type === type ? !prev.open : true,
       type,
-      width: prev.width,
+      width: toolWidths[type || "ai"] ?? prev.width,
     }));
   };
 
   const handleCloseDrawer = () =>
     setDrawerState((prev) => ({ ...prev, open: false }));
+
+  // Clear any injected header action when drawer closes or tool changes.
+  useEffect(() => {
+    if (!drawerState.open || drawerState.type !== "file-transfer") {
+      setDrawerHeaderAction(null);
+    }
+  }, [drawerState.open, drawerState.type]);
 
   const getDrawerTitle = () => {
     const btn = toolButtons.find((b) => b.key === drawerState.type);
@@ -238,12 +264,15 @@ const Toolbar: React.FC<RightToolbarProps> = ({
             cursor: "ew-resize",
             bgcolor: isResizing ? "rgba(24,144,255,0.3)" : "transparent",
             transition: isResizing ? "none" : "background-color 0.2s ease",
+            zIndex: 2,
+            pointerEvents: "auto",
           }}
           onMouseDown={(e) => {
             setIsResizing(true);
             e.preventDefault();
             const startX = e.clientX;
             const startWidth = drawerState.width;
+            const activeType = drawerState.type;
             document.body.style.cursor = "ew-resize";
             document.body.style.userSelect = "none";
             // Use fixed left main menu width provided by user instead of querying DOM.
@@ -263,9 +292,13 @@ const Toolbar: React.FC<RightToolbarProps> = ({
                 maxWidth,
                 Math.max(minWidth, desiredWidth),
               );
-              requestAnimationFrame(() =>
-                setDrawerState((prev) => ({ ...prev, width: newWidth })),
-              );
+
+              requestAnimationFrame(() => {
+                setDrawerState((prev) => ({ ...prev, width: newWidth }));
+                if (activeType) {
+                  setToolWidths((tw) => ({ ...tw, [activeType]: newWidth }));
+                }
+              });
             };
             const handleUp = () => {
               setIsResizing(false);
@@ -294,12 +327,40 @@ const Toolbar: React.FC<RightToolbarProps> = ({
           justifyContent="space-between"
         >
           {getDrawerTitle()}
-          <IconButton onClick={handleCloseDrawer} sx={{ ml: 1 }}>
-            ✕
-          </IconButton>
+          <Box display="flex" alignItems="center" gap={0.5}>
+            <Box
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                minHeight: 28,
+                minWidth: 0,
+                pointerEvents: "auto",
+              }}
+            >
+              {drawerHeaderAction}
+            </Box>
+            <IconButton onClick={handleCloseDrawer} sx={{ ml: 0.5 }}>
+              ✕
+            </IconButton>
+          </Box>
         </Box>
         <Box flex={1} overflow="auto" display="flex" flexDirection="column">
           {/* Tool content sections (kept mounted) */}
+          <Box
+            sx={{
+              flex: 1,
+              display: drawerState.type === "file-transfer" ? "flex" : "none",
+              flexDirection: "column",
+              minHeight: 0,
+            }}
+          >
+            <FileManagerPanel
+              tabs={tabs}
+              activeTabKey={activeTabKey}
+              onHeaderActionChange={setDrawerHeaderAction}
+              visible={drawerState.open && drawerState.type === "file-transfer"}
+            />
+          </Box>
           <Box
             sx={{
               flex: 1,

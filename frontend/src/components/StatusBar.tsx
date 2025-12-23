@@ -20,6 +20,8 @@ interface StatusBarProps {
   appVersion?: string;
   memoryUsage?: number;
   cpuUsage?: number;
+  tasksActive?: number;
+  onTasksClick?: () => void;
 }
 
 const StatusBar: React.FC<StatusBarProps> = ({
@@ -29,6 +31,8 @@ const StatusBar: React.FC<StatusBarProps> = ({
   appVersion = "v1.0.0",
   memoryUsage = 0,
   cpuUsage = 0,
+  tasksActive = 0,
+  onTasksClick,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>("");
   const [connectionDuration, setConnectionDuration] = useState<string>("");
@@ -211,6 +215,22 @@ const StatusBar: React.FC<StatusBarProps> = ({
           flexShrink: 0,
         }}
       >
+        <Chip
+          size="small"
+          variant="outlined"
+          label={`Tasks ${tasksActive}`}
+          onClick={onTasksClick}
+          clickable
+          sx={{
+            height: 18,
+            fontSize: 11,
+            borderRadius: 0,
+            backgroundColor: "transparent",
+            "& .MuiChip-label": { px: 0.75 },
+            borderColor: "transparent",
+            color: tasksActive > 0 ? "#ad6800" : "#666",
+          }}
+        />
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
           <FlashOnIcon sx={{ fontSize: 14 }} />
           <Typography sx={{ fontSize: 11 }} noWrap>

@@ -177,10 +177,21 @@ func (s *Server) SetupRoutes() {
 	// Create terminal service instance
 	terminalService := service.NewTerminalService(assetService)
 
+	// Task system (background jobs)
+	taskService := service.NewTaskService(2)
+	transferTaskService := service.NewTransferTaskService(taskService, assetService)
+	taskHandler := handler.NewTaskHandler(taskService, transferTaskService)
+
+	// Remove legacy SFTP/localfs handlers; use /api/fs/* for filesystem operations.
+	assetHandler := handler.NewAssetHandler(assetService, s.logger)
+
+	// Create generic filesystem service/handler (local + sftp + docker now; k8s later)
+	fsRegistry := service.NewFSRegistry(assetService)
+	fsService := service.NewFSService(fsRegistry)
+	fsHandler := handler.NewFSHandler(fsService)
+
 	// Create quick command service instance
 	quickCmdService := service.NewQuickCommandService()
-
-	assetHandler := handler.NewAssetHandler(assetService, s.logger)
 	quickCmdHandler := handler.NewQuickCmdHandler(quickCmdService, s.logger)
 
 	// Terminal connection routes
@@ -234,16 +245,41 @@ func (s *Server) SetupRoutes() {
 		conversationsGroup.GET(":id/messages", s.getConversationMessages(chatStoreService))
 	}
 
-	// Quick command management API routes
+	// Task API routes
+	// /api/tasks
+	tasksGroup := apiGroup.Group("/tasks")
+	{
+		tasksGroup.GET("/active", taskHandler.ListActive)
+		tasksGroup.GET("/history", taskHandler.ListHistory)
+		tasksGroup.POST("/transfer", taskHandler.EnqueueTransfer)
+		tasksGroup.POST("/:id/cancel", taskHandler.Cancel)
+		tasksGroup.GET("/ws", taskHandler.EventsWS)
+	}
+
+	// Generic filesystem API routes
+	// /api/fs
+	fsGroup := apiGroup.Group("/fs")
+	{
+		fsGroup.GET("/ls", fsHandler.List)
+		fsGroup.GET("/stat", fsHandler.Stat)
+		fsGroup.GET("/download", fsHandler.Download)
+		fsGroup.POST("/upload", fsHandler.Upload)
+		fsGroup.POST("/mkdir", fsHandler.Mkdir)
+		fsGroup.POST("/rm", fsHandler.Remove)
+		fsGroup.POST("/rename", fsHandler.Rename)
+		fsGroup.GET("/pwd", fsHandler.Pwd)
+	}
+
+	// Quick command API routes
 	// /api/quickcmd
 	quickCmdGroup := apiGroup.Group("/quickcmd")
 	{
 		quickCmdGroup.GET("", quickCmdHandler.List)
-		quickCmdGroup.GET(":id", quickCmdHandler.Get)
 		quickCmdGroup.POST("", quickCmdHandler.Create)
-		quickCmdGroup.PUT(":id", quickCmdHandler.Update)
-		quickCmdGroup.DELETE(":id", quickCmdHandler.Delete)
-		quickCmdGroup.PUT("reorder", quickCmdHandler.Reorder)
+		quickCmdGroup.GET("/:id", quickCmdHandler.Get)
+		quickCmdGroup.PUT("/:id", quickCmdHandler.Update)
+		quickCmdGroup.DELETE("/:id", quickCmdHandler.Delete)
+		quickCmdGroup.POST("/reorder", quickCmdHandler.Reorder)
 	}
 }
 

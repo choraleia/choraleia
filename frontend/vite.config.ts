@@ -31,6 +31,13 @@ export default defineConfig(() => {
       port: 3000,
       host: true,
       proxy: {
+        // Task events WebSocket (must be before /api).
+        '/api/tasks/ws': {
+          target: backendTarget,
+          ws: true,
+          changeOrigin: true,
+        },
+
         // REST API
         '/api': {
           target: backendTarget,
