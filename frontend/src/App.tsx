@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { tasksWSClient } from "./api/tasks_ws_client";
 import { tasksStore } from "./api/tasks_store";
 import StatusBar from "./components/StatusBar";
-import Models from "./components/settings/models";
+import SettingsPage from "./components/settings/SettingsPage";
 import AssetPage, { AssetPageHandle } from "./components/assets/AssetPage";
 import TaskCenter from "./components/TaskCenter";
 
@@ -180,7 +180,7 @@ const App: React.FC = () => {
               overflow="hidden"
               minHeight={0}
             >
-              <Models />
+              <SettingsPage />
             </Box>
           </Box>
         </Box>

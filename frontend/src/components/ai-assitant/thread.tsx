@@ -191,9 +191,11 @@ const AgentModeSelector: FC<{
       </MenuItem>,
     );
     models.forEach((m) => {
+      const modelTypeLabel = m.model_type ? ` (${m.model_type})` : "";
       modelMenuItems.push(
         <MenuItem key={m.name} value={m.name}>
           {m.name}
+          {modelTypeLabel}
         </MenuItem>,
       );
     });

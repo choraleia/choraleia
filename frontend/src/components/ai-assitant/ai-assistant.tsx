@@ -53,6 +53,7 @@ interface TerminalOption {
 export interface ModelConfig {
   id: string;
   provider: string;
+  model_type: string;
   model: string;
   name: string;
   base_url: string;
@@ -884,7 +885,7 @@ export default function AiAssistant({
     });
   }, [tabChatStates, threads, requestTitleGeneration]);
 
-  // Fetch models only when visible (unchanged)
+  // Fetch models only when visible
   useEffect(() => {
     if (!visible) return;
     (async () => {
@@ -943,7 +944,7 @@ export default function AiAssistant({
             selectedModel={selectedModel}
             setSelectedModel={setSelectedModel}
             groupedModelOptions={groupedModelOptions}
-            isLoading={activeState.isLoading} // use per-tab loading here
+            isLoading={activeState.isLoading}
             availableTerminals={availableTerminals}
             selectedTerminals={selectedTerminals}
             currentTerminal={currentTerminal}
@@ -954,3 +955,4 @@ export default function AiAssistant({
     </AssistantRuntimeProvider>
   );
 }
+

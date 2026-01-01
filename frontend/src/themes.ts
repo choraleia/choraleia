@@ -145,10 +145,13 @@ export const lightTheme = createTheme({
       styleOverrides: {
         root: { minHeight: 24, transition: "none" },
         input: {
-          padding: "7px 8px",
+          padding: "5px 8px",
           boxSizing: "border-box",
+          height: "auto",
+          fontSize: 12,
           "&::placeholder": {
             opacity: 0.5,
+            fontSize: 12,
           },
         },
       },
@@ -156,12 +159,15 @@ export const lightTheme = createTheme({
     MuiInputBase: {
       defaultProps: { size: "small" },
       styleOverrides: {
-        root: { minHeight: 18, transition: "none" },
+        root: { minHeight: 18, transition: "none", fontSize: 12 },
         input: {
-          padding: "7px 8px",
+          padding: "5px 8px",
           boxSizing: "border-box",
+          height: "auto",
+          fontSize: 12,
           "&::placeholder": {
             opacity: 0.5,
+            fontSize: 12,
           },
         },
       },
@@ -336,10 +342,13 @@ export const darkTheme = createTheme({
       styleOverrides: {
         root: { minHeight: 24, transition: "none" },
         input: {
-          padding: "7px 8px",
+          padding: "5px 8px",
           boxSizing: "border-box",
+          height: "auto",
+          fontSize: 12,
           "&::placeholder": {
             opacity: 0.5,
+            fontSize: 12,
           },
         },
       },
@@ -347,12 +356,15 @@ export const darkTheme = createTheme({
     MuiInputBase: {
       defaultProps: { size: "small" },
       styleOverrides: {
-        root: { minHeight: 24, transition: "none" },
+        root: { minHeight: 24, transition: "none", fontSize: 12 },
         input: {
-          padding: "7px 8px",
+          padding: "5px 8px",
           boxSizing: "border-box",
+          height: "auto",
+          fontSize: 12,
           "&::placeholder": {
             opacity: 0.5,
+            fontSize: 12,
           },
         },
       },

@@ -14,7 +14,6 @@ import (
 
 	"github.com/choraleia/choraleia/pkg/config"
 	"github.com/choraleia/choraleia/pkg/handler"
-	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/service"
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/gin-gonic/gin"
@@ -228,9 +227,8 @@ func (s *Server) SetupRoutes() {
 	apiGroup.PUT("/models/:id", modelService.EditModel)
 	apiGroup.DELETE("/models/:id", modelService.DeleteModel)
 	apiGroup.POST("/models/test", modelService.TestModelConnection)
-
-	// Register Ark provider related routes
-	models.RegisterArkProviderRoutes(s.ginEngine)
+	apiGroup.GET("/models/presets", handler.GetPresets)
+	apiGroup.GET("/models/provider-keys", modelService.GetProviderApiKeys)
 
 	// Conversation management API routes
 	// /api/conversations
