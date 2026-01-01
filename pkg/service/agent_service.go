@@ -14,15 +14,25 @@ import (
 
 	"github.com/choraleia/choraleia/pkg/api"
 	"github.com/choraleia/choraleia/pkg/message"
+	"github.com/choraleia/choraleia/pkg/models"
 	utils2 "github.com/choraleia/choraleia/pkg/utils"
 	"github.com/cloudwego/eino-ext/components/model/ark"
+	"github.com/cloudwego/eino-ext/components/model/claude"
+	"github.com/cloudwego/eino-ext/components/model/deepseek"
+	"github.com/cloudwego/eino-ext/components/model/gemini"
+	"github.com/cloudwego/eino-ext/components/model/ollama"
+	"github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino-ext/components/model/qianfan"
+	"github.com/cloudwego/eino-ext/components/model/qwen"
 	"github.com/cloudwego/eino/adk"
+	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"google.golang.org/genai"
 )
 
 // TerminalManager manages all active terminal sessions
@@ -235,8 +245,8 @@ func NewAIAgentService(chatStoreService *ChatStoreService, modelService *ModelSe
 	}
 }
 
-// getChatModel selects and constructs the chat model
-func (s *AIAgentService) getChatModel(c *gin.Context) (*ark.ChatModel, error) {
+// getChatModel selects and constructs the chat model based on provider
+func (s *AIAgentService) getChatModel(c *gin.Context) (einoModel.ToolCallingChatModel, error) {
 	selectedModel := c.Query("selectedModel")
 	if selectedModel == "" {
 		return nil, fmt.Errorf("selectedModel parameter is required")
@@ -245,24 +255,139 @@ func (s *AIAgentService) getChatModel(c *gin.Context) (*ark.ChatModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get model config: %w", err)
 	}
+	if modelConfig == nil {
+		return nil, fmt.Errorf("model not found: %s", selectedModel)
+	}
+
+	// Check if model supports chat task type
+	hasChat := false
+	for _, t := range modelConfig.TaskTypes {
+		if t == models.TaskTypeChat {
+			hasChat = true
+			break
+		}
+	}
+	if !hasChat {
+		return nil, fmt.Errorf("model %s does not support chat task type", selectedModel)
+	}
+
+	ctx := context.Background()
+
 	switch modelConfig.Provider {
+	case "openai", "custom":
+		chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+			BaseURL: modelConfig.BaseUrl,
+			APIKey:  modelConfig.ApiKey,
+			Model:   modelConfig.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OpenAI model: %w", err)
+		}
+		return chatModel, nil
+
 	case "ark":
 		timeout := time.Second * 600
 		retries := 3
-		chatModel, err := ark.NewChatModel(context.TODO(), &ark.ChatModelConfig{
+		region := ""
+		if modelConfig.Extra != nil {
+			if v, ok := modelConfig.Extra["region"]; ok {
+				region, _ = v.(string)
+			}
+		}
+		chatModel, err := ark.NewChatModel(ctx, &ark.ChatModelConfig{
 			BaseURL:    modelConfig.BaseUrl,
-			Region:     modelConfig.Extra["region"].(string),
+			Region:     region,
 			Timeout:    &timeout,
 			RetryTimes: &retries,
 			APIKey:     modelConfig.ApiKey,
 			Model:      modelConfig.Model,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("failed to create model: %w", err)
+			return nil, fmt.Errorf("failed to create Ark model: %w", err)
 		}
 		return chatModel, nil
+
+	case "deepseek":
+		chatModel, err := deepseek.NewChatModel(ctx, &deepseek.ChatModelConfig{
+			BaseURL: modelConfig.BaseUrl,
+			APIKey:  modelConfig.ApiKey,
+			Model:   modelConfig.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DeepSeek model: %w", err)
+		}
+		return chatModel, nil
+
+	case "anthropic":
+		chatModel, err := claude.NewChatModel(ctx, &claude.Config{
+			BaseURL:   &modelConfig.BaseUrl,
+			APIKey:    modelConfig.ApiKey,
+			Model:     modelConfig.Model,
+			MaxTokens: 8192,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Claude model: %w", err)
+		}
+		return chatModel, nil
+
+	case "ollama":
+		chatModel, err := ollama.NewChatModel(ctx, &ollama.ChatModelConfig{
+			BaseURL: modelConfig.BaseUrl,
+			Model:   modelConfig.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Ollama model: %w", err)
+		}
+		return chatModel, nil
+
+	case "google":
+		genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  modelConfig.ApiKey,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+		}
+		chatModel, err := gemini.NewChatModel(ctx, &gemini.Config{
+			Client: genaiClient,
+			Model:  modelConfig.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini model: %w", err)
+		}
+		return chatModel, nil
+
+	case "qianfan":
+		// Qianfan uses API key format: "access_key:secret_key"
+		if modelConfig.ApiKey != "" {
+			parts := strings.Split(modelConfig.ApiKey, ":")
+			if len(parts) == 2 {
+				qianfanConfig := qianfan.GetQianfanSingletonConfig()
+				qianfanConfig.AccessKey = parts[0]
+				qianfanConfig.SecretKey = parts[1]
+			}
+		}
+		chatModel, err := qianfan.NewChatModel(ctx, &qianfan.ChatModelConfig{
+			Model: modelConfig.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Qianfan model: %w", err)
+		}
+		return chatModel, nil
+
+	case "qwen":
+		chatModel, err := qwen.NewChatModel(ctx, &qwen.ChatModelConfig{
+			APIKey: modelConfig.ApiKey,
+			Model:  modelConfig.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Qwen model: %w", err)
+		}
+		return chatModel, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported model provider: %s", modelConfig.Provider)
 	}
-	return nil, fmt.Errorf("unsupported model provider: %s", modelConfig.Provider)
 }
 
 func (s *AIAgentService) getAgent(c *gin.Context, tools []tool.BaseTool) (*adk.ChatModelAgent, error) {
@@ -469,7 +594,9 @@ func (s *AIAgentService) HandleAgentChat(c *gin.Context) {
 				return
 			}
 			chunks = append(chunks, chunk)
-			if chunk.Role != "" && chunk.ToolCalls == nil {
+			// Send chunk to client if it has content and no tool calls
+			// Note: only the first chunk typically has Role set, subsequent chunks may have empty Role
+			if chunk.ToolCalls == nil && (chunk.Content != "" || chunk.Role != "" || chunk.ReasoningContent != "") {
 				chatResponse := &api.ChatResponse{ConversationID: req.ConversationID, MessageID: replyId, ParentID: req.MessageID, Message: *chunk}
 				s.SSEEvent(c, "message", chatResponse)
 			}
@@ -542,7 +669,8 @@ func (s *AIAgentService) HandleAgentChat(c *gin.Context) {
 					break
 				}
 				finalChunks = append(finalChunks, chunk)
-				if chunk.Role != "" {
+				// Send chunk to client if it has content
+				if chunk.Content != "" || chunk.Role != "" || chunk.ReasoningContent != "" {
 					chatResponse := &api.ChatResponse{ConversationID: req.ConversationID, MessageID: replyId, ParentID: req.MessageID, Message: *chunk}
 					s.SSEEvent(c, "message", chatResponse)
 				}
@@ -594,7 +722,8 @@ func (s *AIAgentService) HandleAgentChat(c *gin.Context) {
 					}
 					chunks = append(chunks, chunk)
 					s.logger.Debug("Agent stream iteration", "message", chunk)
-					if chunk.Role != "" && chunk.ToolCalls == nil {
+					// Send chunk to client if it has content and no tool calls
+					if chunk.ToolCalls == nil && (chunk.Content != "" || chunk.Role != "" || chunk.ReasoningContent != "") {
 						s.SSEEvent(c, "message", &api.ChatResponse{ConversationID: req.ConversationID, MessageID: replyId, ParentID: req.MessageID, Message: *chunk})
 					}
 				}

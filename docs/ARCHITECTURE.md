@@ -22,7 +22,7 @@
 - The static middleware does not intercept backend endpoints such as `/api`, `/terminal`, and `/healthz`.
 
 ## Model Configuration
-- `~/.aitern/model.json` persists model list
+- `~/.choraleia/model.json` persists model list
 - Providers supported: ark, deepseek, claude, gemini, ollama, openai, qianfan, qwen
 
 ## Security & Future
