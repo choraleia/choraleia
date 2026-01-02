@@ -6,6 +6,8 @@ import DesktopMacIcon from "@mui/icons-material/DesktopMac";
 import StorageIcon from "@mui/icons-material/Storage";
 import BugReportIcon from "@mui/icons-material/BugReport";
 import FlashOnIcon from "@mui/icons-material/FlashOn";
+import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
+import PlaylistPlayIcon from "@mui/icons-material/PlaylistPlay";
 
 interface StatusBarProps {
   currentTerminal?: {
@@ -22,6 +24,9 @@ interface StatusBarProps {
   cpuUsage?: number;
   tasksActive?: number;
   onTasksClick?: () => void;
+  tunnelsRunning?: number;
+  tunnelsTotal?: number;
+  onTunnelsClick?: () => void;
 }
 
 const StatusBar: React.FC<StatusBarProps> = ({
@@ -33,6 +38,9 @@ const StatusBar: React.FC<StatusBarProps> = ({
   cpuUsage = 0,
   tasksActive = 0,
   onTasksClick,
+  tunnelsRunning = 0,
+  tunnelsTotal = 0,
+  onTunnelsClick,
 }) => {
   const [currentTime, setCurrentTime] = useState<string>("");
   const [connectionDuration, setConnectionDuration] = useState<string>("");
@@ -218,6 +226,7 @@ const StatusBar: React.FC<StatusBarProps> = ({
         <Chip
           size="small"
           variant="outlined"
+          icon={<PlaylistPlayIcon sx={{ fontSize: 14 }} />}
           label={`Tasks ${tasksActive}`}
           onClick={onTasksClick}
           clickable
@@ -226,9 +235,28 @@ const StatusBar: React.FC<StatusBarProps> = ({
             fontSize: 11,
             borderRadius: 0,
             backgroundColor: "transparent",
-            "& .MuiChip-label": { px: 0.75 },
+            "& .MuiChip-label": { px: 0.5 },
+            "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
             borderColor: "transparent",
             color: tasksActive > 0 ? "#ad6800" : "#666",
+          }}
+        />
+        <Chip
+          size="small"
+          variant="outlined"
+          icon={<SwapHorizIcon sx={{ fontSize: 14 }} />}
+          label={`Tunnels ${tunnelsRunning}/${tunnelsTotal}`}
+          onClick={onTunnelsClick}
+          clickable
+          sx={{
+            height: 18,
+            fontSize: 11,
+            borderRadius: 0,
+            backgroundColor: "transparent",
+            "& .MuiChip-label": { px: 0.5 },
+            "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
+            borderColor: "transparent",
+            color: tunnelsRunning > 0 ? "#52c41a" : "#666",
           }}
         />
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>

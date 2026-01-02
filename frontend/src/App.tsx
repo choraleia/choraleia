@@ -1,10 +1,12 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { tasksWSClient } from "./api/tasks_ws_client";
 import { tasksStore } from "./api/tasks_store";
 import StatusBar from "./components/StatusBar";
 import SettingsPage from "./components/settings/SettingsPage";
 import AssetPage, { AssetPageHandle } from "./components/assets/AssetPage";
 import TaskCenter from "./components/TaskCenter";
+import TunnelManager from "./components/TunnelManager";
+import { getApiUrl } from "./api/base";
 
 // MUI components
 import { Box, IconButton } from "@mui/material";
@@ -21,6 +23,8 @@ const App: React.FC = () => {
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [tasksActive, setTasksActive] = useState(0);
+  const [tunnelManagerOpen, setTunnelManagerOpen] = useState(false);
+  const [tunnelStats, setTunnelStats] = useState({ running: 0, total: 0 });
   // Preserve app statistics
   const [appStats, setAppStats] = useState({
     memoryUsage: 0,
@@ -29,6 +33,28 @@ const App: React.FC = () => {
   });
   // Asset page ref
   const assetPageRef = useRef<AssetPageHandle>(null);
+
+  // Fetch tunnel stats periodically
+  const fetchTunnelStats = useCallback(async () => {
+    try {
+      const resp = await fetch(getApiUrl("/api/tunnels/stats"));
+      const data = await resp.json();
+      if (data.code === 200 && data.data) {
+        setTunnelStats({
+          running: data.data.running || 0,
+          total: data.data.total || 0,
+        });
+      }
+    } catch (e) {
+      // Ignore errors
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTunnelStats();
+    const interval = setInterval(fetchTunnelStats, 10000);
+    return () => clearInterval(interval);
+  }, [fetchTunnelStats]);
 
   useEffect(() => {
     const update = () =>
@@ -191,6 +217,14 @@ const App: React.FC = () => {
         onClose={() => setTaskCenterOpen(false)}
       />
 
+      <TunnelManager
+        open={tunnelManagerOpen}
+        onClose={() => {
+          setTunnelManagerOpen(false);
+          fetchTunnelStats();
+        }}
+      />
+
       {/* Bottom status bar */}
       <StatusBar
         currentTerminal={currentTerminal}
@@ -201,6 +235,9 @@ const App: React.FC = () => {
         cpuUsage={appStats.cpuUsage}
         tasksActive={tasksActive}
         onTasksClick={() => setTaskCenterOpen(true)}
+        tunnelsRunning={tunnelStats.running}
+        tunnelsTotal={tunnelStats.total}
+        onTunnelsClick={() => setTunnelManagerOpen(true)}
       />
     </Box>
   );

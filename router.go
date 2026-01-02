@@ -197,6 +197,10 @@ func (s *Server) SetupRoutes() {
 	quickCmdService := service.NewQuickCommandService()
 	quickCmdHandler := handler.NewQuickCmdHandler(quickCmdService, s.logger)
 
+	// Create tunnel service and handler
+	tunnelService := service.NewTunnelService(assetService)
+	tunnelHandler := handler.NewTunnelHandler(tunnelService, s.logger)
+
 	// Terminal connection routes
 	// /terminal
 	termGroups := s.ginEngine.Group("/terminal")
@@ -291,6 +295,16 @@ func (s *Server) SetupRoutes() {
 		quickCmdGroup.PUT("/:id", quickCmdHandler.Update)
 		quickCmdGroup.DELETE("/:id", quickCmdHandler.Delete)
 		quickCmdGroup.POST("/reorder", quickCmdHandler.Reorder)
+	}
+
+	// Tunnel API routes
+	// /api/tunnels
+	tunnelsGroup := apiGroup.Group("/tunnels")
+	{
+		tunnelsGroup.GET("", tunnelHandler.List)
+		tunnelsGroup.GET("/stats", tunnelHandler.GetStats)
+		tunnelsGroup.POST("/:id/start", tunnelHandler.Start)
+		tunnelsGroup.POST("/:id/stop", tunnelHandler.Stop)
 	}
 }
 

@@ -11,9 +11,28 @@ import CloseIcon from "@mui/icons-material/Close";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import LinkOffIcon from "@mui/icons-material/LinkOff";
+import ComputerIcon from "@mui/icons-material/Computer";
+import LanIcon from "@mui/icons-material/Lan";
+import ViewInArIcon from "@mui/icons-material/ViewInAr";
+import HomeIcon from "@mui/icons-material/Home";
 import TerminalComponent, { cleanupTerminal } from "./Terminal";
 import Toolbar from "./Toolbar.tsx";
 import AssetTree, { AssetTreeHandle } from "./AssetTree";
+
+// Get icon for tab based on asset type
+function getTabIcon(assetType?: string): React.ReactNode {
+  switch (assetType) {
+    case "local":
+      return <ComputerIcon sx={{ fontSize: 16 }} />;
+    case "ssh":
+      return <LanIcon sx={{ fontSize: 16 }} />;
+    case "docker_host":
+    case "docker_container":
+      return <ViewInArIcon sx={{ fontSize: 16 }} />;
+    default:
+      return <HomeIcon sx={{ fontSize: 16 }} />;
+  }
+}
 
 // Keep consistent data structure with App
 interface TabPane {
@@ -269,7 +288,7 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
             (t) => t.key.startsWith(`docker-${dockerHostAssetId}-${container.id}`) && t.key !== "welcome",
           );
           const num = same.length + 1;
-          const tabLabel = num === 1 ? `🐳 ${container.name}` : `🐳 ${container.name} (${num})`;
+          const tabLabel = num === 1 ? container.name : `${container.name} (${num})`;
           const newTab: TabPane = {
             key,
             label: tabLabel,
@@ -311,12 +330,13 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
               value={activeTabKey}
               onChange={(_, v) => setActiveTabKey(v)}
               variant="scrollable"
-              sx={{ minHeight: 40 }}
+              sx={{ minHeight: 36 }}
             >
               {tabs.map((tab) => (
                 <Tab
                   key={tab.key}
                   value={tab.key}
+                  sx={{ minHeight: 36, py: 0.5 }}
                   label={
                     <Box
                       onContextMenu={(e) => {
@@ -326,11 +346,12 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
                       }}
                       display="flex"
                       alignItems="center"
-                      gap={1}
+                      gap={0.5}
                     >
-                      <Typography variant="body2" noWrap>
+                      {getTabIcon(tab.meta?.assetType)}
+                      <span style={{ fontSize: 12, verticalAlign: "middle" }}>
                         {tab.label}
-                      </Typography>
+                      </span>
                       {tab.closable && (
                         <Box
                           component="span"
@@ -346,6 +367,7 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
                             height: 16,
                             cursor: "pointer",
                             borderRadius: 1,
+                            ml: 0.5,
                             color: theme.palette.text.secondary,
                             "&:hover": {
                               bgcolor: theme.palette.action.hover,

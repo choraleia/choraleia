@@ -1,3 +1,4 @@
+// filepath: /home/blue/codes/choraleia/frontend/src/components/assets/forms/DockerAssetForm.tsx
 import React, { useState, useEffect, useImperativeHandle } from "react";
 import {
   Box,
@@ -11,10 +12,13 @@ import {
   Select,
   Button,
   CircularProgress,
-  Alert,
+  Switch,
+  Autocomplete,
 } from "@mui/material";
 import FolderIcon from "@mui/icons-material/Folder";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ErrorIcon from "@mui/icons-material/Error";
 import {
   FolderTreeItem,
   AssetLike,
@@ -24,11 +28,19 @@ import { createAsset, updateAsset } from "../api/assets";
 import { getApiUrl } from "../../../api/base";
 
 export interface DockerHostConfig {
+  // Connection
   connection_type: "local" | "ssh";
   ssh_asset_id?: string;
+  // Container settings
   shell?: string;
-  show_all_containers?: boolean;
   user?: string;
+  show_all_containers?: boolean;
+  // Terminal preferences
+  term_type?: string;
+  scrollback?: number;
+  font_size?: number;
+  copy_on_select?: boolean;
+  bell?: boolean;
 }
 
 export interface DockerAssetFormHandle {
@@ -44,6 +56,49 @@ interface Props {
   onSuccess?: () => void;
   onValidityChange?: (valid: boolean) => void;
   folderPathResolver: (id: string) => string;
+}
+
+// Form field label component
+function FieldLabel({ label, required }: { label: string; required?: boolean }) {
+  return (
+    <Typography
+      variant="body2"
+      sx={{ mb: 0.5, color: "text.secondary", fontSize: 12 }}
+    >
+      {label}
+      {required && <span style={{ color: "#f44336", marginLeft: 2 }}>*</span>}
+    </Typography>
+  );
+}
+
+// Form section component
+function FormSection({
+  title,
+  children,
+}: {
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Box
+      sx={{
+        p: 1.5,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+      }}
+    >
+      {title && (
+        <Typography
+          variant="subtitle2"
+          sx={{ mb: 1.5, color: "text.primary", fontWeight: 500 }}
+        >
+          {title}
+        </Typography>
+      )}
+      {children}
+    </Box>
+  );
 }
 
 const DockerAssetForm = React.forwardRef<DockerAssetFormHandle, Props>(
@@ -72,8 +127,13 @@ const DockerAssetForm = React.forwardRef<DockerAssetFormHandle, Props>(
         connection_type: cfg.connection_type || "local",
         ssh_asset_id: cfg.ssh_asset_id || "",
         shell: cfg.shell || "/bin/sh",
-        show_all_containers: cfg.show_all_containers ?? false,
         user: cfg.user || "",
+        show_all_containers: cfg.show_all_containers ?? false,
+        term_type: cfg.term_type || "xterm-256color",
+        scrollback: cfg.scrollback || 10000,
+        font_size: cfg.font_size || 14,
+        copy_on_select: cfg.copy_on_select || false,
+        bell: cfg.bell !== false,
       };
     });
 
@@ -100,7 +160,6 @@ const DockerAssetForm = React.forwardRef<DockerAssetFormHandle, Props>(
     }, []);
 
     useEffect(() => {
-      // Hydrate when asset changes (edit mode reopen)
       setName(asset?.name || "");
       setDescription(asset?.description || "");
       setParentFolder(asset?.parent_id ?? defaultParentId ?? null);
@@ -109,9 +168,15 @@ const DockerAssetForm = React.forwardRef<DockerAssetFormHandle, Props>(
         connection_type: cfg.connection_type || "local",
         ssh_asset_id: cfg.ssh_asset_id || "",
         shell: cfg.shell || "/bin/sh",
-        show_all_containers: cfg.show_all_containers ?? false,
         user: cfg.user || "",
+        show_all_containers: cfg.show_all_containers ?? false,
+        term_type: cfg.term_type || "xterm-256color",
+        scrollback: cfg.scrollback || 10000,
+        font_size: cfg.font_size || 14,
+        copy_on_select: cfg.copy_on_select || false,
+        bell: cfg.bell !== false,
       });
+      setTestResult(null);
     }, [asset, defaultParentId]);
 
     const isValid = React.useMemo(() => {
@@ -171,8 +236,13 @@ const DockerAssetForm = React.forwardRef<DockerAssetFormHandle, Props>(
           connection_type: config.connection_type,
           ssh_asset_id: config.connection_type === "ssh" ? config.ssh_asset_id : undefined,
           shell: config.shell || "/bin/sh",
-          show_all_containers: config.show_all_containers,
           user: config.user || undefined,
+          show_all_containers: config.show_all_containers,
+          term_type: config.term_type,
+          scrollback: config.scrollback,
+          font_size: config.font_size,
+          copy_on_select: config.copy_on_select,
+          bell: config.bell,
         },
         tags: [] as string[],
         parent_id: parentFolder,
@@ -197,162 +267,309 @@ const DockerAssetForm = React.forwardRef<DockerAssetFormHandle, Props>(
       canSubmit: () => isValid,
     }));
 
-    const folderSelect = (
-      <FormControl fullWidth size="small">
-        <Select
-          value={parentFolder ?? "root"}
-          renderValue={(value) => {
-            if (value === "root") return "/";
-            if (typeof value === "string")
-              return "/" + folderPathResolver(value);
-            return "/";
-          }}
-          onChange={(e) =>
-            setParentFolder(
-              e.target.value === "root" ? null : (e.target.value as string),
-            )
-          }
-        >
-          <MenuItem value="root">/</MenuItem>
-          {folderTreeItems.map((item) => (
-            <MenuItem key={item.id} value={item.id}>
-              <Box pl={item.depth * 1.5} display="flex" alignItems="center">
-                <FolderIcon fontSize="small" style={{ marginRight: 4 }} />
-                {item.name}
-              </Box>
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-    );
-
     return (
       <Box display="flex" flexDirection="column" gap={2}>
-        {/* Name */}
-        <TextField
-          label="Name"
-          size="small"
-          required
-          fullWidth
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Production Docker"
-        />
+        {/* Basic Info Section */}
+        <FormSection title="Basic Information">
+          <Box display="flex" flexDirection="column" gap={1.5}>
+            {/* Name and Folder row */}
+            <Box display="flex" gap={2}>
+              <Box flex={1}>
+                <FieldLabel label="Name" required />
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="e.g. Production Docker"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+              </Box>
+              <Box sx={{ minWidth: 180 }}>
+                <FieldLabel label="Folder" />
+                <FormControl size="small" fullWidth>
+                  <Select
+                    value={parentFolder ?? "root"}
+                    renderValue={(value) => {
+                      if (value === "root") return "/";
+                      if (typeof value === "string")
+                        return "/" + folderPathResolver(value);
+                      return "/";
+                    }}
+                    onChange={(e) =>
+                      setParentFolder(
+                        e.target.value === "root"
+                          ? null
+                          : (e.target.value as string),
+                      )
+                    }
+                  >
+                    <MenuItem value="root">/</MenuItem>
+                    {folderTreeItems.map((item) => (
+                      <MenuItem key={item.id} value={item.id}>
+                        <Box
+                          pl={item.depth * 1.5}
+                          display="flex"
+                          alignItems="center"
+                        >
+                          <FolderIcon
+                            fontSize="small"
+                            style={{ marginRight: 4 }}
+                          />
+                          {item.name}
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+            </Box>
 
-        {/* Description */}
-        <TextField
-          label="Description"
-          size="small"
-          fullWidth
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Optional description"
-        />
+            {/* Description */}
+            <Box>
+              <FieldLabel label="Description" />
+              <TextField
+                size="small"
+                fullWidth
+                placeholder="Optional description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                multiline
+                minRows={2}
+              />
+            </Box>
+          </Box>
+        </FormSection>
 
-        {/* Connection Type */}
-        <Box>
-          <Typography variant="subtitle2" gutterBottom>
-            Connection Type
-          </Typography>
-          <RadioGroup
-            row
-            value={config.connection_type}
-            onChange={(e) =>
-              setConfig({ ...config, connection_type: e.target.value as "local" | "ssh" })
-            }
-          >
-            <FormControlLabel
-              value="local"
-              control={<Radio size="small" />}
-              label="Local Docker"
-            />
-            <FormControlLabel
-              value="ssh"
-              control={<Radio size="small" />}
-              label="Remote via SSH"
-            />
-          </RadioGroup>
-        </Box>
+        {/* Connection Section */}
+        <FormSection title="Connection">
+          <Box display="flex" flexDirection="column" gap={1.5}>
+            {/* Connection Type */}
+            <Box>
+              <FieldLabel label="Docker Host" />
+              <RadioGroup
+                row
+                value={config.connection_type}
+                onChange={(e) => {
+                  setConfig({ ...config, connection_type: e.target.value as "local" | "ssh" });
+                  setTestResult(null);
+                }}
+              >
+                <FormControlLabel
+                  value="local"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">Local Docker</Typography>}
+                />
+                <FormControlLabel
+                  value="ssh"
+                  control={<Radio size="small" />}
+                  label={<Typography variant="body2">Remote via SSH</Typography>}
+                />
+              </RadioGroup>
+            </Box>
 
-        {/* SSH Asset Selection (for remote) */}
-        {config.connection_type === "ssh" && (
-          <FormControl fullWidth size="small">
-            <Typography variant="subtitle2" gutterBottom>
-              SSH Host
-            </Typography>
-            <Select
-              value={config.ssh_asset_id || ""}
-              onChange={(e) =>
-                setConfig({ ...config, ssh_asset_id: e.target.value })
-              }
-              displayEmpty
-            >
-              <MenuItem value="" disabled>
-                Select SSH connection...
-              </MenuItem>
-              {sshAssets.map((asset) => (
-                <MenuItem key={asset.id} value={asset.id}>
-                  {asset.name} ({(asset.config as any)?.host})
-                </MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-        )}
+            {/* SSH Asset Selection (for remote) */}
+            {config.connection_type === "ssh" && (
+              <Box>
+                <FieldLabel label="SSH Host" required />
+                <FormControl size="small" fullWidth>
+                  <Select
+                    value={config.ssh_asset_id || ""}
+                    onChange={(e) => {
+                      setConfig({ ...config, ssh_asset_id: e.target.value });
+                      setTestResult(null);
+                    }}
+                    displayEmpty
+                  >
+                    <MenuItem value="" disabled>
+                      Select SSH connection...
+                    </MenuItem>
+                    {sshAssets.map((a) => (
+                      <MenuItem key={a.id} value={a.id}>
+                        {a.name} ({(a.config as any)?.username}@{(a.config as any)?.host})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Box>
+            )}
 
-        {/* Default Shell */}
-        <FormControl fullWidth size="small">
-          <Typography variant="subtitle2" gutterBottom>
-            Default Shell
-          </Typography>
-          <Select
-            value={config.shell || "/bin/sh"}
-            onChange={(e) => setConfig({ ...config, shell: e.target.value })}
-          >
-            <MenuItem value="/bin/sh">/bin/sh</MenuItem>
-            <MenuItem value="/bin/bash">/bin/bash</MenuItem>
-            <MenuItem value="/bin/zsh">/bin/zsh</MenuItem>
-            <MenuItem value="/bin/ash">/bin/ash (Alpine)</MenuItem>
-          </Select>
-        </FormControl>
+            {/* Test Connection */}
+            <Box display="flex" alignItems="center" gap={1}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={handleTestConnection}
+                disabled={testing || (config.connection_type === "ssh" && !config.ssh_asset_id)}
+                startIcon={testing ? <CircularProgress size={16} /> : <RefreshIcon />}
+              >
+                Test Connection
+              </Button>
+              {testResult && (
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  {testResult.success ? (
+                    <CheckCircleIcon sx={{ fontSize: 14, color: "success.main" }} />
+                  ) : (
+                    <ErrorIcon sx={{ fontSize: 14, color: "error.main" }} />
+                  )}
+                  <Typography
+                    variant="body2"
+                    color={testResult.success ? "success.main" : "error.main"}
+                    sx={{ fontSize: 12 }}
+                  >
+                    {testResult.message}
+                  </Typography>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        </FormSection>
 
-        {/* Default User */}
-        <TextField
-          label="Default User (optional)"
-          size="small"
-          fullWidth
-          value={config.user || ""}
-          onChange={(e) => setConfig({ ...config, user: e.target.value })}
-          placeholder="e.g. root or 1000:1000"
-        />
+        {/* Container Settings Section */}
+        <FormSection title="Container Defaults">
+          <Box display="flex" flexDirection="column" gap={1.5}>
+            {/* Shell and User row */}
+            <Box display="flex" gap={2}>
+              <Box flex={1}>
+                <FieldLabel label="Default Shell" />
+                <Autocomplete
+                  freeSolo
+                  size="small"
+                  options={[
+                    "/bin/sh",
+                    "/bin/bash",
+                    "/bin/ash",
+                    "/bin/zsh",
+                  ]}
+                  value={config.shell || "/bin/sh"}
+                  onInputChange={(_, val) =>
+                    setConfig({ ...config, shell: val || "/bin/sh" })
+                  }
+                  renderInput={(params) => (
+                    <TextField {...params} placeholder="/bin/sh" />
+                  )}
+                />
+              </Box>
+              <Box flex={1}>
+                <FieldLabel label="Default User" />
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="e.g. root or 1000:1000"
+                  value={config.user || ""}
+                  onChange={(e) => setConfig({ ...config, user: e.target.value })}
+                />
+              </Box>
+            </Box>
 
-        {/* Folder */}
-        <Box>
-          <Typography variant="subtitle2" gutterBottom>
-            Folder
-          </Typography>
-          {folderSelect}
-        </Box>
+            {/* Terminal Type */}
+            <Box sx={{ maxWidth: 280 }}>
+              <FieldLabel label="Terminal Type" />
+              <Autocomplete
+                freeSolo
+                size="small"
+                options={[
+                  "xterm-256color",
+                  "xterm",
+                  "xterm-color",
+                  "vt100",
+                  "linux",
+                ]}
+                value={config.term_type || "xterm-256color"}
+                onInputChange={(_, val) =>
+                  setConfig({ ...config, term_type: val || "xterm-256color" })
+                }
+                renderInput={(params) => (
+                  <TextField {...params} placeholder="xterm-256color" />
+                )}
+              />
+            </Box>
 
-        {/* Test Connection */}
-        <Box display="flex" alignItems="center" gap={2}>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={handleTestConnection}
-            disabled={testing || (config.connection_type === "ssh" && !config.ssh_asset_id)}
-            startIcon={testing ? <CircularProgress size={16} /> : <RefreshIcon />}
-          >
-            Test Connection
-          </Button>
-          {testResult && (
-            <Alert
-              severity={testResult.success ? "success" : "error"}
-              sx={{ flex: 1, py: 0 }}
-            >
-              {testResult.message}
-            </Alert>
-          )}
-        </Box>
+            {/* Show all containers toggle */}
+            <Box display="flex" alignItems="center" gap={1}>
+              <Switch
+                size="small"
+                checked={config.show_all_containers || false}
+                onChange={(e) =>
+                  setConfig({ ...config, show_all_containers: e.target.checked })
+                }
+              />
+              <Typography variant="body2" color="text.secondary">
+                Show all containers (including stopped)
+              </Typography>
+            </Box>
+          </Box>
+        </FormSection>
+
+        {/* Terminal Preferences Section */}
+        <FormSection title="Terminal Preferences">
+          <Box display="flex" flexDirection="column" gap={1.5}>
+            {/* Scrollback and Font Size row */}
+            <Box display="flex" gap={2}>
+              <Box sx={{ width: 150 }}>
+                <FieldLabel label="Scrollback Lines" />
+                <TextField
+                  size="small"
+                  fullWidth
+                  type="number"
+                  placeholder="10000"
+                  value={config.scrollback || 10000}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      scrollback: Math.max(100, Number(e.target.value) || 10000),
+                    })
+                  }
+                  inputProps={{ min: 100, max: 100000, step: 1000 }}
+                />
+              </Box>
+              <Box sx={{ width: 120 }}>
+                <FieldLabel label="Font Size" />
+                <TextField
+                  size="small"
+                  fullWidth
+                  type="number"
+                  placeholder="14"
+                  value={config.font_size || 14}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      font_size: Math.max(8, Math.min(32, Number(e.target.value) || 14)),
+                    })
+                  }
+                  inputProps={{ min: 8, max: 32 }}
+                />
+              </Box>
+            </Box>
+
+            {/* Toggle options */}
+            <Box display="flex" flexWrap="wrap" gap={2}>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Switch
+                  size="small"
+                  checked={config.copy_on_select || false}
+                  onChange={(e) =>
+                    setConfig({ ...config, copy_on_select: e.target.checked })
+                  }
+                />
+                <Typography variant="body2" color="text.secondary">
+                  Copy on select
+                </Typography>
+              </Box>
+              <Box display="flex" alignItems="center" gap={1}>
+                <Switch
+                  size="small"
+                  checked={config.bell !== false}
+                  onChange={(e) =>
+                    setConfig({ ...config, bell: e.target.checked })
+                  }
+                />
+                <Typography variant="body2" color="text.secondary">
+                  Terminal bell
+                </Typography>
+              </Box>
+            </Box>
+          </Box>
+        </FormSection>
       </Box>
     );
   },
