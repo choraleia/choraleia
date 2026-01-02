@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strings"
 
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/utils"
@@ -308,16 +307,9 @@ func (m *ModelService) TestModelConnection(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"code": 200, "success": true, "message": "Connection successful"})
 
 	case "qianfan":
-		// Qianfan uses API key authentication via singleton config
-		// The API key format should be "access_key:secret_key"
-		if req.ApiKey != "" {
-			parts := strings.Split(req.ApiKey, ":")
-			if len(parts) == 2 {
-				qianfanConfig := qianfan.GetQianfanSingletonConfig()
-				qianfanConfig.AccessKey = parts[0]
-				qianfanConfig.SecretKey = parts[1]
-			}
-		}
+		qianfanConfig := qianfan.GetQianfanSingletonConfig()
+		qianfanConfig.BaseURL = req.BaseUrl
+		qianfanConfig.BearerToken = req.ApiKey
 		chatModel, err := qianfan.NewChatModel(ctx, &qianfan.ChatModelConfig{
 			Model: req.Model,
 		})
@@ -334,8 +326,9 @@ func (m *ModelService) TestModelConnection(c *gin.Context) {
 
 	case "qwen":
 		chatModel, err := qwen.NewChatModel(ctx, &qwen.ChatModelConfig{
-			APIKey: req.ApiKey,
-			Model:  req.Model,
+			BaseURL: req.BaseUrl,
+			APIKey:  req.ApiKey,
+			Model:   req.Model,
 		})
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 200, "success": false, "message": "Model init failed: " + err.Error()})
