@@ -1,12 +1,15 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -405,26 +408,45 @@ func (t *Terminal) startLocalShell(asset *models.Asset) error {
 	}
 	t.localTty = tty
 
-	// Load configuration
-	config := asset.Config
-	shell := "/bin/bash"
-	workingDir := ""
-
-	if shellConfig, ok := config["shell"].(string); ok && shellConfig != "" {
-		shell = shellConfig
+	// Parse typed config
+	var cfg models.LocalConfig
+	if err := asset.GetTypedConfig(&cfg); err != nil {
+		t.logger.Warn("Failed to parse local config, using defaults", "error", err)
 	}
-	if dirConfig, ok := config["working_dir"].(string); ok && dirConfig != "" {
-		workingDir = dirConfig
+
+	// Apply defaults
+	shell := cfg.Shell
+	if shell == "" {
+		shell = "/bin/bash"
+	}
+	termType := cfg.TermType
+	if termType == "" {
+		termType = "xterm-256color"
+	}
+
+	// Build shell command arguments
+	var args []string
+	if cfg.LoginShell {
+		args = append(args, "-l")
 	}
 
 	// Create command
-	cmd := tty.Command(shell)
+	cmd := tty.Command(shell, args...)
 
 	// Set environment variables
-	env := os.Environ()
-	env = append(env, "TERM=xterm-256color")
-	if workingDir != "" {
-		cmd.Dir = workingDir
+	var env []string
+	if cfg.InheritEnv {
+		env = os.Environ()
+	}
+	env = append(env, fmt.Sprintf("TERM=%s", termType))
+
+	// Add custom environment variables
+	for k, v := range cfg.Environment {
+		env = append(env, fmt.Sprintf("%s=%s", k, v))
+	}
+
+	if cfg.WorkingDir != "" {
+		cmd.Dir = cfg.WorkingDir
 	}
 	cmd.Env = env
 
@@ -436,6 +458,17 @@ func (t *Terminal) startLocalShell(asset *models.Asset) error {
 	}
 	t.localCmd = cmd
 
+	// Execute startup command if configured
+	if cfg.StartupCommand != "" {
+		go func() {
+			// Wait a bit for shell to initialize
+			time.Sleep(100 * time.Millisecond)
+			if _, err := t.localTty.Write([]byte(cfg.StartupCommand + "\n")); err != nil {
+				t.logger.Warn("Failed to execute startup command", "error", err, "assetId", t.assetID)
+			}
+		}()
+	}
+
 	// Mark terminal ready
 	t.readyOnce.Do(func() { close(t.readyChan) })
 	return nil
@@ -443,54 +476,56 @@ func (t *Terminal) startLocalShell(asset *models.Asset) error {
 
 // startSSHConnection starts SSH connection
 func (t *Terminal) startSSHConnection(asset *models.Asset) error {
-	config := asset.Config
+	// Parse typed config
+	var cfg models.SSHConfig
+	if err := asset.GetTypedConfig(&cfg); err != nil {
+		return fmt.Errorf("failed to parse SSH config: %w", err)
+	}
 
-	// Parse SSH config
-	host, ok := config["host"].(string)
-	if !ok || host == "" {
+	// Validate required fields
+	if cfg.Host == "" {
 		return fmt.Errorf("SSH host not specified")
 	}
-
-	port := 22
-	if portConfig, ok := config["port"].(float64); ok {
-		port = int(portConfig)
+	if cfg.Username == "" {
+		return fmt.Errorf("SSH username not specified")
 	}
 
-	username, ok := config["username"].(string)
-	if !ok || username == "" {
-		return fmt.Errorf("SSH username not specified")
+	// Apply defaults
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+	termType := cfg.TermType
+	if termType == "" {
+		termType = "xterm-256color"
+	}
+	timeout := time.Duration(cfg.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 30 * time.Second
 	}
 
 	// Build SSH client config
 	sshConfig := &ssh.ClientConfig{
-		User:            username,
+		User:            cfg.Username,
 		Auth:            []ssh.AuthMethod{},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // NOTE: production should verify host key
-		Timeout:         30 * time.Second,
-	}
-
-	// Set timeout
-	if timeoutConfig, ok := config["timeout"].(float64); ok {
-		sshConfig.Timeout = time.Duration(timeoutConfig) * time.Second
+		Timeout:         timeout,
 	}
 
 	// Add authentication methods
-	if password, ok := config["password"].(string); ok && password != "" {
-		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(password))
+	if cfg.Password != "" {
+		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(cfg.Password))
 	}
 
-	passphrase, _ := config["private_key_passphrase"].(string) // optional passphrase for encrypted key
-
-	if privateKeyPath, ok := config["private_key_path"].(string); ok && privateKeyPath != "" {
-		if key, err := t.loadPrivateKey(privateKeyPath, passphrase); err == nil {
+	if cfg.PrivateKeyPath != "" {
+		if key, err := t.loadPrivateKey(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase); err == nil {
 			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
 		} else {
-			// warn but continue to try other methods
-			t.logger.Warn("Failed to load private key from file", "path", privateKeyPath, "error", err, "assetId", t.assetID)
+			t.logger.Warn("Failed to load private key from file", "path", cfg.PrivateKeyPath, "error", err, "assetId", t.assetID)
 		}
 	}
-	if privateKey, ok := config["private_key"].(string); ok && privateKey != "" {
-		if key, err := t.parsePrivateKey(privateKey, passphrase); err == nil {
+	if cfg.PrivateKey != "" {
+		if key, err := t.parsePrivateKey(cfg.PrivateKey, cfg.PrivateKeyPassphrase); err == nil {
 			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
 		} else {
 			t.logger.Warn("Failed to parse provided private key", "error", err, "assetId", t.assetID)
@@ -502,87 +537,124 @@ func (t *Terminal) startSSHConnection(asset *models.Asset) error {
 		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(""))
 	}
 
-	// Establish SSH connection
-	addr := fmt.Sprintf("%s:%d", host, port)
-	client, err := ssh.Dial("tcp", addr, sshConfig)
-	if err != nil {
-		return fmt.Errorf("failed to connect to SSH server: %w", err)
+	// Handle connection mode: direct, proxy, or jump
+	connectionMode := cfg.ConnectionMode
+	if connectionMode == "" {
+		connectionMode = "direct"
 	}
+
+	var client *ssh.Client
+	var err error
+
+	switch connectionMode {
+	case "jump":
+		if cfg.JumpAssetID == "" {
+			return fmt.Errorf("jump host asset ID not specified")
+		}
+		client, err = t.connectViaJumpHost(cfg.JumpAssetID, cfg.Host, port, sshConfig)
+		if err != nil {
+			return fmt.Errorf("failed to connect via jump host: %w", err)
+		}
+
+	case "proxy":
+		if cfg.ProxyHost == "" {
+			return fmt.Errorf("proxy host not specified")
+		}
+		proxyPort := cfg.ProxyPort
+		if proxyPort == 0 {
+			proxyPort = 1080
+		}
+		proxyType := cfg.ProxyType
+		if proxyType == "" {
+			proxyType = "socks5"
+		}
+		client, err = t.connectViaProxy(cfg.Host, port, sshConfig, proxyType, cfg.ProxyHost, proxyPort, cfg.ProxyUsername, cfg.ProxyPassword)
+		if err != nil {
+			return fmt.Errorf("failed to connect via proxy: %w", err)
+		}
+
+	default:
+		// Direct connection
+		addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+		client, err = ssh.Dial("tcp", addr, sshConfig)
+		if err != nil {
+			return fmt.Errorf("failed to connect to SSH server: %w", err)
+		}
+	}
+
 	t.sshClient = client
+
+	// Start keepalive if configured
+	if cfg.KeepaliveInterval > 0 {
+		go t.startSSHKeepalive(client, time.Duration(cfg.KeepaliveInterval)*time.Second)
+	}
 
 	// Create session
 	session, err := client.NewSession()
 	if err != nil {
-		if closeErr := client.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH client after session creation error", "error", closeErr, "assetId", t.assetID)
-		}
+		client.Close()
 		return fmt.Errorf("failed to create SSH session: %w", err)
 	}
 	t.sshSession = session
 
+	// Set environment variables
+	for k, v := range cfg.Environment {
+		if err := session.Setenv(k, v); err != nil {
+			t.logger.Warn("Failed to set environment variable", "key", k, "error", err, "assetId", t.assetID)
+		}
+	}
+
 	// Set terminal modes
 	modes := ssh.TerminalModes{
 		ssh.ECHO: 1,
-		//ssh.TTY_OP_ISPEED: 14400,
-		//ssh.TTY_OP_OSPEED: 14400,
 	}
 
-	if err := session.RequestPty("xterm-256color", t.rows, t.cols, modes); err != nil {
-		if closeErr := session.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH session after PTY request error", "error", closeErr, "assetId", t.assetID)
-		}
-		if closeErr := client.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH client after PTY request error", "error", closeErr, "assetId", t.assetID)
-		}
+	if err := session.RequestPty(termType, t.rows, t.cols, modes); err != nil {
+		session.Close()
+		client.Close()
 		return fmt.Errorf("failed to request pty: %w", err)
 	}
 
 	// Get I/O pipes
 	stdin, err := session.StdinPipe()
 	if err != nil {
-		if closeErr := session.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH session after stdin pipe error", "error", closeErr, "assetId", t.assetID)
-		}
-		if closeErr := client.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH client after stdin pipe error", "error", closeErr, "assetId", t.assetID)
-		}
+		session.Close()
+		client.Close()
 		return fmt.Errorf("failed to get stdin pipe: %w", err)
 	}
 	t.sshStdin = stdin
 
 	stdout, err := session.StdoutPipe()
 	if err != nil {
-		if closeErr := session.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH session after stdout pipe error", "error", closeErr, "assetId", t.assetID)
-		}
-		if closeErr := client.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH client after stdout pipe error", "error", closeErr, "assetId", t.assetID)
-		}
+		session.Close()
+		client.Close()
 		return fmt.Errorf("failed to get stdout pipe: %w", err)
 	}
 	t.sshStdout = stdout
 
 	stderr, err := session.StderrPipe()
 	if err != nil {
-		if closeErr := session.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH session after stderr pipe error", "error", closeErr, "assetId", t.assetID)
-		}
-		if closeErr := client.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH client after stderr pipe error", "error", closeErr, "assetId", t.assetID)
-		}
+		session.Close()
+		client.Close()
 		return fmt.Errorf("failed to get stderr pipe: %w", err)
 	}
 	t.sshStderr = stderr
 
 	// Start shell
 	if err := session.Shell(); err != nil {
-		if closeErr := session.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH session after shell start error", "error", closeErr, "assetId", t.assetID)
-		}
-		if closeErr := client.Close(); closeErr != nil {
-			t.logger.Error("Failed to close SSH client after shell start error", "error", closeErr, "assetId", t.assetID)
-		}
+		session.Close()
+		client.Close()
 		return fmt.Errorf("failed to start shell: %w", err)
+	}
+
+	// Execute startup command if configured
+	if cfg.StartupCommand != "" {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			if _, err := t.sshStdin.Write([]byte(cfg.StartupCommand + "\n")); err != nil {
+				t.logger.Warn("Failed to execute startup command", "error", err, "assetId", t.assetID)
+			}
+		}()
 	}
 
 	// Mark terminal ready
@@ -660,50 +732,50 @@ func (t *Terminal) startDockerExecViaSSH(sshAssetID string, dockerArgs []string)
 		return fmt.Errorf("referenced asset is not an SSH connection")
 	}
 
-	// Establish SSH connection (reuse SSH connection logic)
-	config := sshAsset.Config
+	// Parse typed config
+	var cfg models.SSHConfig
+	if err := sshAsset.GetTypedConfig(&cfg); err != nil {
+		return fmt.Errorf("failed to parse SSH config: %w", err)
+	}
 
-	host, ok := config["host"].(string)
-	if !ok || host == "" {
+	// Validate required fields
+	if cfg.Host == "" {
 		return fmt.Errorf("SSH host not specified")
 	}
-
-	port := 22
-	if portConfig, ok := config["port"].(float64); ok {
-		port = int(portConfig)
-	}
-
-	username, ok := config["username"].(string)
-	if !ok || username == "" {
+	if cfg.Username == "" {
 		return fmt.Errorf("SSH username not specified")
 	}
 
+	// Apply defaults
+	port := cfg.Port
+	if port == 0 {
+		port = 22
+	}
+
 	sshConfig := &ssh.ClientConfig{
-		User:            username,
+		User:            cfg.Username,
 		Auth:            []ssh.AuthMethod{},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         30 * time.Second,
 	}
 
 	// Add authentication methods
-	if password, ok := config["password"].(string); ok && password != "" {
-		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(password))
+	if cfg.Password != "" {
+		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(cfg.Password))
 	}
-
-	passphrase, _ := config["private_key_passphrase"].(string)
-	if privateKeyPath, ok := config["private_key_path"].(string); ok && privateKeyPath != "" {
-		if key, err := t.loadPrivateKey(privateKeyPath, passphrase); err == nil {
+	if cfg.PrivateKeyPath != "" {
+		if key, err := t.loadPrivateKey(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase); err == nil {
 			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
 		}
 	}
-	if privateKey, ok := config["private_key"].(string); ok && privateKey != "" {
-		if key, err := t.parsePrivateKey(privateKey, passphrase); err == nil {
+	if cfg.PrivateKey != "" {
+		if key, err := t.parsePrivateKey(cfg.PrivateKey, cfg.PrivateKeyPassphrase); err == nil {
 			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
 		}
 	}
 
 	// Connect to SSH server
-	addr := fmt.Sprintf("%s:%d", host, port)
+	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
 	client, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
 		return fmt.Errorf("failed to connect to SSH server: %w", err)
@@ -771,6 +843,289 @@ func (t *Terminal) startDockerExecViaSSH(sshAssetID string, dockerArgs []string)
 
 	t.readyOnce.Do(func() { close(t.readyChan) })
 	return nil
+}
+
+// connectViaJumpHost connects to target via jump host
+func (t *Terminal) connectViaJumpHost(jumpAssetID string, targetHost string, targetPort int, targetConfig *ssh.ClientConfig) (*ssh.Client, error) {
+	// Get jump host asset
+	jumpAsset, err := t.assetService.GetAsset(jumpAssetID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get jump host asset: %w", err)
+	}
+
+	// Parse typed config
+	var cfg models.SSHConfig
+	if err := jumpAsset.GetTypedConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse jump host config: %w", err)
+	}
+
+	// Validate required fields
+	if cfg.Host == "" {
+		return nil, fmt.Errorf("jump host not specified")
+	}
+	if cfg.Username == "" {
+		return nil, fmt.Errorf("jump host username not specified")
+	}
+
+	// Apply defaults
+	jumpPort := cfg.Port
+	if jumpPort == 0 {
+		jumpPort = 22
+	}
+
+	// Build jump host SSH config
+	jumpSSHConfig := &ssh.ClientConfig{
+		User:            cfg.Username,
+		Auth:            []ssh.AuthMethod{},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	// Add jump host authentication
+	if cfg.Password != "" {
+		jumpSSHConfig.Auth = append(jumpSSHConfig.Auth, ssh.Password(cfg.Password))
+	}
+	if cfg.PrivateKeyPath != "" {
+		if key, err := t.loadPrivateKey(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase); err == nil {
+			jumpSSHConfig.Auth = append(jumpSSHConfig.Auth, ssh.PublicKeys(key))
+		}
+	}
+	if cfg.PrivateKey != "" {
+		if key, err := t.parsePrivateKey(cfg.PrivateKey, cfg.PrivateKeyPassphrase); err == nil {
+			jumpSSHConfig.Auth = append(jumpSSHConfig.Auth, ssh.PublicKeys(key))
+		}
+	}
+
+	// Connect to jump host
+	jumpAddr := fmt.Sprintf("%s:%d", cfg.Host, jumpPort)
+	jumpClient, err := ssh.Dial("tcp", jumpAddr, jumpSSHConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to jump host: %w", err)
+	}
+
+	// Connect to target through jump host
+	targetAddr := fmt.Sprintf("%s:%d", targetHost, targetPort)
+	conn, err := jumpClient.Dial("tcp", targetAddr)
+	if err != nil {
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to dial target through jump host: %w", err)
+	}
+
+	// Create SSH connection over the tunnel
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, targetConfig)
+	if err != nil {
+		conn.Close()
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to create SSH client connection: %w", err)
+	}
+
+	client := ssh.NewClient(ncc, chans, reqs)
+	return client, nil
+}
+
+// connectViaProxy connects to SSH server via SOCKS/HTTP proxy
+func (t *Terminal) connectViaProxy(host string, port int, sshConfig *ssh.ClientConfig, proxyType, proxyHost string, proxyPort int, proxyUser, proxyPass string) (*ssh.Client, error) {
+	proxyAddr := fmt.Sprintf("%s:%d", proxyHost, proxyPort)
+	targetAddr := fmt.Sprintf("%s:%d", host, port)
+
+	var conn net.Conn
+	var err error
+
+	switch proxyType {
+	case "socks5", "socks4":
+		conn, err = t.dialSOCKS(proxyAddr, targetAddr, proxyUser, proxyPass, proxyType == "socks5")
+	case "http":
+		conn, err = t.dialHTTPProxy(proxyAddr, targetAddr, proxyUser, proxyPass)
+	default:
+		return nil, fmt.Errorf("unsupported proxy type: %s", proxyType)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect via proxy: %w", err)
+	}
+
+	// Create SSH connection over proxy
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, sshConfig)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to create SSH client connection: %w", err)
+	}
+
+	client := ssh.NewClient(ncc, chans, reqs)
+	return client, nil
+}
+
+// dialSOCKS connects through SOCKS proxy
+func (t *Terminal) dialSOCKS(proxyAddr, targetAddr, user, pass string, isSocks5 bool) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", proxyAddr, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	if isSocks5 {
+		// SOCKS5 handshake
+		var authMethod byte = 0x00 // No auth
+		if user != "" {
+			authMethod = 0x02 // Username/password
+		}
+
+		// Send greeting
+		conn.Write([]byte{0x05, 0x01, authMethod})
+
+		// Read response
+		resp := make([]byte, 2)
+		if _, err := io.ReadFull(conn, resp); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 handshake failed: %w", err)
+		}
+
+		if resp[0] != 0x05 {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 version mismatch")
+		}
+
+		// Username/password auth if required
+		if resp[1] == 0x02 {
+			authReq := []byte{0x01, byte(len(user))}
+			authReq = append(authReq, []byte(user)...)
+			authReq = append(authReq, byte(len(pass)))
+			authReq = append(authReq, []byte(pass)...)
+			conn.Write(authReq)
+
+			authResp := make([]byte, 2)
+			if _, err := io.ReadFull(conn, authResp); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("SOCKS5 auth failed: %w", err)
+			}
+			if authResp[1] != 0x00 {
+				conn.Close()
+				return nil, fmt.Errorf("SOCKS5 auth rejected")
+			}
+		}
+
+		// Parse target address
+		host, portStr, _ := net.SplitHostPort(targetAddr)
+		port := 22
+		fmt.Sscanf(portStr, "%d", &port)
+
+		// Send connect request
+		connectReq := []byte{0x05, 0x01, 0x00, 0x03, byte(len(host))}
+		connectReq = append(connectReq, []byte(host)...)
+		connectReq = append(connectReq, byte(port>>8), byte(port&0xff))
+		conn.Write(connectReq)
+
+		// Read connect response
+		connectResp := make([]byte, 10)
+		if _, err := io.ReadFull(conn, connectResp); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 connect failed: %w", err)
+		}
+
+		if connectResp[1] != 0x00 {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 connect rejected: %d", connectResp[1])
+		}
+	} else {
+		// SOCKS4 handshake
+		host, portStr, _ := net.SplitHostPort(targetAddr)
+		port := 22
+		fmt.Sscanf(portStr, "%d", &port)
+
+		// Resolve hostname
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			conn.Close()
+			return nil, fmt.Errorf("failed to resolve hostname: %w", err)
+		}
+		ip := ips[0].To4()
+		if ip == nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS4 does not support IPv6")
+		}
+
+		// Send SOCKS4 request
+		req := []byte{0x04, 0x01, byte(port >> 8), byte(port & 0xff)}
+		req = append(req, ip...)
+		req = append(req, []byte(user)...)
+		req = append(req, 0x00)
+		conn.Write(req)
+
+		// Read response
+		resp := make([]byte, 8)
+		if _, err := io.ReadFull(conn, resp); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS4 handshake failed: %w", err)
+		}
+
+		if resp[1] != 0x5a {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS4 connect rejected: %d", resp[1])
+		}
+	}
+
+	return conn, nil
+}
+
+// dialHTTPProxy connects through HTTP CONNECT proxy
+func (t *Terminal) dialHTTPProxy(proxyAddr, targetAddr, user, pass string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", proxyAddr, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	// Send CONNECT request
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, targetAddr)
+	if user != "" {
+		// Basic auth
+		auth := fmt.Sprintf("%s:%s", user, pass)
+		encoded := base64.StdEncoding.EncodeToString([]byte(auth))
+		connectReq += fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", encoded)
+	}
+	connectReq += "\r\n"
+
+	if _, err := conn.Write([]byte(connectReq)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send CONNECT: %w", err)
+	}
+
+	// Read response
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		conn.Close()
+		return nil, fmt.Errorf("HTTP CONNECT failed: %s", resp.Status)
+	}
+
+	return conn, nil
+}
+
+// startSSHKeepalive sends periodic keepalive requests to SSH server
+func (t *Terminal) startSSHKeepalive(client *ssh.Client, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-t.ctx.Done():
+			return
+		case <-ticker.C:
+			if client == nil {
+				return
+			}
+			// Send keepalive request
+			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			if err != nil {
+				t.logger.Debug("SSH keepalive failed", "error", err)
+				return
+			}
+		}
+	}
 }
 
 // loadPrivateKey loads private key from file (supports optional passphrase)

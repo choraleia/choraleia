@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -233,10 +234,207 @@ func (a *Asset) ValidateConfig() error {
 	return nil
 }
 
-func (a *Asset) validateFolderConfig() error     { return nil }
-func (a *Asset) validateSSHConfig() error        { return nil }
-func (a *Asset) validateLocalConfig() error      { return nil }
-func (a *Asset) validateDockerHostConfig() error { return nil }
+func (a *Asset) validateFolderConfig() error {
+	// Folder type has no required config fields
+	return nil
+}
+
+func (a *Asset) validateSSHConfig() error {
+	var cfg SSHConfig
+	if err := a.GetTypedConfig(&cfg); err != nil {
+		return fmt.Errorf("invalid SSH config format: %w", err)
+	}
+
+	// Required fields
+	if cfg.Host == "" {
+		return fmt.Errorf("host is required")
+	}
+	if cfg.Username == "" {
+		return fmt.Errorf("username is required")
+	}
+
+	// Port validation
+	if cfg.Port < 0 || cfg.Port > 65535 {
+		return fmt.Errorf("port must be between 0 and 65535")
+	}
+
+	// Timeout validation
+	if cfg.Timeout < 0 {
+		return fmt.Errorf("timeout must be non-negative")
+	}
+
+	// Keepalive validation
+	if cfg.KeepaliveInterval < 0 {
+		return fmt.Errorf("keepalive_interval must be non-negative")
+	}
+
+	// Connection mode validation
+	if cfg.ConnectionMode != "" {
+		validModes := []string{"direct", "proxy", "jump"}
+		valid := false
+		for _, m := range validModes {
+			if cfg.ConnectionMode == m {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("connection_mode must be one of: direct, proxy, jump")
+		}
+	}
+
+	// Proxy validation
+	if cfg.ConnectionMode == "proxy" {
+		if cfg.ProxyHost == "" {
+			return fmt.Errorf("proxy_host is required when connection_mode is proxy")
+		}
+		if cfg.ProxyType != "" {
+			validTypes := []string{"http", "socks4", "socks5"}
+			valid := false
+			for _, t := range validTypes {
+				if cfg.ProxyType == t {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return fmt.Errorf("proxy_type must be one of: http, socks4, socks5")
+			}
+		}
+		if cfg.ProxyPort < 0 || cfg.ProxyPort > 65535 {
+			return fmt.Errorf("proxy_port must be between 0 and 65535")
+		}
+	}
+
+	// Jump host validation
+	if cfg.ConnectionMode == "jump" && cfg.JumpAssetID == "" {
+		return fmt.Errorf("jump_asset_id is required when connection_mode is jump")
+	}
+
+	// Tunnel validation
+	for i, tunnel := range cfg.Tunnels {
+		if tunnel.Type == "" {
+			return fmt.Errorf("tunnel[%d]: type is required", i)
+		}
+		validTypes := []string{"local", "remote", "dynamic"}
+		valid := false
+		for _, t := range validTypes {
+			if tunnel.Type == t {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("tunnel[%d]: type must be one of: local, remote, dynamic", i)
+		}
+
+		if tunnel.LocalPort <= 0 || tunnel.LocalPort > 65535 {
+			return fmt.Errorf("tunnel[%d]: local_port must be between 1 and 65535", i)
+		}
+
+		if tunnel.Type != "dynamic" {
+			if tunnel.RemoteHost == "" {
+				return fmt.Errorf("tunnel[%d]: remote_host is required for %s tunnel", i, tunnel.Type)
+			}
+			if tunnel.RemotePort <= 0 || tunnel.RemotePort > 65535 {
+				return fmt.Errorf("tunnel[%d]: remote_port must be between 1 and 65535", i, tunnel.Type)
+			}
+		}
+	}
+
+	// Terminal preferences validation
+	if cfg.Scrollback < 0 {
+		return fmt.Errorf("scrollback must be non-negative")
+	}
+	if cfg.FontSize < 0 {
+		return fmt.Errorf("font_size must be non-negative")
+	}
+
+	return nil
+}
+
+func (a *Asset) validateLocalConfig() error {
+	var cfg LocalConfig
+	if err := a.GetTypedConfig(&cfg); err != nil {
+		return fmt.Errorf("invalid Local config format: %w", err)
+	}
+
+	// Shell is optional but if provided, should be a valid path
+	if cfg.Shell != "" && !isValidShellPath(cfg.Shell) {
+		return fmt.Errorf("shell must be a valid executable path")
+	}
+
+	// Working directory validation
+	if cfg.WorkingDir != "" {
+		// Just check it's not obviously invalid
+		if cfg.WorkingDir != "" && cfg.WorkingDir[0] != '/' && cfg.WorkingDir[0] != '~' {
+			// Allow relative paths but warn about absolute paths being preferred
+		}
+	}
+
+	// Terminal preferences validation
+	if cfg.Scrollback < 0 {
+		return fmt.Errorf("scrollback must be non-negative")
+	}
+	if cfg.FontSize < 0 {
+		return fmt.Errorf("font_size must be non-negative")
+	}
+
+	return nil
+}
+
+func (a *Asset) validateDockerHostConfig() error {
+	var cfg DockerHostConfig
+	if err := a.GetTypedConfig(&cfg); err != nil {
+		return fmt.Errorf("invalid DockerHost config format: %w", err)
+	}
+
+	// Connection type validation
+	if cfg.ConnectionType != "" {
+		if cfg.ConnectionType != "local" && cfg.ConnectionType != "ssh" {
+			return fmt.Errorf("connection_type must be 'local' or 'ssh'")
+		}
+	}
+
+	// SSH asset ID required for SSH connection type
+	if cfg.ConnectionType == "ssh" && cfg.SSHAssetID == "" {
+		return fmt.Errorf("ssh_asset_id is required when connection_type is ssh")
+	}
+
+	// Shell validation
+	if cfg.Shell != "" && !isValidShellPath(cfg.Shell) {
+		return fmt.Errorf("shell must be a valid executable path")
+	}
+
+	// Terminal preferences validation
+	if cfg.Scrollback < 0 {
+		return fmt.Errorf("scrollback must be non-negative")
+	}
+	if cfg.FontSize < 0 {
+		return fmt.Errorf("font_size must be non-negative")
+	}
+
+	return nil
+}
+
+// isValidShellPath checks if shell path looks valid
+func isValidShellPath(shell string) bool {
+	if shell == "" {
+		return false
+	}
+	// Must start with / or be a simple command name
+	if shell[0] == '/' {
+		return true
+	}
+	// Allow common shell names without path
+	commonShells := []string{"sh", "bash", "zsh", "ash", "fish", "dash", "ksh", "csh", "tcsh"}
+	for _, s := range commonShells {
+		if shell == s {
+			return true
+		}
+	}
+	return true // Allow other paths, let system handle invalid ones
+}
 
 // GetTypedConfig decode generic map config into target struct
 func (a *Asset) GetTypedConfig(target interface{}) error {

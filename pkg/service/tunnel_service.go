@@ -2,11 +2,15 @@
 package service
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -337,6 +341,23 @@ func (s *TunnelService) createSSHClient(cfg *models.SSHConfig) (*ssh.Client, err
 		sshCfg.Auth = append(sshCfg.Auth, ssh.Password(cfg.Password))
 	}
 
+	// Load private key from path if specified
+	if cfg.PrivateKeyPath != "" {
+		keyData, err := os.ReadFile(cfg.PrivateKeyPath)
+		if err == nil {
+			var signer ssh.Signer
+			if cfg.PrivateKeyPassphrase != "" {
+				signer, err = ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(cfg.PrivateKeyPassphrase))
+			} else {
+				signer, err = ssh.ParsePrivateKey(keyData)
+			}
+			if err == nil {
+				sshCfg.Auth = append(sshCfg.Auth, ssh.PublicKeys(signer))
+			}
+		}
+	}
+
+	// Parse inline private key if specified
 	if cfg.PrivateKey != "" {
 		var signer ssh.Signer
 		var err error
@@ -351,14 +372,317 @@ func (s *TunnelService) createSSHClient(cfg *models.SSHConfig) (*ssh.Client, err
 		}
 	}
 
-	// Connect to SSH server
+	// Get target address
 	port := cfg.Port
 	if port == 0 {
 		port = 22
 	}
-	addr := fmt.Sprintf("%s:%d", cfg.Host, port)
+	targetAddr := fmt.Sprintf("%s:%d", cfg.Host, port)
 
-	return ssh.Dial("tcp", addr, sshCfg)
+	// Handle connection mode: direct, proxy, or jump
+	connectionMode := cfg.ConnectionMode
+	if connectionMode == "" {
+		connectionMode = "direct"
+	}
+
+	switch connectionMode {
+	case "jump":
+		if cfg.JumpAssetID == "" {
+			return nil, fmt.Errorf("jump host asset ID not specified")
+		}
+		return s.connectViaJumpHost(cfg.JumpAssetID, cfg.Host, port, sshCfg)
+
+	case "proxy":
+		if cfg.ProxyHost == "" {
+			return nil, fmt.Errorf("proxy host not specified")
+		}
+		proxyPort := cfg.ProxyPort
+		if proxyPort == 0 {
+			proxyPort = 1080
+		}
+		proxyType := cfg.ProxyType
+		if proxyType == "" {
+			proxyType = "socks5"
+		}
+		return s.connectViaProxy(cfg.Host, port, sshCfg, proxyType, cfg.ProxyHost, proxyPort, cfg.ProxyUsername, cfg.ProxyPassword)
+
+	default:
+		// Direct connection
+		return ssh.Dial("tcp", targetAddr, sshCfg)
+	}
+}
+
+// connectViaJumpHost connects to target via jump host
+func (s *TunnelService) connectViaJumpHost(jumpAssetID string, targetHost string, targetPort int, targetConfig *ssh.ClientConfig) (*ssh.Client, error) {
+	// Get jump host asset
+	jumpAsset, err := s.assetService.GetAsset(jumpAssetID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get jump host asset: %w", err)
+	}
+
+	// Parse jump host config
+	var jumpCfg models.SSHConfig
+	if err := jumpAsset.GetTypedConfig(&jumpCfg); err != nil {
+		return nil, fmt.Errorf("failed to parse jump host config: %w", err)
+	}
+
+	// Validate required fields
+	if jumpCfg.Host == "" {
+		return nil, fmt.Errorf("jump host not specified")
+	}
+	if jumpCfg.Username == "" {
+		return nil, fmt.Errorf("jump host username not specified")
+	}
+
+	// Apply defaults
+	jumpPort := jumpCfg.Port
+	if jumpPort == 0 {
+		jumpPort = 22
+	}
+
+	// Build jump host SSH config
+	jumpSSHConfig := &ssh.ClientConfig{
+		User:            jumpCfg.Username,
+		Auth:            []ssh.AuthMethod{},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	// Add jump host authentication
+	if jumpCfg.Password != "" {
+		jumpSSHConfig.Auth = append(jumpSSHConfig.Auth, ssh.Password(jumpCfg.Password))
+	}
+	if jumpCfg.PrivateKeyPath != "" {
+		if keyData, err := os.ReadFile(jumpCfg.PrivateKeyPath); err == nil {
+			var signer ssh.Signer
+			if jumpCfg.PrivateKeyPassphrase != "" {
+				signer, err = ssh.ParsePrivateKeyWithPassphrase(keyData, []byte(jumpCfg.PrivateKeyPassphrase))
+			} else {
+				signer, err = ssh.ParsePrivateKey(keyData)
+			}
+			if err == nil {
+				jumpSSHConfig.Auth = append(jumpSSHConfig.Auth, ssh.PublicKeys(signer))
+			}
+		}
+	}
+	if jumpCfg.PrivateKey != "" {
+		var signer ssh.Signer
+		var err error
+		if jumpCfg.PrivateKeyPassphrase != "" {
+			signer, err = ssh.ParsePrivateKeyWithPassphrase([]byte(jumpCfg.PrivateKey), []byte(jumpCfg.PrivateKeyPassphrase))
+		} else {
+			signer, err = ssh.ParsePrivateKey([]byte(jumpCfg.PrivateKey))
+		}
+		if err == nil {
+			jumpSSHConfig.Auth = append(jumpSSHConfig.Auth, ssh.PublicKeys(signer))
+		}
+	}
+
+	// Connect to jump host
+	jumpAddr := fmt.Sprintf("%s:%d", jumpCfg.Host, jumpPort)
+	jumpClient, err := ssh.Dial("tcp", jumpAddr, jumpSSHConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to jump host: %w", err)
+	}
+
+	// Connect to target through jump host
+	targetAddr := fmt.Sprintf("%s:%d", targetHost, targetPort)
+	conn, err := jumpClient.Dial("tcp", targetAddr)
+	if err != nil {
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to dial target through jump host: %w", err)
+	}
+
+	// Create SSH connection over the tunnel
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, targetConfig)
+	if err != nil {
+		conn.Close()
+		jumpClient.Close()
+		return nil, fmt.Errorf("failed to create SSH client connection: %w", err)
+	}
+
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
+// connectViaProxy connects to SSH server via SOCKS/HTTP proxy
+func (s *TunnelService) connectViaProxy(host string, port int, sshConfig *ssh.ClientConfig, proxyType, proxyHost string, proxyPort int, proxyUser, proxyPass string) (*ssh.Client, error) {
+	proxyAddr := fmt.Sprintf("%s:%d", proxyHost, proxyPort)
+	targetAddr := fmt.Sprintf("%s:%d", host, port)
+
+	var conn net.Conn
+	var err error
+
+	switch proxyType {
+	case "socks5", "socks4":
+		conn, err = dialSOCKS(proxyAddr, targetAddr, proxyUser, proxyPass, proxyType == "socks5")
+	case "http":
+		conn, err = dialHTTPProxy(proxyAddr, targetAddr, proxyUser, proxyPass)
+	default:
+		return nil, fmt.Errorf("unsupported proxy type: %s", proxyType)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect via proxy: %w", err)
+	}
+
+	// Create SSH connection over proxy
+	ncc, chans, reqs, err := ssh.NewClientConn(conn, targetAddr, sshConfig)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to create SSH client connection: %w", err)
+	}
+
+	return ssh.NewClient(ncc, chans, reqs), nil
+}
+
+// dialSOCKS connects through SOCKS proxy
+func dialSOCKS(proxyAddr, targetAddr, user, pass string, isSocks5 bool) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", proxyAddr, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	if isSocks5 {
+		// SOCKS5 handshake
+		var authMethod byte = 0x00 // No auth
+		if user != "" {
+			authMethod = 0x02 // Username/password
+		}
+
+		// Send greeting
+		conn.Write([]byte{0x05, 0x01, authMethod})
+
+		// Read response
+		resp := make([]byte, 2)
+		if _, err := io.ReadFull(conn, resp); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 handshake failed: %w", err)
+		}
+
+		if resp[0] != 0x05 {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 version mismatch")
+		}
+
+		// Username/password auth if required
+		if resp[1] == 0x02 {
+			authReq := []byte{0x01, byte(len(user))}
+			authReq = append(authReq, []byte(user)...)
+			authReq = append(authReq, byte(len(pass)))
+			authReq = append(authReq, []byte(pass)...)
+			conn.Write(authReq)
+
+			authResp := make([]byte, 2)
+			if _, err := io.ReadFull(conn, authResp); err != nil {
+				conn.Close()
+				return nil, fmt.Errorf("SOCKS5 auth failed: %w", err)
+			}
+			if authResp[1] != 0x00 {
+				conn.Close()
+				return nil, fmt.Errorf("SOCKS5 auth rejected")
+			}
+		}
+
+		// Parse target address
+		host, portStr, _ := net.SplitHostPort(targetAddr)
+		port := 22
+		fmt.Sscanf(portStr, "%d", &port)
+
+		// Send connect request
+		connectReq := []byte{0x05, 0x01, 0x00, 0x03, byte(len(host))}
+		connectReq = append(connectReq, []byte(host)...)
+		connectReq = append(connectReq, byte(port>>8), byte(port&0xff))
+		conn.Write(connectReq)
+
+		// Read connect response
+		connectResp := make([]byte, 10)
+		if _, err := io.ReadFull(conn, connectResp); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 connect failed: %w", err)
+		}
+
+		if connectResp[1] != 0x00 {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS5 connect rejected: %d", connectResp[1])
+		}
+	} else {
+		// SOCKS4 handshake
+		host, portStr, _ := net.SplitHostPort(targetAddr)
+		port := 22
+		fmt.Sscanf(portStr, "%d", &port)
+
+		// Resolve hostname
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			conn.Close()
+			return nil, fmt.Errorf("failed to resolve hostname: %w", err)
+		}
+		ip := ips[0].To4()
+		if ip == nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS4 does not support IPv6")
+		}
+
+		// Send SOCKS4 request
+		req := []byte{0x04, 0x01, byte(port >> 8), byte(port & 0xff)}
+		req = append(req, ip...)
+		req = append(req, []byte(user)...)
+		req = append(req, 0x00)
+		conn.Write(req)
+
+		// Read response
+		resp := make([]byte, 8)
+		if _, err := io.ReadFull(conn, resp); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS4 handshake failed: %w", err)
+		}
+
+		if resp[1] != 0x5a {
+			conn.Close()
+			return nil, fmt.Errorf("SOCKS4 connect rejected: %d", resp[1])
+		}
+	}
+
+	return conn, nil
+}
+
+// dialHTTPProxy connects through HTTP CONNECT proxy
+func dialHTTPProxy(proxyAddr, targetAddr, user, pass string) (net.Conn, error) {
+	conn, err := net.DialTimeout("tcp", proxyAddr, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+
+	// Send CONNECT request
+	connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", targetAddr, targetAddr)
+	if user != "" {
+		// Basic auth
+		auth := fmt.Sprintf("%s:%s", user, pass)
+		encoded := base64.StdEncoding.EncodeToString([]byte(auth))
+		connectReq += fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", encoded)
+	}
+	connectReq += "\r\n"
+
+	if _, err := conn.Write([]byte(connectReq)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to send CONNECT: %w", err)
+	}
+
+	// Read response
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to read CONNECT response: %w", err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		conn.Close()
+		return nil, fmt.Errorf("HTTP CONNECT failed: %s", resp.Status)
+	}
+
+	return conn, nil
 }
 
 // startLocalForward starts a local port forward (-L)
