@@ -28,8 +28,9 @@ import (
 type ConnectionType string
 
 const (
-	ConnectionTypeLocal ConnectionType = "local"
-	ConnectionTypeSSH   ConnectionType = "ssh"
+	ConnectionTypeLocal  ConnectionType = "local"
+	ConnectionTypeSSH    ConnectionType = "ssh"
+	ConnectionTypeDocker ConnectionType = "docker"
 )
 
 type TerminalService struct {
@@ -57,6 +58,10 @@ type Terminal struct {
 	sshStdin   io.WriteCloser
 	sshStdout  io.Reader
 	sshStderr  io.Reader
+
+	// Docker container related
+	containerID string        // container ID or name for docker exec
+	dockerHost  *models.Asset // docker host asset (for remote docker)
 
 	connType   ConnectionType
 	rows       int
@@ -257,6 +262,82 @@ func (s *TerminalService) RunTerminal(c *gin.Context) {
 	term.Run()
 }
 
+// RunDockerTerminal handles WebSocket connection for Docker container terminal
+func (s *TerminalService) RunDockerTerminal(c *gin.Context) {
+	assetID := c.Param("assetId")
+	containerID := c.Param("containerId")
+
+	if assetID == "" || containerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Asset ID and Container ID are required"})
+		return
+	}
+
+	s.logger.Info("Docker terminal WebSocket request",
+		"assetId", assetID,
+		"containerId", containerID,
+	)
+
+	// Configure WebSocket upgrade
+	upgrader := &websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin:     func(r *http.Request) bool { return true },
+	}
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		s.logger.Error("WebSocket upgrade failed", "error", err)
+		return
+	}
+	defer conn.Close()
+
+	// Configure connection
+	conn.SetReadLimit(32768)
+	conn.SetPongHandler(func(string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	// Send initial status
+	_ = conn.WriteJSON(map[string]interface{}{
+		"type": "status",
+		"data": map[string]string{"status": "connecting", "message": "Connecting to container..."},
+	})
+
+	// Create terminal instance
+	term := NewTerminal(c.Request.Context(), conn, s.assetService, assetID)
+	term.SetContainerID(containerID)
+
+	// Start Docker exec
+	if err := term.Start(); err != nil {
+		s.logger.Error("Failed to start docker terminal", "error", err)
+		_ = conn.WriteJSON(map[string]interface{}{
+			"type": "status",
+			"data": map[string]string{"status": "error", "message": err.Error()},
+		})
+		return
+	}
+
+	if err := term.WaitForReady(); err != nil {
+		s.logger.Error("Docker terminal not ready", "error", err)
+		return
+	}
+
+	_ = conn.WriteJSON(map[string]interface{}{
+		"type": "status",
+		"data": map[string]string{"status": "connected", "message": "Connected to container"},
+	})
+
+	GlobalTerminalManager.AttachTerminal(term.sessionID, term)
+
+	// Load and send theme
+	if theme, err := loadTheme("tomorrow-night"); err == nil {
+		_ = conn.WriteJSON(map[string]interface{}{"type": "change-theme", "themeOptions": theme})
+	}
+
+	term.Run()
+}
+
 // NewTerminal creates a new terminal instance
 func NewTerminal(ctx context.Context, conn *websocket.Conn, assetService *AssetService, assetID string) *Terminal {
 	// Generate temporary session ID; replaced later by frontend tab
@@ -282,6 +363,16 @@ func NewTerminal(ctx context.Context, conn *websocket.Conn, assetService *AssetS
 	return terminal
 }
 
+// SetContainerID sets the container ID for Docker terminal connections
+func (t *Terminal) SetContainerID(containerID string) {
+	t.containerID = containerID
+}
+
+// SetDockerHost sets the Docker host asset for the terminal
+func (t *Terminal) SetDockerHost(asset *models.Asset) {
+	t.dockerHost = asset
+}
+
 // Start starts appropriate connection by asset type
 func (t *Terminal) Start() error {
 	// Retrieve asset info
@@ -298,6 +389,9 @@ func (t *Terminal) Start() error {
 	case models.AssetTypeSSH:
 		t.connType = ConnectionTypeSSH
 		return t.startSSHConnection(asset)
+	case models.AssetTypeDockerHost:
+		t.connType = ConnectionTypeDocker
+		return t.startDockerExec(asset)
 	default:
 		return fmt.Errorf("unsupported asset type: %s", asset.Type)
 	}
@@ -496,6 +590,189 @@ func (t *Terminal) startSSHConnection(asset *models.Asset) error {
 	return nil
 }
 
+// startDockerExec starts a docker exec session
+func (t *Terminal) startDockerExec(asset *models.Asset) error {
+	if t.containerID == "" {
+		return fmt.Errorf("container ID is required for docker exec")
+	}
+
+	var cfg models.DockerHostConfig
+	if err := asset.GetTypedConfig(&cfg); err != nil {
+		return fmt.Errorf("invalid docker host config: %w", err)
+	}
+
+	// Determine shell to use
+	shell := "/bin/sh"
+	if cfg.Shell != "" {
+		shell = cfg.Shell
+	}
+
+	// Build docker exec command
+	dockerArgs := []string{"exec", "-it"}
+	if cfg.User != "" {
+		dockerArgs = append(dockerArgs, "--user", cfg.User)
+	}
+	dockerArgs = append(dockerArgs, t.containerID, shell)
+
+	if cfg.ConnectionType == "ssh" && cfg.SSHAssetID != "" {
+		// Remote Docker via SSH
+		return t.startDockerExecViaSSH(cfg.SSHAssetID, dockerArgs)
+	}
+
+	// Local Docker
+	return t.startDockerExecLocal(dockerArgs)
+}
+
+// startDockerExecLocal starts docker exec locally using PTY
+func (t *Terminal) startDockerExecLocal(dockerArgs []string) error {
+	tty, err := pty.New()
+	if err != nil {
+		return fmt.Errorf("failed to create pty: %w", err)
+	}
+	t.localTty = tty
+
+	cmd := tty.Command("docker", dockerArgs...)
+	env := os.Environ()
+	env = append(env, "TERM=xterm-256color")
+	cmd.Env = env
+
+	if err := cmd.Start(); err != nil {
+		if closeErr := t.localTty.Close(); closeErr != nil {
+			t.logger.Error("Failed to close TTY after docker exec start error", "error", closeErr)
+		}
+		return fmt.Errorf("failed to start docker exec: %w", err)
+	}
+	t.localCmd = cmd
+
+	t.readyOnce.Do(func() { close(t.readyChan) })
+	return nil
+}
+
+// startDockerExecViaSSH starts docker exec on remote host via SSH
+func (t *Terminal) startDockerExecViaSSH(sshAssetID string, dockerArgs []string) error {
+	// Get SSH asset
+	sshAsset, err := t.assetService.GetAsset(sshAssetID)
+	if err != nil {
+		return fmt.Errorf("SSH asset not found: %w", err)
+	}
+
+	if sshAsset.Type != models.AssetTypeSSH {
+		return fmt.Errorf("referenced asset is not an SSH connection")
+	}
+
+	// Establish SSH connection (reuse SSH connection logic)
+	config := sshAsset.Config
+
+	host, ok := config["host"].(string)
+	if !ok || host == "" {
+		return fmt.Errorf("SSH host not specified")
+	}
+
+	port := 22
+	if portConfig, ok := config["port"].(float64); ok {
+		port = int(portConfig)
+	}
+
+	username, ok := config["username"].(string)
+	if !ok || username == "" {
+		return fmt.Errorf("SSH username not specified")
+	}
+
+	sshConfig := &ssh.ClientConfig{
+		User:            username,
+		Auth:            []ssh.AuthMethod{},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         30 * time.Second,
+	}
+
+	// Add authentication methods
+	if password, ok := config["password"].(string); ok && password != "" {
+		sshConfig.Auth = append(sshConfig.Auth, ssh.Password(password))
+	}
+
+	passphrase, _ := config["private_key_passphrase"].(string)
+	if privateKeyPath, ok := config["private_key_path"].(string); ok && privateKeyPath != "" {
+		if key, err := t.loadPrivateKey(privateKeyPath, passphrase); err == nil {
+			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
+		}
+	}
+	if privateKey, ok := config["private_key"].(string); ok && privateKey != "" {
+		if key, err := t.parsePrivateKey(privateKey, passphrase); err == nil {
+			sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(key))
+		}
+	}
+
+	// Connect to SSH server
+	addr := fmt.Sprintf("%s:%d", host, port)
+	client, err := ssh.Dial("tcp", addr, sshConfig)
+	if err != nil {
+		return fmt.Errorf("failed to connect to SSH server: %w", err)
+	}
+	t.sshClient = client
+
+	// Create session
+	session, err := client.NewSession()
+	if err != nil {
+		client.Close()
+		return fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	t.sshSession = session
+
+	// Request PTY
+	modes := ssh.TerminalModes{
+		ssh.ECHO: 1,
+	}
+	if err := session.RequestPty("xterm-256color", t.rows, t.cols, modes); err != nil {
+		session.Close()
+		client.Close()
+		return fmt.Errorf("failed to request pty: %w", err)
+	}
+
+	// Get I/O pipes
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		return fmt.Errorf("failed to get stdin pipe: %w", err)
+	}
+	t.sshStdin = stdin
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+	t.sshStdout = stdout
+
+	stderr, err := session.StderrPipe()
+	if err != nil {
+		session.Close()
+		client.Close()
+		return fmt.Errorf("failed to get stderr pipe: %w", err)
+	}
+	t.sshStderr = stderr
+
+	// Build docker command string
+	cmdStr := "docker"
+	for _, arg := range dockerArgs {
+		cmdStr += " " + arg
+	}
+
+	// Start docker exec via SSH
+	if err := session.Start(cmdStr); err != nil {
+		session.Close()
+		client.Close()
+		return fmt.Errorf("failed to start docker exec via SSH: %w", err)
+	}
+
+	// Use SSH connection type for reading
+	t.connType = ConnectionTypeSSH
+
+	t.readyOnce.Do(func() { close(t.readyChan) })
+	return nil
+}
+
 // loadPrivateKey loads private key from file (supports optional passphrase)
 func (t *Terminal) loadPrivateKey(path string, passphrase string) (ssh.Signer, error) {
 	key, err := os.ReadFile(path)
@@ -568,6 +845,8 @@ func (t *Terminal) Run() {
 	go func() {
 		defer wg.Done()
 		t.readFromWebSocket(ctx)
+		// When WebSocket reading ends, cancel context to signal other goroutines
+		cancel()
 	}()
 
 	// Wait for goroutines to finish
@@ -586,7 +865,7 @@ func (t *Terminal) readFromTerminal(ctx context.Context) {
 
 	var readers []io.Reader
 	switch t.connType {
-	case ConnectionTypeLocal:
+	case ConnectionTypeLocal, ConnectionTypeDocker:
 		readers = []io.Reader{t.localTty}
 	case ConnectionTypeSSH:
 		readers = []io.Reader{t.sshStdout, t.sshStderr}
@@ -802,7 +1081,7 @@ func (t *Terminal) writeToTerminal(data []byte) {
 	}
 
 	switch t.connType {
-	case ConnectionTypeLocal:
+	case ConnectionTypeLocal, ConnectionTypeDocker:
 		if t.localTty != nil {
 			if _, err := t.localTty.Write(data); err != nil {
 				t.logger.Error("Failed to write to local terminal", "error", err)
@@ -823,7 +1102,7 @@ func (t *Terminal) resizeTerminal(rows, cols int) {
 	t.cols = cols
 
 	switch t.connType {
-	case ConnectionTypeLocal:
+	case ConnectionTypeLocal, ConnectionTypeDocker:
 		if t.localTty != nil {
 			t.logger.Debug("resizing local terminal", "rows", rows, "cols", cols)
 			if err := t.localTty.Resize(cols, rows); err != nil {
@@ -844,14 +1123,34 @@ func (t *Terminal) resizeTerminal(rows, cols int) {
 
 // cleanup releases resources
 func (t *Terminal) cleanup() {
+	t.logger.Info("Cleaning up terminal resources", "connType", t.connType, "assetId", t.assetID)
+
 	switch t.connType {
-	case ConnectionTypeLocal:
-		if t.localCmd != nil {
-			if err := t.localCmd.Process.Kill(); err != nil {
-				t.logger.Error("Failed to kill local process", "error", err)
+	case ConnectionTypeLocal, ConnectionTypeDocker:
+		if t.localCmd != nil && t.localCmd.Process != nil {
+			t.logger.Info("Killing local/docker process", "pid", t.localCmd.Process.Pid)
+			// Send SIGTERM first for graceful shutdown
+			if err := t.localCmd.Process.Signal(os.Interrupt); err != nil {
+				t.logger.Warn("Failed to send interrupt signal, trying kill", "error", err)
+				if err := t.localCmd.Process.Kill(); err != nil {
+					t.logger.Error("Failed to kill local process", "error", err)
+				}
 			}
-			if err := t.localCmd.Wait(); err != nil {
-				t.logger.Error("Local process wait error", "error", err)
+			// Wait with timeout
+			done := make(chan error, 1)
+			go func() {
+				done <- t.localCmd.Wait()
+			}()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.logger.Debug("Local process wait completed", "error", err)
+				} else {
+					t.logger.Info("Local process exited cleanly")
+				}
+			case <-time.After(3 * time.Second):
+				t.logger.Warn("Timeout waiting for process to exit, forcing kill")
+				_ = t.localCmd.Process.Kill()
 			}
 		}
 		if t.localTty != nil {
@@ -861,6 +1160,14 @@ func (t *Terminal) cleanup() {
 		}
 	case ConnectionTypeSSH:
 		if t.sshSession != nil {
+			// Send exit signal to remote process
+			if t.sshStdin != nil {
+				// Try to close stdin to signal EOF
+				_ = t.sshStdin.Close()
+			}
+			if err := t.sshSession.Signal(ssh.SIGTERM); err != nil {
+				t.logger.Debug("Failed to send SIGTERM to SSH session", "error", err)
+			}
 			if err := t.sshSession.Close(); err != nil {
 				t.logger.Error("Failed to close SSH session", "error", err)
 			}
@@ -871,6 +1178,8 @@ func (t *Terminal) cleanup() {
 			}
 		}
 	}
+
+	t.logger.Info("Terminal cleanup completed", "assetId", t.assetID)
 }
 
 // handleSetSessionId handles session ID set message

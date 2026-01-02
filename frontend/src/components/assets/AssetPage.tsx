@@ -33,6 +33,9 @@ interface TabPane {
     // Keep extra fields optional and shallow to avoid leaking secrets.
     host?: string;
     port?: number;
+    // Docker container specific
+    containerId?: string;
+    containerName?: string;
   };
 }
 
@@ -254,6 +257,45 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
       return () => window.removeEventListener("asset-connect", handler as any);
     }, []);
 
+    // Listen to docker container connect event
+    useEffect(() => {
+      const handler = (e: Event) => {
+        const { dockerHostAssetId, container } = (e as CustomEvent).detail;
+        const timestamp = Date.now();
+        const rand = Math.floor(Math.random() * 10000);
+        const key = `docker-${dockerHostAssetId}-${container.id}-${timestamp}-${rand}`;
+        setTabs((prev) => {
+          const same = prev.filter(
+            (t) => t.key.startsWith(`docker-${dockerHostAssetId}-${container.id}`) && t.key !== "welcome",
+          );
+          const num = same.length + 1;
+          const tabLabel = num === 1 ? `🐳 ${container.name}` : `🐳 ${container.name} (${num})`;
+          const newTab: TabPane = {
+            key,
+            label: tabLabel,
+            content: `Connecting to container ${container.name}...`,
+            closable: true,
+            hostInfo: {
+              ip: "docker",
+              port: 0,
+              name: container.name,
+            },
+            assetId: dockerHostAssetId,
+            meta: {
+              assetType: "docker_container",
+              assetName: container.name,
+              containerId: container.id,
+              containerName: container.name,
+            },
+          };
+          return [...prev, newTab];
+        });
+        setActiveTabKey(key);
+      };
+      window.addEventListener("docker-container-connect", handler as any);
+      return () => window.removeEventListener("docker-container-connect", handler as any);
+    }, []);
+
     // Trigger event when asset panel visibility changes
     useEffect(() => {
       window.dispatchEvent(new Event("asset-tree-visible"));
@@ -361,6 +403,7 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
                       <TerminalComponent
                         tabKey={tab.key}
                         assetId={tab.assetId || ""}
+                        containerId={tab.meta?.containerId}
                         hostInfo={tab.hostInfo}
                         isActive={activeTabKey === tab.key}
                         onConnectionStateChange={(c) =>

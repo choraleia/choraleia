@@ -4,6 +4,7 @@ import React, {
   useImperativeHandle,
   useRef,
   useMemo,
+  useCallback,
 } from "react";
 // Debug flag: drag log (enable only during development when needed).
 const DEBUG_DND = false;
@@ -22,12 +23,16 @@ import {
   Select,
   FormControl,
   InputLabel,
+  CircularProgress,
 } from "@mui/material";
 import { SimpleTreeView, TreeItem as XTreeItem } from "@mui/x-tree-view";
 import AddIcon from "@mui/icons-material/Add";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import FolderIcon from "@mui/icons-material/Folder";
 import DesktopMacIcon from "@mui/icons-material/DesktopMac";
+import ViewInArIcon from "@mui/icons-material/ViewInAr";
+import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import StopIcon from "@mui/icons-material/Stop";
 import DriveFileRenameOutlineIcon from "@mui/icons-material/DriveFileRenameOutline";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -46,7 +51,7 @@ import { getApiUrl } from "../../api/base";
 export interface Asset {
   id: string;
   name: string;
-  type: "local" | "ssh" | "folder";
+  type: "local" | "ssh" | "folder" | "docker_host";
   description: string;
   config: Record<string, any>;
   tags: string[];
@@ -56,6 +61,18 @@ export interface Asset {
   created_at: string;
   updated_at: string;
 }
+
+// Docker container info for dynamic children
+export interface ContainerInfo {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+  status: string;
+  ports: string;
+  created: string;
+}
+
 interface ApiResponse<T> {
   code: number;
   message: string;
@@ -74,6 +91,11 @@ export interface HostNode {
   port?: number;
   asset?: Asset;
   icon?: React.ReactNode;
+  // Docker host dynamic children
+  isDynamic?: boolean;
+  dynamicLoaded?: boolean;
+  containerInfo?: ContainerInfo;
+  dockerHostAssetId?: string; // For container nodes, reference to parent docker host
 }
 export interface AssetTreeHandle {
   refresh: () => void;
@@ -95,6 +117,7 @@ function extractHostInfo(asset: Asset): { host: string; port: number } | null {
       port: asset.config.port || 22,
     };
   if (asset.type === "local") return { host: "localhost", port: 0 };
+  if (asset.type === "docker_host") return { host: "docker", port: 0 };
   return null;
 }
 
@@ -169,6 +192,29 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const [newFolderParentId, setNewFolderParentId] = useState<string | null>(
       null,
     );
+
+    // Docker containers state: map of assetId -> containers
+    const [dockerContainers, setDockerContainers] = useState<Record<string, ContainerInfo[]>>({});
+    const [loadingContainers, setLoadingContainers] = useState<Record<string, boolean>>({});
+
+    // Load containers for a Docker host
+    const loadDockerContainers = useCallback(async (assetId: string, showAll = true) => {
+      if (loadingContainers[assetId]) return;
+      setLoadingContainers(prev => ({ ...prev, [assetId]: true }));
+      try {
+        const resp = await fetch(getApiUrl(`/api/assets/${assetId}/docker/containers?all=${showAll}`));
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data.code === 200 && data.data?.containers) {
+            setDockerContainers(prev => ({ ...prev, [assetId]: data.data.containers }));
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load containers:", e);
+      } finally {
+        setLoadingContainers(prev => ({ ...prev, [assetId]: false }));
+      }
+    }, [loadingContainers]);
 
     // Context menu
     const treeMenuAnchor = useRef<HTMLElement | null>(null);
@@ -424,25 +470,74 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
         const ordered = orderSiblings(siblingsMap[parentKey] || []);
         return ordered.map((a) => {
           const isMatch = matchedIDs.has(a.id);
+
+          // Determine icon based on asset type
+          let icon: React.ReactNode;
+          if (a.type === "folder") {
+            icon = <FolderIcon fontSize="small" />;
+          } else if (a.type === "ssh") {
+            icon = <DesktopMacIcon fontSize="small" color="primary" />;
+          } else if (a.type === "docker_host") {
+            icon = <ViewInArIcon fontSize="small" sx={{ color: "#0db7ed" }} />;
+          } else {
+            icon = <DesktopMacIcon fontSize="small" color="success" />;
+          }
+
           const commonProps = {
             title: a.name,
             key: a.id,
             asset: a,
-            isLeaf: a.type !== "folder",
-            icon:
-              a.type === "folder" ? (
-                <FolderIcon fontSize="small" />
-              ) : a.type === "ssh" ? (
-                <DesktopMacIcon fontSize="small" color="primary" />
-              ) : (
-                <DesktopMacIcon fontSize="small" color="success" />
-              ),
+            isLeaf: a.type !== "folder" && a.type !== "docker_host",
+            icon,
           } as HostNode;
+
           if (a.type === "folder") {
             return {
               ...commonProps,
               children: build(a.id),
               title: isMatch ? `${a.name}` : a.name,
+            };
+          } else if (a.type === "docker_host") {
+            // Docker host has dynamic children (containers)
+            const containers = dockerContainers[a.id] || [];
+            const containerChildren: HostNode[] = containers.map((c) => {
+              // Determine container state icon color
+              const stateColor = c.state === "running" ? "#4caf50"
+                : c.state === "paused" ? "#ff9800"
+                : c.state === "exited" ? "#9e9e9e"
+                : "#f44336";
+
+              return {
+                title: c.name,
+                key: `container_${a.id}_${c.id}`,
+                isLeaf: true,
+                icon: (
+                  <Box display="flex" alignItems="center">
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        backgroundColor: stateColor,
+                        mr: 0.5,
+                      }}
+                    />
+                    <ViewInArIcon fontSize="small" sx={{ color: "#0db7ed", fontSize: 16 }} />
+                  </Box>
+                ),
+                containerInfo: c,
+                dockerHostAssetId: a.id,
+              };
+            });
+
+            return {
+              ...commonProps,
+              isLeaf: false,
+              isDynamic: true,
+              dynamicLoaded: containers.length > 0,
+              children: loadingContainers[a.id]
+                ? [{ title: "Loading...", key: `loading_${a.id}`, isLeaf: true, icon: <CircularProgress size={14} /> }]
+                : containerChildren,
             };
           } else {
             const node: HostNode = { ...commonProps };
@@ -458,11 +553,35 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       return build(null);
     };
 
-    const treeData = convertAssetsToTreeData(assets);
+    const treeData = useMemo(() => convertAssetsToTreeData(assets), [assets, matchedIDs, dockerContainers, loadingContainers]);
 
     // Double click connect
     const handleNodeDoubleClick = (node: HostNode) => {
-      if (!node.asset || node.asset.type === "folder") return;
+      // Folder: do nothing (expand/collapse handled by tree)
+      if (node.asset?.type === "folder") return;
+
+      // Docker host: load containers if not loaded
+      if (node.asset?.type === "docker_host") {
+        if (!dockerContainers[node.asset.id]) {
+          loadDockerContainers(node.asset.id);
+        }
+        return; // Don't open terminal for docker host itself
+      }
+
+      // Container node: open terminal
+      if (node.containerInfo && node.dockerHostAssetId) {
+        const event = new CustomEvent("docker-container-connect", {
+          detail: {
+            dockerHostAssetId: node.dockerHostAssetId,
+            container: node.containerInfo,
+          },
+        });
+        window.dispatchEvent(event);
+        return;
+      }
+
+      // Regular asset (local, ssh): open terminal
+      if (!node.asset) return;
       const event = new CustomEvent("asset-connect", {
         detail: { asset: node.asset, node },
       });
@@ -835,11 +954,39 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
 
     // Context menu capability checks
     const canConnect =
-      !!contextNode?.asset && contextNode.asset.type !== "folder";
+      !!contextNode?.asset && contextNode.asset.type !== "folder" && contextNode.asset.type !== "docker_host";
+    const canConnectContainer = !!contextNode?.containerInfo;
     const canRename = !!contextNode?.asset;
-    const canDelete = !!contextNode?.asset;
+    const canDelete = !!contextNode?.asset || !!contextNode?.containerInfo;
     const canAddHostHere = contextNode?.asset?.type === "folder";
     const canAddFolderHere = contextNode?.asset?.type === "folder";
+    const isDockerHost = contextNode?.asset?.type === "docker_host";
+    const isContainer = !!contextNode?.containerInfo;
+    const containerRunning = contextNode?.containerInfo?.state === "running";
+
+    // Refresh containers for Docker host
+    const handleRefreshContainers = () => {
+      if (contextNode?.asset?.id) {
+        loadDockerContainers(contextNode.asset.id);
+      }
+      closeMenu();
+    };
+
+    // Container actions
+    const handleContainerAction = async (action: "start" | "stop" | "restart") => {
+      if (!contextNode?.containerInfo || !contextNode?.dockerHostAssetId) return;
+      try {
+        await fetch(
+          getApiUrl(`/api/assets/${contextNode.dockerHostAssetId}/docker/containers/${contextNode.containerInfo.id}/${action}`),
+          { method: "POST" }
+        );
+        // Refresh containers after action
+        loadDockerContainers(contextNode.dockerHostAssetId);
+      } catch (e) {
+        console.error(`Failed to ${action} container:`, e);
+      }
+      closeMenu();
+    };
 
     const onDragEnd = () => {
       dragNodeIdRef.current = null;
@@ -888,6 +1035,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
               <MenuItem value="all">All</MenuItem>
               <MenuItem value="ssh">SSH</MenuItem>
               <MenuItem value="local">Local</MenuItem>
+              <MenuItem value="docker_host">Docker</MenuItem>
             </Select>
           </FormControl>
           <IconButton
@@ -928,7 +1076,17 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
           onDragOver={onRootDragOver}
           onDrop={onRootDrop}
         >
-          <SimpleTreeView>
+          <SimpleTreeView
+            onExpandedItemsChange={(event, itemIds) => {
+              // When a Docker host is expanded, load its containers
+              itemIds.forEach((itemId) => {
+                const asset = allAssets.find((a) => a.id === itemId);
+                if (asset?.type === "docker_host" && !dockerContainers[itemId] && !loadingContainers[itemId]) {
+                  loadDockerContainers(itemId);
+                }
+              });
+            }}
+          >
             {treeData.map((node) => (
               <XTreeItem
                 key={node.key}
@@ -1156,6 +1314,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
           anchorEl={treeMenuAnchor.current}
           onClose={closeMenu}
         >
+          {/* Regular connect for SSH/Local */}
           {canConnect && (
             <MenuItem
               onClick={() => {
@@ -1165,6 +1324,44 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
             >
               <OpenInNewIcon fontSize="small" style={{ marginRight: 8 }} />
               Connect
+            </MenuItem>
+          )}
+          {/* Container connect */}
+          {canConnectContainer && (
+            <MenuItem
+              onClick={() => {
+                if (contextNode) handleNodeDoubleClick(contextNode);
+                closeMenu();
+              }}
+            >
+              <OpenInNewIcon fontSize="small" style={{ marginRight: 8 }} />
+              Open Terminal
+            </MenuItem>
+          )}
+          {/* Docker host: refresh containers */}
+          {isDockerHost && (
+            <MenuItem onClick={handleRefreshContainers}>
+              <RefreshIcon fontSize="small" style={{ marginRight: 8 }} />
+              Refresh Containers
+            </MenuItem>
+          )}
+          {/* Container actions */}
+          {isContainer && !containerRunning && (
+            <MenuItem onClick={() => handleContainerAction("start")}>
+              <PlayArrowIcon fontSize="small" style={{ marginRight: 8, color: "#4caf50" }} />
+              Start Container
+            </MenuItem>
+          )}
+          {isContainer && containerRunning && (
+            <MenuItem onClick={() => handleContainerAction("stop")}>
+              <StopIcon fontSize="small" style={{ marginRight: 8, color: "#f44336" }} />
+              Stop Container
+            </MenuItem>
+          )}
+          {isContainer && (
+            <MenuItem onClick={() => handleContainerAction("restart")}>
+              <RefreshIcon fontSize="small" style={{ marginRight: 8 }} />
+              Restart Container
             </MenuItem>
           )}
           {canAddHostHere && (

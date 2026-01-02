@@ -34,9 +34,15 @@ export interface APIResponse<T> {
   data?: T;
 }
 
+export type TransferEndpoint = {
+  asset_id?: string;
+  container_id?: string;
+  path: string;
+};
+
 export type TransferRequest = {
-  from: { type: "local" | "sftp"; asset_id?: string; path: string };
-  to: { type: "local" | "sftp"; asset_id?: string; path: string };
+  from: TransferEndpoint;
+  to: TransferEndpoint;
   recursive: boolean;
   overwrite: boolean;
 };

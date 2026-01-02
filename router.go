@@ -176,6 +176,10 @@ func (s *Server) SetupRoutes() {
 	// Create terminal service instance
 	terminalService := service.NewTerminalService(assetService)
 
+	// Create Docker service instance
+	dockerService := service.NewDockerService(assetService)
+	dockerHandler := handler.NewDockerHandler(assetService, dockerService, s.logger)
+
 	// Task system (background jobs)
 	taskService := service.NewTaskService(2)
 	transferTaskService := service.NewTransferTaskService(taskService, assetService)
@@ -197,6 +201,8 @@ func (s *Server) SetupRoutes() {
 	// /terminal
 	termGroups := s.ginEngine.Group("/terminal")
 	termGroups.GET("connect/:assetId", terminalService.RunTerminal)
+	// Docker container terminal: /terminal/docker/:assetId/:containerId
+	termGroups.GET("docker/:assetId/:containerId", terminalService.RunDockerTerminal)
 
 	// API group
 	// /api
@@ -219,6 +225,13 @@ func (s *Server) SetupRoutes() {
 	assetsGroup.GET("/ssh-config", assetHandler.ParseSSH)
 	assetsGroup.GET("/user-ssh-keys", assetHandler.ListSSHKeys)          // added endpoint
 	assetsGroup.GET("/user-ssh-key-inspect", assetHandler.InspectSSHKey) // inspect single key
+	// Docker host container management
+	assetsGroup.GET(":id/docker/containers", dockerHandler.ListContainers)
+	assetsGroup.POST(":id/docker/containers/:containerId/:action", dockerHandler.ContainerAction)
+	assetsGroup.POST(":id/docker/test", dockerHandler.TestConnection)
+
+	// Docker test without asset (for form validation)
+	apiGroup.POST("/docker/test", dockerHandler.TestConnectionByConfig)
 
 	// Model management API routes
 	// /api/models

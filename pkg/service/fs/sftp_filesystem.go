@@ -169,13 +169,13 @@ var _ PwdProvider = (*SFTPFileSystem)(nil)
 // Add a new pool-backed filesystem:
 
 type SFTPEndpointFileSystem struct {
-	pool    *SFTPPool
+	pool    *SSHPool
 	assetID string
 }
 
-func NewSFTPEndpointFileSystem(pool *SFTPPool, assetID string) (*SFTPEndpointFileSystem, error) {
+func NewSFTPEndpointFileSystem(pool *SSHPool, assetID string) (*SFTPEndpointFileSystem, error) {
 	if pool == nil {
-		return nil, fmt.Errorf("sftp pool is nil")
+		return nil, fmt.Errorf("ssh pool is nil")
 	}
 	if strings.TrimSpace(assetID) == "" {
 		return nil, fmt.Errorf("asset id is empty")
@@ -184,7 +184,7 @@ func NewSFTPEndpointFileSystem(pool *SFTPPool, assetID string) (*SFTPEndpointFil
 }
 
 func (e *SFTPEndpointFileSystem) client(ctx context.Context) (*sftp.Client, error) {
-	return e.pool.GetClient(ctx, e.assetID)
+	return e.pool.GetSFTPClient(ctx, e.assetID)
 }
 
 func (e *SFTPEndpointFileSystem) ListDir(ctx context.Context, p string, opts ListDirOptions) (*ListDirResponse, error) {

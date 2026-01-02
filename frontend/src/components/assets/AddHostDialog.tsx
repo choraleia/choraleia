@@ -11,8 +11,10 @@ import {
 } from "@mui/material";
 import DesktopMacIcon from "@mui/icons-material/DesktopMac";
 import SecurityIcon from "@mui/icons-material/Security";
+import ViewInArIcon from "@mui/icons-material/ViewInAr";
 import SshAssetForm, { SshAssetFormHandle } from "./forms/SshAssetForm";
 import LocalAssetForm, { LocalAssetFormHandle } from "./forms/LocalAssetForm";
+import DockerAssetForm, { DockerAssetFormHandle } from "./forms/DockerAssetForm";
 import { listFolders, buildFolderTreeItems } from "./api/assets";
 
 // Component props type
@@ -32,7 +34,7 @@ interface AddHostWindowProps {
 }
 
 // Asset type definition
-export type AssetType = "local" | "ssh";
+export type AssetType = "local" | "ssh" | "docker_host";
 
 const AddHostDialog: React.FC<AddHostWindowProps> = ({
   onClose,
@@ -47,7 +49,7 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
   const isEdit = !!asset?.id;
 
   const initialType: AssetType =
-    asset && (asset.type === "ssh" || asset.type === "local")
+    asset && (asset.type === "ssh" || asset.type === "local" || asset.type === "docker_host")
       ? (asset.type as AssetType)
       : "local";
   const [selectedType, setSelectedType] = useState<AssetType>(initialType);
@@ -62,6 +64,7 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
 
   const sshFormRef = useRef<SshAssetFormHandle>(null);
   const localFormRef = useRef<LocalAssetFormHandle>(null);
+  const dockerFormRef = useRef<DockerAssetFormHandle>(null);
 
   const defaultParentId = asset?.parent_id ?? parentId ?? null;
 
@@ -107,10 +110,14 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
     if (loading) return;
     setLoading(true);
     try {
-      const ok =
-        selectedType === "ssh"
-          ? await sshFormRef.current?.submit()
-          : await localFormRef.current?.submit();
+      let ok = false;
+      if (selectedType === "ssh") {
+        ok = (await sshFormRef.current?.submit()) ?? false;
+      } else if (selectedType === "docker_host") {
+        ok = (await dockerFormRef.current?.submit()) ?? false;
+      } else {
+        ok = (await localFormRef.current?.submit()) ?? false;
+      }
       if (ok) return; // onSuccess closes dialog
     } finally {
       setLoading(false);
@@ -162,12 +169,37 @@ const AddHostDialog: React.FC<AddHostWindowProps> = ({
                 textAlign: "left",
               }}
             />
+            <Tab
+              key="docker_host"
+              value="docker_host"
+              label="Docker"
+              iconPosition="start"
+              icon={<ViewInArIcon />}
+              disabled={isEdit}
+              sx={{
+                justifyContent: "flex-start",
+                alignItems: "center",
+                pl: 1,
+                textAlign: "left",
+              }}
+            />
           </Tabs>
           {/* Right side content: render type-specific form components with internal tabs */}
           <Box flex={1} display="flex" flexDirection="column" gap={2}>
             {selectedType === "ssh" ? (
               <SshAssetForm
                 ref={sshFormRef}
+                asset={asset}
+                mode={isEdit ? "edit" : "create"}
+                folderTreeItems={folderTreeItems}
+                defaultParentId={defaultParentId}
+                onSuccess={handleFormSuccess}
+                onValidityChange={setIsValid}
+                folderPathResolver={folderPathResolver}
+              />
+            ) : selectedType === "docker_host" ? (
+              <DockerAssetForm
+                ref={dockerFormRef}
                 asset={asset}
                 mode={isEdit ? "edit" : "create"}
                 folderTreeItems={folderTreeItems}
