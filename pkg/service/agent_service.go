@@ -358,15 +358,9 @@ func (s *AIAgentService) getChatModel(c *gin.Context) (einoModel.ToolCallingChat
 		return chatModel, nil
 
 	case "qianfan":
-		// Qianfan uses API key format: "access_key:secret_key"
-		if modelConfig.ApiKey != "" {
-			parts := strings.Split(modelConfig.ApiKey, ":")
-			if len(parts) == 2 {
-				qianfanConfig := qianfan.GetQianfanSingletonConfig()
-				qianfanConfig.AccessKey = parts[0]
-				qianfanConfig.SecretKey = parts[1]
-			}
-		}
+		qianfanConfig := qianfan.GetQianfanSingletonConfig()
+		qianfanConfig.BaseURL = modelConfig.BaseUrl
+		qianfanConfig.BearerToken = modelConfig.ApiKey
 		chatModel, err := qianfan.NewChatModel(ctx, &qianfan.ChatModelConfig{
 			Model: modelConfig.Model,
 		})
@@ -377,8 +371,9 @@ func (s *AIAgentService) getChatModel(c *gin.Context) (einoModel.ToolCallingChat
 
 	case "qwen":
 		chatModel, err := qwen.NewChatModel(ctx, &qwen.ChatModelConfig{
-			APIKey: modelConfig.ApiKey,
-			Model:  modelConfig.Model,
+			BaseURL: modelConfig.BaseUrl,
+			APIKey:  modelConfig.ApiKey,
+			Model:   modelConfig.Model,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Qwen model: %w", err)
@@ -397,6 +392,13 @@ func (s *AIAgentService) getAgent(c *gin.Context, tools []tool.BaseTool) (*adk.C
 	}
 	// System prompt template
 	systemPrompt := `You are a professional terminal assistant that helps users solve command line related issues.
+
+LANGUAGE RULE (CRITICAL):
+- Always respond in the SAME language the user uses
+- If user writes in Chinese, respond in Chinese
+- If user writes in English, respond in English
+- If user writes in other languages, respond in that language
+- This rule overrides all other instructions
 
 Your capabilities include:
 1. Analyze terminal output and error messages
@@ -457,6 +459,109 @@ func (s *AIAgentService) LogMessages(key string, msgs []*schema.Message) {
 		s.logger.Error("Failed to marshal messages for log", "error", err)
 	}
 	s.logger.Info("Chat messages", "key", key, "messages", string(text))
+}
+
+// sanitizeMessages cleans up history messages to ensure API compatibility
+// It handles:
+// 1. Merging consecutive messages with the same role
+// 2. Removing incomplete tool_calls (without corresponding tool responses)
+// 3. Ensuring assistant messages have non-empty content when needed
+// 4. Clearing reasoning_content as most models don't support it
+// 5. Converting tool messages to user messages for API compatibility
+func (s *AIAgentService) sanitizeMessages(messages []*schema.Message) []*schema.Message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	// First pass: build a map of tool_call ID -> tool response content
+	toolResponses := make(map[string]string)
+	for _, msg := range messages {
+		if msg.Role == schema.Tool && msg.ToolCallID != "" {
+			toolResponses[msg.ToolCallID] = msg.Content
+		}
+	}
+
+	// Second pass: process messages, inline tool responses into assistant messages
+	processed := make([]*schema.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg == nil {
+			continue
+		}
+
+		// Skip tool messages - we'll inline them into the assistant message
+		if msg.Role == schema.Tool {
+			continue
+		}
+
+		// Create a copy to avoid modifying original
+		msgCopy := *msg
+
+		// Clear reasoning_content as most models don't support it
+		msgCopy.ReasoningContent = ""
+
+		// Handle assistant messages with tool_calls
+		if msgCopy.Role == schema.Assistant && len(msgCopy.ToolCalls) > 0 {
+			// Build content that includes tool call results
+			var contentParts []string
+			if msgCopy.Content != "" {
+				contentParts = append(contentParts, msgCopy.Content)
+			}
+
+			hasValidToolCalls := false
+			for _, tc := range msgCopy.ToolCalls {
+				if response, ok := toolResponses[tc.ID]; ok {
+					hasValidToolCalls = true
+					// Include tool call info and response in content
+					toolInfo := fmt.Sprintf("[Tool: %s]\nResult: %s", tc.Function.Name, response)
+					contentParts = append(contentParts, toolInfo)
+				}
+			}
+
+			// Clear tool_calls since we've inlined the results
+			msgCopy.ToolCalls = nil
+
+			// Update content with tool results
+			if len(contentParts) > 0 {
+				msgCopy.Content = strings.Join(contentParts, "\n\n")
+			}
+
+			// Skip if no content after processing
+			if msgCopy.Content == "" && !hasValidToolCalls {
+				continue
+			}
+		}
+
+		// Skip empty assistant messages
+		if msgCopy.Role == schema.Assistant && msgCopy.Content == "" {
+			continue
+		}
+
+		processed = append(processed, &msgCopy)
+	}
+
+	// Third pass: merge consecutive same-role messages
+	result := make([]*schema.Message, 0, len(processed))
+	for _, msg := range processed {
+		// Try to merge with last message if same role
+		if len(result) > 0 {
+			lastMsg := result[len(result)-1]
+			if lastMsg.Role == msg.Role {
+				// Merge content
+				if msg.Content != "" {
+					if lastMsg.Content != "" {
+						lastMsg.Content = lastMsg.Content + "\n" + msg.Content
+					} else {
+						lastMsg.Content = msg.Content
+					}
+				}
+				continue
+			}
+		}
+
+		result = append(result, msg)
+	}
+
+	return result
 }
 
 // HandleAgentChat processes agent chat requests
@@ -520,6 +625,9 @@ func (s *AIAgentService) HandleAgentChat(c *gin.Context) {
 		return
 	}
 	s.LogMessages("history message of conversation id "+req.ConversationID, historyMessages)
+	// Sanitize history messages to ensure API compatibility
+	historyMessages = s.sanitizeMessages(historyMessages)
+	s.LogMessages("sanitized history messages", historyMessages)
 	messages = append(messages, historyMessages...)
 
 	// Save user message
@@ -864,7 +972,7 @@ func (s *AIAgentService) GenerateTitle(c *gin.Context) {
 	if len(messages) > 4 {
 		messages = messages[:4]
 	}
-	messages = append(messages, &schema.Message{Role: schema.User, Content: "Please generate a concise accurate title for the above dialogue, max 50 english characters or 20 chinese characters, without quotes."})
+	messages = append(messages, &schema.Message{Role: schema.User, Content: "Please generate a concise accurate title for the above dialogue, plain text only"})
 	output, err := chatModel.Generate(c.Request.Context(), messages)
 	if err != nil {
 		s.logger.Error("Failed to generate title", "error", err)
@@ -872,10 +980,6 @@ func (s *AIAgentService) GenerateTitle(c *gin.Context) {
 		return
 	}
 	title := strings.TrimSpace(output.Content)
-	runes := []rune(title)
-	if len(runes) > 16 {
-		title = string(runes[:16])
-	}
 	if len(title) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Empty title"})
 	}
