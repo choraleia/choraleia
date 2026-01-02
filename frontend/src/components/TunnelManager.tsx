@@ -337,10 +337,8 @@ const TunnelManager: React.FC<TunnelManagerProps> = ({ open, onClose }) => {
                       </Tooltip>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="caption" sx={{ fontSize: 11 }}>
-                        ↑{formatBytes(tunnel.bytes_sent || 0)}
-                        <br />
-                        ↓{formatBytes(tunnel.bytes_received || 0)}
+                      <Typography variant="caption" sx={{ fontSize: 11, whiteSpace: "nowrap" }}>
+                        ↑{formatBytes(tunnel.bytes_sent || 0)} ↓{formatBytes(tunnel.bytes_received || 0)}
                       </Typography>
                     </TableCell>
                     <TableCell>
