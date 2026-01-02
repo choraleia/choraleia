@@ -1316,6 +1316,23 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
           open={menuOpen}
           anchorEl={treeMenuAnchor.current}
           onClose={closeMenu}
+          slotProps={{
+            paper: {
+              sx: {
+                minWidth: 160,
+                "& .MuiMenuItem-root": {
+                  py: 0.5,
+                  px: 1.25,
+                  fontSize: 12,
+                  minHeight: 24,
+                },
+                "& .MuiSvgIcon-root": {
+                  fontSize: 16,
+                  marginRight: 1,
+                },
+              },
+            },
+          }}
         >
           {/* Regular connect for SSH/Local */}
           {canConnect && (

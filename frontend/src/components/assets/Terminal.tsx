@@ -1,11 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { ImageAddon } from "@xterm/addon-image";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { getWsUrl } from "../../api/base";
+import TerminalContextMenu from "./TerminalContextMenu";
+import TerminalSearchBar from "./TerminalSearchBar";
 
 interface TerminalProps {
   hostInfo: {
@@ -18,6 +21,8 @@ interface TerminalProps {
   containerId?: string; // Docker container ID (for docker_host assets)
   isActive: boolean;
   onConnectionStateChange?: (connected: boolean) => void;
+  onOpenQuickCommands?: () => void;
+  onDuplicateSession?: () => void;
 }
 
 // Global terminal instance manager
@@ -27,6 +32,7 @@ const terminalInstances = new Map<
     terminal: Terminal;
     socket: WebSocket | null;
     fitAddon: FitAddon;
+    searchAddon: SearchAddon;
     isInitialized: boolean;
     domElement: HTMLDivElement | null;
   }
@@ -144,8 +150,140 @@ function TerminalComponent({
   containerId,
   isActive,
   onConnectionStateChange,
+  onOpenQuickCommands,
+  onDuplicateSession,
 }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ top: number; left: number } | null>(null);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+
+  // Search bar state
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Wrap onConnectionStateChange to track connection state locally
+  const handleConnectionStateChange = useCallback((connected: boolean) => {
+    setIsConnected(connected);
+    onConnectionStateChange?.(connected);
+  }, [onConnectionStateChange]);
+
+  // Context menu handlers
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData) {
+      setHasSelection(terminalData.terminal.hasSelection());
+    }
+    setContextMenu({ top: e.clientY, left: e.clientX });
+  }, [tabKey]);
+
+  const handleCloseContextMenu = useCallback(() => {
+    setContextMenu(null);
+  }, []);
+
+  const handleCopy = useCallback(() => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData && terminalData.terminal.hasSelection()) {
+      const selection = terminalData.terminal.getSelection();
+      navigator.clipboard.writeText(selection);
+    }
+  }, [tabKey]);
+
+  const handlePaste = useCallback(async () => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData && terminalData.socket?.readyState === WebSocket.OPEN) {
+      try {
+        const text = await navigator.clipboard.readText();
+        terminalData.socket.send(JSON.stringify({ type: "TermInput", data: text }));
+      } catch (e) {
+        console.error("Failed to paste:", e);
+      }
+    }
+  }, [tabKey]);
+
+  const handleSelectAll = useCallback(() => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData) {
+      terminalData.terminal.selectAll();
+    }
+  }, [tabKey]);
+
+  const handleClear = useCallback(() => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData) {
+      terminalData.terminal.clear();
+    }
+  }, [tabKey]);
+
+  const handleScrollToBottom = useCallback(() => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData) {
+      terminalData.terminal.scrollToBottom();
+    }
+  }, [tabKey]);
+
+  const handleSearch = useCallback(() => {
+    setSearchOpen(true);
+  }, []);
+
+  const handleSearchClose = useCallback(() => {
+    setSearchOpen(false);
+    // Clear search decorations
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData) {
+      terminalData.searchAddon.clearDecorations();
+      terminalData.terminal.focus();
+    }
+  }, [tabKey]);
+
+  const handleFindNext = useCallback((query: string): boolean => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData && query) {
+      return terminalData.searchAddon.findNext(query);
+    }
+    return false;
+  }, [tabKey]);
+
+  const handleFindPrevious = useCallback((query: string): boolean => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData && query) {
+      return terminalData.searchAddon.findPrevious(query);
+    }
+    return false;
+  }, [tabKey]);
+
+  const handleReconnect = useCallback(() => {
+    // Trigger reconnection by closing and reopening socket
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData && terminalData.socket) {
+      terminalData.socket.close();
+      // The socket onclose handler should trigger reconnection logic
+      // Or we can dispatch a custom event
+      window.dispatchEvent(new CustomEvent("terminal-reconnect", { detail: { tabKey } }));
+    }
+  }, [tabKey]);
+
+  const handleExportOutput = useCallback(() => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (terminalData) {
+      terminalData.terminal.selectAll();
+      const content = terminalData.terminal.getSelection();
+      terminalData.terminal.clearSelection();
+
+      // Download as text file
+      const blob = new Blob([content], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `terminal-output-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  }, [tabKey]);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -209,6 +347,9 @@ function TerminalComponent({
 
       const fitAddon = new FitAddon();
       terminal.loadAddon(fitAddon);
+
+      const searchAddon = new SearchAddon();
+      terminal.loadAddon(searchAddon);
 
       const imageAddon = new ImageAddon();
       terminal.loadAddon(imageAddon);
@@ -298,6 +439,7 @@ function TerminalComponent({
         terminal,
         socket: null,
         fitAddon,
+        searchAddon,
         isInitialized: false,
         domElement: null,
       };
@@ -329,7 +471,7 @@ function TerminalComponent({
           terminalData?.terminal.writeln(
             "\r\n\x1b[31mBackend WebSocket base URL is not configured. Please check VITE_API_BASE_URL or the current page origin.\x1b[m",
           );
-          onConnectionStateChange?.(false);
+          handleConnectionStateChange(false);
           return;
         }
 
@@ -346,7 +488,7 @@ function TerminalComponent({
             "tab:",
             tabKey,
           );
-          onConnectionStateChange?.(true);
+          handleConnectionStateChange(true);
           const currentTerminalData = terminalInstances.get(tabKey);
           if (currentTerminalData) {
             // First send tab key for session mapping
@@ -387,7 +529,7 @@ function TerminalComponent({
                   currentTerminalData.terminal.writeln(
                     `\r\n\x1b[33m${msg.data.message}\x1b[m`,
                   );
-                  onConnectionStateChange?.(false);
+                  handleConnectionStateChange(false);
                 } else if (msg.data.status === "error") {
                   console.error("SSH connection error:", msg.data.message);
                   currentTerminalData.terminal.writeln(
@@ -396,7 +538,7 @@ function TerminalComponent({
                   currentTerminalData.terminal.writeln(
                     `\x1b[31mTrying to reconnect...\x1b[m`,
                   );
-                  onConnectionStateChange?.(false);
+                  handleConnectionStateChange(false);
                   // Could add reconnect logic here
                 }
               } else if (msg.type === "error") {
@@ -458,7 +600,7 @@ function TerminalComponent({
 
         socket.onclose = () => {
           console.log("WebSocket closed for asset:", assetId, "tab:", tabKey);
-          onConnectionStateChange?.(false);
+          handleConnectionStateChange(false);
           const currentTerminalData = terminalInstances.get(tabKey);
           if (currentTerminalData) {
             currentTerminalData.terminal.writeln(
@@ -469,7 +611,7 @@ function TerminalComponent({
 
         socket.onerror = (error) => {
           console.error("WebSocket error for asset:", assetId, error);
-          onConnectionStateChange?.(false);
+          handleConnectionStateChange(false);
           const currentTerminalData = terminalInstances.get(tabKey);
           if (currentTerminalData) {
             currentTerminalData.terminal.writeln(
@@ -625,15 +767,69 @@ function TerminalComponent({
     };
   }, [isActive, tabKey]);
 
+  // Keyboard shortcuts for terminal (Ctrl+Shift+C/V/F)
+  useEffect(() => {
+    if (!isActive) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey) {
+        switch (e.key.toUpperCase()) {
+          case "C":
+            e.preventDefault();
+            handleCopy();
+            break;
+          case "V":
+            e.preventDefault();
+            handlePaste();
+            break;
+          case "F":
+            e.preventDefault();
+            setSearchOpen(true);
+            break;
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isActive, handleCopy, handlePaste]);
+
   return (
-    <div
-      ref={terminalRef}
-      style={{
-        height: "100%",
-        width: "100%",
-        overflow: "hidden",
-      }}
-    />
+    <>
+      <div
+        ref={terminalRef}
+        onContextMenu={handleContextMenu}
+        style={{
+          height: "100%",
+          width: "100%",
+          overflow: "hidden",
+          position: "relative",
+        }}
+      >
+        <TerminalSearchBar
+          open={searchOpen}
+          onClose={handleSearchClose}
+          onFindNext={handleFindNext}
+          onFindPrevious={handleFindPrevious}
+        />
+      </div>
+      <TerminalContextMenu
+        anchorPosition={contextMenu}
+        onClose={handleCloseContextMenu}
+        onCopy={handleCopy}
+        onPaste={handlePaste}
+        onSelectAll={handleSelectAll}
+        onClear={handleClear}
+        onScrollToBottom={handleScrollToBottom}
+        onSearch={handleSearch}
+        onOpenQuickCommands={onOpenQuickCommands}
+        onReconnect={handleReconnect}
+        onDuplicateSession={onDuplicateSession}
+        onExportOutput={handleExportOutput}
+        hasSelection={hasSelection}
+        isConnected={isConnected}
+      />
+    </>
   );
 }
 

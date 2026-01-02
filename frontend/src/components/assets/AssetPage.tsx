@@ -447,6 +447,22 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
           open={Boolean(tabMenuAnchor)}
           anchorEl={tabMenuAnchor}
           onClose={() => setTabMenuAnchor(null)}
+          slotProps={{
+            paper: {
+              sx: {
+                minWidth: 160,
+                "& .MuiMenuItem-root": {
+                  py: 0.5,
+                  px: 1.25,
+                  fontSize: 12,
+                  minHeight: 24,
+                },
+                "& .MuiSvgIcon-root": {
+                  fontSize: 16,
+                },
+              },
+            },
+          }}
         >
           {tabMenuItems.map((item) => (
             <MenuItem
@@ -456,6 +472,7 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
                 setTabMenuAnchor(null);
               }}
             >
+              {item.icon && <Box sx={{ mr: 1, display: "flex", alignItems: "center" }}>{item.icon}</Box>}
               {item.label}
             </MenuItem>
           ))}
