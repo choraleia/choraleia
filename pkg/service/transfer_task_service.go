@@ -11,18 +11,10 @@ import (
 	fsimpl "github.com/choraleia/choraleia/pkg/service/fs"
 )
 
-type TransferEndpointType string
-
-const (
-	TransferEndpointLocal  TransferEndpointType = "local"
-	TransferEndpointSFTP   TransferEndpointType = "sftp"
-	TransferEndpointDocker TransferEndpointType = "docker"
-)
-
 type TransferEndpoint struct {
-	Type    TransferEndpointType `json:"type"`
-	AssetID string               `json:"asset_id,omitempty"` // required for sftp/docker
-	Path    string               `json:"path"`
+	AssetID     string `json:"asset_id,omitempty"`     // required for sftp/docker
+	ContainerID string `json:"container_id,omitempty"` // required for docker
+	Path        string `json:"path"`
 }
 
 type TransferRequest struct {
@@ -46,7 +38,10 @@ func NewTransferTaskService(tasks *TaskService, assetSvc *AssetService) *Transfe
 }
 
 func (s *TransferTaskService) EnqueueCopy(req TransferRequest) *Task {
-	title := fmt.Sprintf("Transfer %s -> %s", req.From.Type, req.To.Type)
+	// Generate descriptive title based on source and destination
+	fromDesc := describeEndpoint(req.From)
+	toDesc := describeEndpoint(req.To)
+	title := fmt.Sprintf("Transfer %s -> %s", fromDesc, toDesc)
 	meta := TransferTaskMeta{Request: req}
 
 	return s.tasks.Enqueue("transfer", title, meta, func(ctx context.Context, update func(TaskProgress), setNote func(string)) error {
@@ -54,12 +49,23 @@ func (s *TransferTaskService) EnqueueCopy(req TransferRequest) *Task {
 	})
 }
 
+// describeEndpoint returns a short description for the endpoint
+func describeEndpoint(ep TransferEndpoint) string {
+	if ep.AssetID != "" {
+		if ep.ContainerID != "" {
+			return fmt.Sprintf("docker:%s", ep.ContainerID[:min(8, len(ep.ContainerID))])
+		}
+		return "remote"
+	}
+	return "local"
+}
+
 func (s *TransferTaskService) runCopy(ctx context.Context, req TransferRequest, update func(TaskProgress), setNote func(string)) error {
-	fromFS, err := s.fsReg.Open(ctx, EndpointSpec{Type: EndpointType(req.From.Type), AssetID: req.From.AssetID})
+	fromFS, err := s.fsReg.Open(ctx, EndpointSpec{AssetID: req.From.AssetID, ContainerID: req.From.ContainerID})
 	if err != nil {
 		return err
 	}
-	toFS, err := s.fsReg.Open(ctx, EndpointSpec{Type: EndpointType(req.To.Type), AssetID: req.To.AssetID})
+	toFS, err := s.fsReg.Open(ctx, EndpointSpec{AssetID: req.To.AssetID, ContainerID: req.To.ContainerID})
 	if err != nil {
 		return err
 	}

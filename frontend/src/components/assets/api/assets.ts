@@ -1,6 +1,6 @@
 import { getApiUrl } from "../../../api/base";
 
-export type AssetType = "local" | "ssh" | "folder";
+export type AssetType = "local" | "ssh" | "folder" | "docker_host";
 
 export interface CreateAssetBody<TConfig = Record<string, any>> {
   name: string;
@@ -102,6 +102,29 @@ export async function inspectSSHKey(path: string): Promise<SSHKeyInfo | null> {
   url.searchParams.set("path", path);
   const resp = await fetch(url.toString());
   const json: ApiResponse<SSHKeyInfo> = await resp
+    .json()
+    .catch(() => ({ code: resp.status, message: resp.statusText }) as any);
+  if (json.code === 200 && json.data) return json.data;
+  return null;
+}
+
+// List all assets
+export async function listAssets(type?: AssetType): Promise<AssetLike[]> {
+  const url = type
+    ? getApiUrl(`/api/assets?type=${type}`)
+    : getApiUrl("/api/assets");
+  const resp = await fetch(url);
+  const json: ApiResponse<{ assets: AssetLike[] }> = await resp
+    .json()
+    .catch(() => ({ code: resp.status, message: resp.statusText }) as any);
+  if (json.code === 200) return json.data?.assets || [];
+  return [];
+}
+
+// Get a single asset by ID
+export async function getAsset(id: string): Promise<AssetLike | null> {
+  const resp = await fetch(getApiUrl(`/api/assets/${id}`));
+  const json: ApiResponse<AssetLike> = await resp
     .json()
     .catch(() => ({ code: resp.status, message: resp.statusText }) as any);
   if (json.code === 200 && json.data) return json.data;

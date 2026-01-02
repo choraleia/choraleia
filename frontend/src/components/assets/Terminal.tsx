@@ -15,6 +15,7 @@ interface TerminalProps {
   };
   tabKey: string;
   assetId: string; // Added: asset ID
+  containerId?: string; // Docker container ID (for docker_host assets)
   isActive: boolean;
   onConnectionStateChange?: (connected: boolean) => void;
 }
@@ -140,6 +141,7 @@ function TerminalComponent({
   hostInfo,
   tabKey,
   assetId,
+  containerId,
   isActive,
   onConnectionStateChange,
 }: TerminalProps) {
@@ -316,8 +318,10 @@ function TerminalComponent({
       let watermark = 0;
       let isPaused = false;
 
-      // Establish WebSocket connection - use asset ID instead of host info
-      const rawPath = `/terminal/connect/${assetId}`;
+      // Establish WebSocket connection - use asset ID (and containerId for Docker)
+      const rawPath = containerId
+        ? `/terminal/docker/${assetId}/${containerId}`
+        : `/terminal/connect/${assetId}`;
       const connectSocket = async () => {
         const socketUrl = getWsUrl(rawPath);
 

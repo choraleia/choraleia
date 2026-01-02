@@ -6,8 +6,6 @@ export interface APIResponse<T> {
   data?: T;
 }
 
-export type FSEndpointType = "local" | "sftp" | "docker" | "k8s_pod";
-
 export interface FSEntry {
   name: string;
   path: string;
@@ -23,26 +21,26 @@ export interface FSListResponse {
 }
 
 export function fsDownloadUrl(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   path: string;
 }): string {
   const url = new URL(getApiUrl("/api/fs/download"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   url.searchParams.set("path", params.path);
   return url.toString();
 }
 
 export async function fsList(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   path?: string;
   includeHidden?: boolean;
 }): Promise<FSListResponse> {
   const url = new URL(getApiUrl("/api/fs/ls"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   if (params.path) url.searchParams.set("path", params.path);
   if (params.includeHidden) url.searchParams.set("include_hidden", "true");
 
@@ -56,13 +54,13 @@ export async function fsList(params: {
 }
 
 export async function fsStat(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   path: string;
 }): Promise<FSEntry> {
   const url = new URL(getApiUrl("/api/fs/stat"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   url.searchParams.set("path", params.path);
 
   const res = await fetch(url.toString());
@@ -75,15 +73,15 @@ export async function fsStat(params: {
 }
 
 export async function fsUpload(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   path: string;
   file: File;
   overwrite?: boolean;
 }): Promise<void> {
   const url = new URL(getApiUrl("/api/fs/upload"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   url.searchParams.set("path", params.path);
   url.searchParams.set("overwrite", params.overwrite ? "true" : "false");
 
@@ -98,13 +96,13 @@ export async function fsUpload(params: {
 }
 
 export async function fsMkdir(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   path: string;
 }): Promise<void> {
   const url = new URL(getApiUrl("/api/fs/mkdir"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   url.searchParams.set("path", params.path);
 
   const res = await fetch(url.toString(), { method: "POST" });
@@ -115,13 +113,13 @@ export async function fsMkdir(params: {
 }
 
 export async function fsRemove(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   path: string;
 }): Promise<void> {
   const url = new URL(getApiUrl("/api/fs/rm"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   url.searchParams.set("path", params.path);
 
   const res = await fetch(url.toString(), { method: "POST" });
@@ -132,14 +130,14 @@ export async function fsRemove(params: {
 }
 
 export async function fsRename(params: {
-  type: FSEndpointType;
   assetId?: string;
+  containerId?: string;
   from: string;
   to: string;
 }): Promise<void> {
   const url = new URL(getApiUrl("/api/fs/rename"));
-  url.searchParams.set("type", params.type);
   if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
   url.searchParams.set("from", params.from);
   url.searchParams.set("to", params.to);
 

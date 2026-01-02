@@ -19,17 +19,21 @@ func NewFSHandler(svc *service.FSService) *FSHandler {
 	return &FSHandler{svc: svc}
 }
 
-func (h *FSHandler) List(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
+// parseEndpointSpec extracts endpoint parameters from query.
+// Endpoint type will be auto-detected from asset_id by FSRegistry.
+func parseEndpointSpec(c *gin.Context) service.EndpointSpec {
+	return service.EndpointSpec{
+		AssetID:     strings.TrimSpace(c.Query("asset_id")),
+		ContainerID: strings.TrimSpace(c.Query("container_id")),
 	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+}
+
+func (h *FSHandler) List(c *gin.Context) {
+	spec := parseEndpointSpec(c)
 	p := c.Query("path")
 	includeHidden := strings.EqualFold(c.Query("include_hidden"), "true")
 
-	resp, err := h.svc.ListDir(c.Request.Context(), typ, assetID, p, fsimpl.ListDirOptions{IncludeHidden: includeHidden})
+	resp, err := h.svc.ListDir(c.Request.Context(), spec, p, fsimpl.ListDirOptions{IncludeHidden: includeHidden})
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
@@ -38,19 +42,14 @@ func (h *FSHandler) List(c *gin.Context) {
 }
 
 func (h *FSHandler) Stat(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 	p := c.Query("path")
 	if strings.TrimSpace(p) == "" {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
 		return
 	}
 
-	entry, err := h.svc.Stat(c.Request.Context(), typ, assetID, p)
+	entry, err := h.svc.Stat(c.Request.Context(), spec, p)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
@@ -59,12 +58,7 @@ func (h *FSHandler) Stat(c *gin.Context) {
 }
 
 func (h *FSHandler) Download(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 	p := c.Query("path")
 	if strings.TrimSpace(p) == "" {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
@@ -72,7 +66,7 @@ func (h *FSHandler) Download(c *gin.Context) {
 	}
 
 	c.Header("Content-Type", "application/octet-stream")
-	filename, err := h.svc.Download(c.Request.Context(), typ, assetID, p, c.Writer)
+	filename, err := h.svc.Download(c.Request.Context(), spec, p, c.Writer)
 	if err != nil {
 		c.Status(http.StatusBadRequest)
 		return
@@ -81,12 +75,7 @@ func (h *FSHandler) Download(c *gin.Context) {
 }
 
 func (h *FSHandler) Upload(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 	p := c.Query("path")
 	overwrite := strings.EqualFold(c.Query("overwrite"), "true")
 	if strings.TrimSpace(p) == "" {
@@ -106,7 +95,7 @@ func (h *FSHandler) Upload(c *gin.Context) {
 		p = p + header.Filename
 	}
 
-	if err := h.svc.Upload(c.Request.Context(), typ, assetID, p, file, overwrite); err != nil {
+	if err := h.svc.Upload(c.Request.Context(), spec, p, file, overwrite); err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
 	}
@@ -114,18 +103,13 @@ func (h *FSHandler) Upload(c *gin.Context) {
 }
 
 func (h *FSHandler) Mkdir(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 	p := c.Query("path")
 	if strings.TrimSpace(p) == "" {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
 		return
 	}
-	if err := h.svc.Mkdir(c.Request.Context(), typ, assetID, p); err != nil {
+	if err := h.svc.Mkdir(c.Request.Context(), spec, p); err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
 	}
@@ -133,18 +117,13 @@ func (h *FSHandler) Mkdir(c *gin.Context) {
 }
 
 func (h *FSHandler) Remove(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 	p := c.Query("path")
 	if strings.TrimSpace(p) == "" {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
 		return
 	}
-	if err := h.svc.Remove(c.Request.Context(), typ, assetID, p); err != nil {
+	if err := h.svc.Remove(c.Request.Context(), spec, p); err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
 	}
@@ -152,19 +131,14 @@ func (h *FSHandler) Remove(c *gin.Context) {
 }
 
 func (h *FSHandler) Rename(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 	from := c.Query("from")
 	to := c.Query("to")
 	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from and to are required"})
 		return
 	}
-	if err := h.svc.Rename(c.Request.Context(), typ, assetID, from, to); err != nil {
+	if err := h.svc.Rename(c.Request.Context(), spec, from, to); err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
 	}
@@ -172,14 +146,9 @@ func (h *FSHandler) Rename(c *gin.Context) {
 }
 
 func (h *FSHandler) Pwd(c *gin.Context) {
-	typ, err := service.ValidateEndpointTypeForHTTP(c.Query("type"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
-		return
-	}
-	assetID := strings.TrimSpace(c.Query("asset_id"))
+	spec := parseEndpointSpec(c)
 
-	pwd, err := h.svc.Pwd(c.Request.Context(), typ, assetID)
+	pwd, err := h.svc.Pwd(c.Request.Context(), spec)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return

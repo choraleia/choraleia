@@ -9,10 +9,10 @@ import (
 type AssetType string
 
 const (
-	AssetTypeFolder AssetType = "folder" // folder container
-	AssetTypeLocal  AssetType = "local"  // local terminal
-	AssetTypeSSH    AssetType = "ssh"    // SSH connection
-	AssetTypeDocker AssetType = "docker" // Docker container
+	AssetTypeFolder     AssetType = "folder"      // folder container
+	AssetTypeLocal      AssetType = "local"       // local terminal
+	AssetTypeSSH        AssetType = "ssh"         // SSH connection
+	AssetTypeDockerHost AssetType = "docker_host" // Docker Host (dynamic containers)
 )
 
 // Asset generic asset structure (linked list for sibling ordering)
@@ -80,15 +80,29 @@ type DatabaseConfig struct {
 	Timeout  int    `json:"timeout"`
 }
 
-// DockerConfig docker connection config
+// DockerHostConfig docker host connection config
 //
-// Container: required. Container name or ID.
-// User: optional user for docker exec (e.g. "root", "1000:1000").
-//
-// NOTE: This config is intended for filesystem operations only.
-type DockerConfig struct {
-	Container string `json:"container"`
-	User      string `json:"user,omitempty"`
+// ConnectionType: "local" (use local docker daemon) or "ssh" (via SSH tunnel)
+// SSHAssetID: when ConnectionType is "ssh", reference to SSH asset for remote docker
+// Shell: default shell for docker exec (e.g. /bin/sh, /bin/bash)
+// ShowAllContainers: whether to show stopped containers
+type DockerHostConfig struct {
+	ConnectionType    string `json:"connection_type"`        // "local" or "ssh"
+	SSHAssetID        string `json:"ssh_asset_id,omitempty"` // SSH asset ID for remote docker
+	Shell             string `json:"shell,omitempty"`        // default shell for exec
+	ShowAllContainers bool   `json:"show_all_containers"`    // include stopped containers
+	User              string `json:"user,omitempty"`         // default user for exec
+}
+
+// ContainerInfo represents a Docker container's basic info
+type ContainerInfo struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	State   string `json:"state"`  // running, paused, exited, created
+	Status  string `json:"status"` // e.g. "Up 2 hours"
+	Ports   string `json:"ports"`
+	Created string `json:"created"`
 }
 
 // CreateAssetRequest create asset request
@@ -154,16 +168,16 @@ func (a *Asset) ValidateConfig() error {
 		return a.validateSSHConfig()
 	case AssetTypeLocal:
 		return a.validateLocalConfig()
-	case AssetTypeDocker:
-		return a.validateDockerConfig()
+	case AssetTypeDockerHost:
+		return a.validateDockerHostConfig()
 	}
 	return nil
 }
 
-func (a *Asset) validateFolderConfig() error { return nil }
-func (a *Asset) validateSSHConfig() error    { return nil }
-func (a *Asset) validateLocalConfig() error  { return nil }
-func (a *Asset) validateDockerConfig() error { return nil }
+func (a *Asset) validateFolderConfig() error     { return nil }
+func (a *Asset) validateSSHConfig() error        { return nil }
+func (a *Asset) validateLocalConfig() error      { return nil }
+func (a *Asset) validateDockerHostConfig() error { return nil }
 
 // GetTypedConfig decode generic map config into target struct
 func (a *Asset) GetTypedConfig(target interface{}) error {

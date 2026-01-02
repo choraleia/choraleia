@@ -34,7 +34,6 @@ import { NestedMenuItem } from "mui-nested-menu";
 import { getAsset, type Asset } from "../../api/assets";
 import {
   fsList,
-  type FSEndpointType,
   type FSEntry,
 } from "../../api/fs";
 import { tasksEnqueueTransfer, type TransferRequest } from "../../api/tasks";
@@ -206,8 +205,8 @@ type FileRowProps = {
   selection: Set<string>;
   dragOverDirPath: string | null;
   assetId: string | null;
-  isSSHAsset: boolean;
-  remoteEndpointType: FSEndpointType;
+  containerId: string | null;
+  hasRemoteFS: boolean;
   localPath: string;
   remotePath: string;
   entryGridTemplateColumns: string;
@@ -725,17 +724,25 @@ export default function FileManagerPanel(props: Props) {
 
   const [asset, setAsset] = useState<Asset | null>(null);
 
+  // Get containerId for Docker container terminals
+  const containerId = useMemo(() => {
+    const tab = tabs?.find((t) => (t?.key ?? t?.id) === activeTabKey) ?? null;
+    return (tab?.meta?.containerId ?? null) as string | null;
+  }, [tabs, activeTabKey]);
+
   // Asset type can be momentarily unknown while loading; avoid hiding the remote pane during that window.
   const hasAssetLoaded = assetId ? asset !== null : true;
   const isSSHAsset =
     asset?.type === "ssh" || (!hasAssetLoaded && tabHintType === "ssh");
+  const isDockerAsset =
+    asset?.type === "docker_host" ||
+    tabHintType === "docker_host" ||
+    tabHintType === "docker_container" ||
+    !!containerId;
 
-  const remoteEndpointType: FSEndpointType = useMemo(() => {
-    // For now: only SSH assets have a remote FS.
-    // Future: docker/k8s assets can map to "docker" | "k8s_pod".
-    if (asset?.type === "ssh" || tabHintType === "ssh") return "sftp";
-    return "sftp";
-  }, [asset?.type, tabHintType]);
+  // Unified flag for whether this asset supports remote file system
+  const hasRemoteFS = isSSHAsset || isDockerAsset;
+
 
   const [layout, setLayout] = useState<LayoutMode>(() => readLayoutMode());
   const [split, setSplit] = useState<number>(() => readSplitRatio());
@@ -844,7 +851,7 @@ export default function FileManagerPanel(props: Props) {
       const p = normalizePosixPath(nextPath);
       setLocalPath(p);
       setLocalPathInput(p);
-      await fsList({ type: "local", path: p, includeHidden: showHidden })
+      await fsList({ path: p, includeHidden: showHidden })
         .then((data) => {
           setLocalEntries(data.entries);
           setLocalPath(data.path);
@@ -865,8 +872,8 @@ export default function FileManagerPanel(props: Props) {
       setRemotePath(p);
       setRemotePathInput(p);
       await fsList({
-        type: remoteEndpointType,
         assetId,
+        containerId: containerId || undefined,
         path: p,
         includeHidden: showHidden,
       })
@@ -880,7 +887,7 @@ export default function FileManagerPanel(props: Props) {
           setRemoteError(e instanceof Error ? e.message : String(e));
         });
     },
-    [assetId, remoteEndpointType, showHidden],
+    [assetId, containerId, showHidden],
   );
 
   const commitEdit = useCallback(
@@ -1021,8 +1028,8 @@ export default function FileManagerPanel(props: Props) {
     try {
       const reqPath = remotePathInput || remotePath || undefined;
       const data = await fsList({
-        type: remoteEndpointType,
         assetId,
+        containerId: containerId || undefined,
         path: reqPath || undefined,
         includeHidden: showHidden,
       });
@@ -1034,7 +1041,7 @@ export default function FileManagerPanel(props: Props) {
     } finally {
       setRemoteLoading(false);
     }
-  }, [assetId, remotePath, remotePathInput, remoteEndpointType, showHidden]);
+  }, [assetId, containerId, remotePath, remotePathInput, showHidden]);
 
   const refreshLocal = useCallback(async () => {
     setLocalLoading(true);
@@ -1043,7 +1050,6 @@ export default function FileManagerPanel(props: Props) {
     try {
       const reqPath = localPathInput || localPath || undefined;
       const data = await fsList({
-        type: "local",
         path: reqPath || undefined,
         includeHidden: showHidden,
       });
@@ -1056,7 +1062,7 @@ export default function FileManagerPanel(props: Props) {
         const candidates = ["/home", "/tmp", "/Downloads", "/Desktop"];
         for (const cand of candidates) {
           try {
-            const candData = await fsList({ type: "local", path: cand, includeHidden: showHidden });
+            const candData = await fsList({ path: cand, includeHidden: showHidden });
             if ((candData.entries?.length ?? 0) > 0) {
               setLocalEntries(candData.entries);
               setLocalPath(candData.path);
@@ -1289,7 +1295,7 @@ export default function FileManagerPanel(props: Props) {
       setDragOverPane(null);
       setDragOverDir(null);
 
-      if (!isSSHAsset || !assetId) return;
+      if (!hasRemoteFS || !assetId) return;
 
       const direction: TransferDirection =
         payload.fromPane === "remote" ? "remote-to-local" : "local-to-remote";
@@ -1305,14 +1311,14 @@ export default function FileManagerPanel(props: Props) {
         const req: TransferRequest =
           direction === "remote-to-local"
             ? {
-                from: { type: remoteEndpointType as any, asset_id: assetId, path: p },
-                to: { type: "local", path: dstDir },
+                from: { asset_id: assetId, container_id: containerId || undefined, path: p },
+                to: { path: dstDir },
                 recursive: isDir,
                 overwrite: true,
               }
             : {
-                from: { type: "local", path: p },
-                to: { type: remoteEndpointType as any, asset_id: assetId, path: dstDir },
+                from: { path: p },
+                to: { asset_id: assetId, container_id: containerId || undefined, path: dstDir },
                 recursive: isDir,
                 overwrite: true,
               };
@@ -1321,10 +1327,10 @@ export default function FileManagerPanel(props: Props) {
     },
     [
       assetId,
-      isSSHAsset,
+      containerId,
+      hasRemoteFS,
       localEntries,
       remoteEntries,
-      remoteEndpointType,
       resolveDropTargetDir,
     ],
   );
@@ -1345,7 +1351,6 @@ export default function FileManagerPanel(props: Props) {
         if (pane === "local") {
           for (const p of sel) {
             await (await import("../../api/fs")).fsRemove({
-              type: "local",
               path: String(p),
             });
           }
@@ -1354,8 +1359,8 @@ export default function FileManagerPanel(props: Props) {
           if (!assetId) return;
           for (const p of sel) {
             await (await import("../../api/fs")).fsRemove({
-              type: remoteEndpointType,
               assetId,
+              containerId: containerId || undefined,
               path: String(p),
             });
           }
@@ -1368,12 +1373,12 @@ export default function FileManagerPanel(props: Props) {
         setTransferBusy(false);
       }
     },
-    [assetId, clearSelection, getPaneSelection, refreshLocal, refreshRemote, remoteEndpointType],
+    [assetId, containerId, clearSelection, getPaneSelection, refreshLocal, refreshRemote],
   );
 
   const enqueueTransferTask = useCallback(
     async (direction: TransferDirection) => {
-      if (!isSSHAsset || !assetId) return;
+      if (!hasRemoteFS || !assetId) return;
 
       const fromPane: PaneId = direction === "local-to-remote" ? "local" : "remote";
       const toPane: PaneId = fromPane === "local" ? "remote" : "local";
@@ -1396,14 +1401,14 @@ export default function FileManagerPanel(props: Props) {
           const req: TransferRequest =
             direction === "remote-to-local"
               ? {
-                  from: { type: remoteEndpointType as any, asset_id: assetId, path: String(p) },
-                  to: { type: "local", path: dstDir },
+                  from: { asset_id: assetId, container_id: containerId || undefined, path: String(p) },
+                  to: { path: dstDir },
                   recursive: isDir,
                   overwrite: true,
                 }
               : {
-                  from: { type: "local", path: String(p) },
-                  to: { type: remoteEndpointType as any, asset_id: assetId, path: dstDir },
+                  from: { path: String(p) },
+                  to: { asset_id: assetId, container_id: containerId || undefined, path: dstDir },
                   recursive: isDir,
                   overwrite: true,
                 };
@@ -1422,13 +1427,13 @@ export default function FileManagerPanel(props: Props) {
     },
     [
       assetId,
+      containerId,
       getPaneSelection,
-      isSSHAsset,
+      hasRemoteFS,
       localEntries,
       localPath,
       refreshLocal,
       refreshRemote,
-      remoteEndpointType,
       remoteEntries,
       remotePath,
     ],
@@ -1625,8 +1630,8 @@ export default function FileManagerPanel(props: Props) {
         selection,
         dragOverDirPath,
         assetId,
-        isSSHAsset,
-        remoteEndpointType,
+        containerId,
+        hasRemoteFS,
         localPath,
         remotePath,
         entryGridTemplateColumns,
@@ -1695,8 +1700,8 @@ export default function FileManagerPanel(props: Props) {
       localListHeight,
       remoteListHeight,
       assetId,
-      isSSHAsset,
-      remoteEndpointType,
+      containerId,
+      hasRemoteFS,
       localPath,
       remotePath,
       dragOverDir,
@@ -1714,7 +1719,7 @@ export default function FileManagerPanel(props: Props) {
     if (!visible) return;
 
     // For non-SSH assets (local, etc.), hide the header actions entirely.
-    if (!isSSHAsset) {
+    if (!hasRemoteFS) {
       onHeaderActionChange(null);
       return;
     }
@@ -1774,7 +1779,7 @@ export default function FileManagerPanel(props: Props) {
 
     onHeaderActionChange(action);
     return () => onHeaderActionChange(null);
-  }, [layout, toggleLayout, togglePaneOrder, onHeaderActionChange, visible, isSSHAsset]);
+  }, [layout, toggleLayout, togglePaneOrder, onHeaderActionChange, visible, hasRemoteFS]);
 
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [menuPane, setMenuPane] = useState<PaneId>("local");
@@ -2203,7 +2208,7 @@ export default function FileManagerPanel(props: Props) {
     );
   };
 
-  const RemotePane = isSSHAsset ? (
+  const RemotePane = hasRemoteFS ? (
     <Box display="flex" flexDirection="column" minHeight={0} height="100%">
       {renderPathBar({
         pane: "remote",
@@ -2357,7 +2362,7 @@ export default function FileManagerPanel(props: Props) {
         </Box>
       )}
 
-      {isSSHAsset ? (
+      {hasRemoteFS ? (
         paneOrder === "remote-first" ? (
           <Box
             ref={splitContainerRef}
@@ -2694,7 +2699,7 @@ export default function FileManagerPanel(props: Props) {
         <Divider />
 
         <MenuItem
-          disabled={transferBusy || selectedCount === 0 || !isSSHAsset}
+          disabled={transferBusy || selectedCount === 0 || !hasRemoteFS}
           onClick={() => {
             const pane = ctxMenu?.pane;
             closeCtxMenu();

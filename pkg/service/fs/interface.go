@@ -6,6 +6,23 @@ import (
 	"time"
 )
 
+// EndpointType identifies a filesystem implementation.
+type EndpointType string
+
+const (
+	EndpointLocal           EndpointType = "local"
+	EndpointSFTP            EndpointType = "sftp"
+	EndpointDockerContainer EndpointType = "docker_container"
+	EndpointK8sPod          EndpointType = "k8s_pod"
+)
+
+// EndpointSpec specifies filesystem endpoint parameters.
+// Type is auto-detected from AssetID if not provided.
+type EndpointSpec struct {
+	AssetID     string // asset ID for remote FS (ssh, docker_host)
+	ContainerID string // required for Docker container file operations
+}
+
 // FileEntry describes one file or directory.
 //
 // Path semantics:

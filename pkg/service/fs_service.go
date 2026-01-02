@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"strings"
 
 	fsimpl "github.com/choraleia/choraleia/pkg/service/fs"
 )
@@ -17,44 +15,51 @@ type FSService struct {
 
 func NewFSService(reg *FSRegistry) *FSService { return &FSService{reg: reg} }
 
-func (s *FSService) openFS(ctx context.Context, typ EndpointType, assetID string) (fsimpl.FileSystem, error) {
-	return s.reg.Open(ctx, EndpointSpec{Type: typ, AssetID: assetID})
+// openFS creates a FileSystem instance from EndpointSpec.
+// Type can be omitted if AssetID is provided - it will be auto-detected.
+func (s *FSService) openFS(ctx context.Context, spec EndpointSpec) (fsimpl.FileSystem, error) {
+	return s.reg.Open(ctx, spec)
 }
 
-func (s *FSService) ListDir(ctx context.Context, typ EndpointType, assetID string, path string, opts fsimpl.ListDirOptions) (*fsimpl.ListDirResponse, error) {
-	fs, err := s.openFS(ctx, typ, assetID)
+// ListDir lists directory contents.
+func (s *FSService) ListDir(ctx context.Context, spec EndpointSpec, path string, opts fsimpl.ListDirOptions) (*fsimpl.ListDirResponse, error) {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
 	return fs.ListDir(ctx, path, opts)
 }
 
-func (s *FSService) Stat(ctx context.Context, typ EndpointType, assetID string, path string) (*fsimpl.FileEntry, error) {
-	fs, err := s.openFS(ctx, typ, assetID)
+// Stat returns file/directory info.
+func (s *FSService) Stat(ctx context.Context, spec EndpointSpec, path string) (*fsimpl.FileEntry, error) {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return nil, err
 	}
 	return fs.Stat(ctx, path)
 }
 
-func (s *FSService) Mkdir(ctx context.Context, typ EndpointType, assetID string, path string) error {
-	fs, err := s.openFS(ctx, typ, assetID)
+// Mkdir creates a directory (and parents if needed).
+func (s *FSService) Mkdir(ctx context.Context, spec EndpointSpec, path string) error {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return err
 	}
 	return fs.MkdirAll(ctx, path)
 }
 
-func (s *FSService) Remove(ctx context.Context, typ EndpointType, assetID string, path string) error {
-	fs, err := s.openFS(ctx, typ, assetID)
+// Remove deletes a file or directory.
+func (s *FSService) Remove(ctx context.Context, spec EndpointSpec, path string) error {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return err
 	}
 	return fs.Remove(ctx, path)
 }
 
-func (s *FSService) Rename(ctx context.Context, typ EndpointType, assetID string, from string, to string) error {
-	fs, err := s.openFS(ctx, typ, assetID)
+// Rename moves/renames a file or directory.
+func (s *FSService) Rename(ctx context.Context, spec EndpointSpec, from, to string) error {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return err
 	}
@@ -62,8 +67,8 @@ func (s *FSService) Rename(ctx context.Context, typ EndpointType, assetID string
 }
 
 // Download streams a file to w and returns a suggested filename.
-func (s *FSService) Download(ctx context.Context, typ EndpointType, assetID string, path string, w io.Writer) (string, error) {
-	fs, err := s.openFS(ctx, typ, assetID)
+func (s *FSService) Download(ctx context.Context, spec EndpointSpec, path string, w io.Writer) (string, error) {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return "", err
 	}
@@ -84,8 +89,9 @@ func (s *FSService) Download(ctx context.Context, typ EndpointType, assetID stri
 	return name, nil
 }
 
-func (s *FSService) Upload(ctx context.Context, typ EndpointType, assetID string, path string, r io.Reader, overwrite bool) error {
-	fs, err := s.openFS(ctx, typ, assetID)
+// Upload writes data to a file.
+func (s *FSService) Upload(ctx context.Context, spec EndpointSpec, path string, r io.Reader, overwrite bool) error {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return err
 	}
@@ -99,17 +105,8 @@ func (s *FSService) Upload(ctx context.Context, typ EndpointType, assetID string
 }
 
 // Pwd returns a best-effort current/default directory for the given endpoint.
-//
-// Contract:
-//   - Returned path is POSIX absolute.
-//   - No root mapping is applied.
-//
-// Behavior:
-//   - local: returns current user's home directory if available, otherwise '/'.
-//   - sftp: tries SFTP Getwd(), falls back to '/'.
-//   - docker: returns '/'.
-func (s *FSService) Pwd(ctx context.Context, typ EndpointType, assetID string) (string, error) {
-	fs, err := s.openFS(ctx, typ, assetID)
+func (s *FSService) Pwd(ctx context.Context, spec EndpointSpec) (string, error) {
+	fs, err := s.openFS(ctx, spec)
 	if err != nil {
 		return "", err
 	}
@@ -121,12 +118,9 @@ func (s *FSService) Pwd(ctx context.Context, typ EndpointType, assetID string) (
 }
 
 func basenamePosix(p string) string {
-	// Minimal POSIX basename without depending on filepath semantics.
-	// p is expected to use forward slashes.
 	if p == "" || p == "/" {
 		return ""
 	}
-	// trim trailing /
 	for len(p) > 1 && p[len(p)-1] == '/' {
 		p = p[:len(p)-1]
 	}
@@ -141,25 +135,4 @@ func basenamePosix(p string) string {
 		return p[idx+1:]
 	}
 	return p
-}
-
-func validateEndpointType(t string) (EndpointType, error) {
-	switch EndpointType(t) {
-	case EndpointLocal, EndpointSFTP, EndpointDocker, EndpointK8sPod:
-		return EndpointType(t), nil
-	default:
-		return "", fmt.Errorf("unsupported endpoint type: %s", t)
-	}
-}
-
-// ValidateEndpointTypeForHTTP parses and validates an endpoint type string.
-// Kept exported for handlers.
-func ValidateEndpointTypeForHTTP(raw string) (EndpointType, error) {
-	t := EndpointType(strings.TrimSpace(raw))
-	switch t {
-	case EndpointLocal, EndpointSFTP, EndpointDocker, EndpointK8sPod:
-		return t, nil
-	default:
-		return "", fmt.Errorf("invalid endpoint type: %s", raw)
-	}
 }

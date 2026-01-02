@@ -6,7 +6,7 @@ export interface APIResponse<T> {
   data?: T;
 }
 
-export type AssetType = "folder" | "local" | "ssh";
+export type AssetType = "folder" | "local" | "ssh" | "docker_host";
 
 export interface Asset {
   id: string;

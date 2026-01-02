@@ -55,23 +55,7 @@ func (h *TaskHandler) EnqueueTransfer(c *gin.Context) {
 		return
 	}
 
-	// minimal validation
-	if req.From.Type == "sftp" && req.From.AssetID == "" {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from.asset_id is required for sftp"})
-		return
-	}
-	if req.To.Type == "sftp" && req.To.AssetID == "" {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "to.asset_id is required for sftp"})
-		return
-	}
-	if req.From.Type == "docker" && req.From.AssetID == "" {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from.asset_id is required for docker"})
-		return
-	}
-	if req.To.Type == "docker" && req.To.AssetID == "" {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "to.asset_id is required for docker"})
-		return
-	}
+	// minimal validation - path is always required
 	if req.From.Path == "" || req.To.Path == "" {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from.path and to.path are required"})
 		return
