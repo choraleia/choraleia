@@ -32,22 +32,76 @@ type Asset struct {
 
 // SSHConfig SSH connection config
 type SSHConfig struct {
+	// Connection
 	Host                 string `json:"host"`
 	Port                 int    `json:"port"`
 	Username             string `json:"username"`
 	Password             string `json:"password,omitempty"`
-	PrivateKey           string `json:"private_key,omitempty"`
 	PrivateKeyPath       string `json:"private_key_path,omitempty"`
-	PrivateKeyPassphrase string `json:"private_key_passphrase,omitempty"` // added passphrase field
-	ProxyJump            string `json:"proxy_jump,omitempty"`
+	PrivateKeyPassphrase string `json:"private_key_passphrase,omitempty"`
+	PrivateKey           string `json:"private_key,omitempty"`
 	Timeout              int    `json:"timeout"`
+	KeepaliveInterval    int    `json:"keepalive_interval,omitempty"`
+
+	// Connection mode: direct, proxy, jump
+	ConnectionMode string `json:"connection_mode,omitempty"` // "direct", "proxy", "jump"
+
+	// Proxy settings (for proxy mode)
+	ProxyType     string `json:"proxy_type,omitempty"` // "http", "socks4", "socks5"
+	ProxyHost     string `json:"proxy_host,omitempty"`
+	ProxyPort     int    `json:"proxy_port,omitempty"`
+	ProxyUsername string `json:"proxy_username,omitempty"`
+	ProxyPassword string `json:"proxy_password,omitempty"`
+
+	// Jump host settings (for jump mode)
+	JumpAssetID string `json:"jump_asset_id,omitempty"`
+
+	// Legacy field for backward compatibility
+	ProxyJump string `json:"proxy_jump,omitempty"`
+
+	// Advanced connection
+	Compression     bool `json:"compression,omitempty"`
+	AgentForwarding bool `json:"agent_forwarding,omitempty"`
+	StrictHostKey   bool `json:"strict_host_key,omitempty"`
+
+	// Tunnels / Port forwarding
+	Tunnels []SSHTunnel `json:"tunnels,omitempty"`
+
+	// Terminal settings
+	Shell          string            `json:"shell,omitempty"`
+	TermType       string            `json:"term_type,omitempty"`
+	StartupCommand string            `json:"startup_command,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+
+	// Terminal preferences
+	Scrollback   int  `json:"scrollback,omitempty"`
+	FontSize     int  `json:"font_size,omitempty"`
+	CopyOnSelect bool `json:"copy_on_select,omitempty"`
+	Bell         bool `json:"bell,omitempty"`
+}
+
+// SSHTunnel represents a port forwarding tunnel configuration
+type SSHTunnel struct {
+	Type       string `json:"type"`                 // "local", "remote", "dynamic"
+	LocalHost  string `json:"local_host,omitempty"` // default "127.0.0.1"
+	LocalPort  int    `json:"local_port"`
+	RemoteHost string `json:"remote_host,omitempty"` // not used for dynamic
+	RemotePort int    `json:"remote_port,omitempty"` // not used for dynamic
 }
 
 // LocalConfig local terminal config
 type LocalConfig struct {
-	Shell       string            `json:"shell"`
-	WorkingDir  string            `json:"working_dir"`
-	Environment map[string]string `json:"environment"`
+	Shell          string            `json:"shell"`
+	WorkingDir     string            `json:"working_dir,omitempty"`
+	StartupCommand string            `json:"startup_command,omitempty"`
+	Environment    map[string]string `json:"environment,omitempty"`
+	InheritEnv     bool              `json:"inherit_env,omitempty"`
+	TermType       string            `json:"term_type,omitempty"`
+	LoginShell     bool              `json:"login_shell,omitempty"`
+	Scrollback     int               `json:"scrollback,omitempty"`
+	FontSize       int               `json:"font_size,omitempty"`
+	CopyOnSelect   bool              `json:"copy_on_select,omitempty"`
+	Bell           bool              `json:"bell,omitempty"`
 }
 
 // VNCConfig VNC connection config
@@ -90,8 +144,13 @@ type DockerHostConfig struct {
 	ConnectionType    string `json:"connection_type"`        // "local" or "ssh"
 	SSHAssetID        string `json:"ssh_asset_id,omitempty"` // SSH asset ID for remote docker
 	Shell             string `json:"shell,omitempty"`        // default shell for exec
-	ShowAllContainers bool   `json:"show_all_containers"`    // include stopped containers
 	User              string `json:"user,omitempty"`         // default user for exec
+	ShowAllContainers bool   `json:"show_all_containers"`    // include stopped containers
+	TermType          string `json:"term_type,omitempty"`
+	Scrollback        int    `json:"scrollback,omitempty"`
+	FontSize          int    `json:"font_size,omitempty"`
+	CopyOnSelect      bool   `json:"copy_on_select,omitempty"`
+	Bell              bool   `json:"bell,omitempty"`
 }
 
 // ContainerInfo represents a Docker container's basic info

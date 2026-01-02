@@ -29,7 +29,8 @@ import { SimpleTreeView, TreeItem as XTreeItem } from "@mui/x-tree-view";
 import AddIcon from "@mui/icons-material/Add";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import FolderIcon from "@mui/icons-material/Folder";
-import DesktopMacIcon from "@mui/icons-material/DesktopMac";
+import ComputerIcon from "@mui/icons-material/Computer";
+import LanIcon from "@mui/icons-material/Lan";
 import ViewInArIcon from "@mui/icons-material/ViewInAr";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
@@ -41,6 +42,7 @@ import ClearIcon from "@mui/icons-material/Clear";
 import Popover from "@mui/material/Popover";
 import AddHostDialog from "./AddHostDialog.tsx";
 import { getApiUrl } from "../../api/base";
+
 
 // Remove old API_BASE constant and use getApiUrl("/api/...") at call sites.
 
@@ -476,11 +478,12 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
           if (a.type === "folder") {
             icon = <FolderIcon fontSize="small" />;
           } else if (a.type === "ssh") {
-            icon = <DesktopMacIcon fontSize="small" color="primary" />;
+            icon = <LanIcon fontSize="small" />;
           } else if (a.type === "docker_host") {
-            icon = <ViewInArIcon fontSize="small" sx={{ color: "#0db7ed" }} />;
+            icon = <ViewInArIcon fontSize="small" />;
           } else {
-            icon = <DesktopMacIcon fontSize="small" color="success" />;
+            // local
+            icon = <ComputerIcon fontSize="small" />;
           }
 
           const commonProps = {
@@ -522,7 +525,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
                         mr: 0.5,
                       }}
                     />
-                    <ViewInArIcon fontSize="small" sx={{ color: "#0db7ed", fontSize: 16 }} />
+                    <ViewInArIcon fontSize="small" sx={{ fontSize: 16 }} />
                   </Box>
                 ),
                 containerInfo: c,
