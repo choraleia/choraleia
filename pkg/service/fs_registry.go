@@ -93,6 +93,7 @@ func (r *FSRegistry) Open(ctx context.Context, spec EndpointSpec) (fsimpl.FileSy
 		// Get docker host config
 		var user string
 		var executor fsimpl.DockerExecutor
+		var streamer fsimpl.DockerTarStreamer
 
 		if strings.TrimSpace(spec.AssetID) != "" {
 			asset, err := r.assetSvc.GetAsset(spec.AssetID)
@@ -116,16 +117,19 @@ func (r *FSRegistry) Open(ctx context.Context, spec EndpointSpec) (fsimpl.FileSy
 					return nil, fmt.Errorf("failed to get SSH connection for remote docker: %w", err)
 				}
 				executor = fsimpl.NewRemoteDockerCLI(sshClient)
+				streamer = fsimpl.NewRemoteDockerTarStreamer(sshClient)
 			} else {
 				// Local Docker
 				executor = fsimpl.NewLocalDockerCLI()
+				streamer = fsimpl.NewLocalDockerTarStreamer()
 			}
 		} else {
 			// No asset ID, assume local docker
 			executor = fsimpl.NewLocalDockerCLI()
+			streamer = fsimpl.NewLocalDockerTarStreamer()
 		}
 
-		return fsimpl.NewDockerContainerFileSystem(executor, spec.ContainerID, user)
+		return fsimpl.NewDockerTarFileSystem(executor, streamer, spec.ContainerID, user)
 
 	case EndpointK8sPod:
 		return nil, fmt.Errorf("k8s pod filesystem is not implemented yet")

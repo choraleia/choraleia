@@ -1305,25 +1305,25 @@ export default function FileManagerPanel(props: Props) {
       const srcEntries = (payload.fromPane === "local" ? localEntries : remoteEntries) as any[];
       const byPath = new Map<string, any>(srcEntries.map((x) => [x.path, x]));
 
-      for (const p of payload.paths) {
-        const entMeta = byPath.get(p);
-        const isDir = !!entMeta?.is_dir;
-        const req: TransferRequest =
-          direction === "remote-to-local"
-            ? {
-                from: { asset_id: assetId, container_id: containerId || undefined, path: p },
-                to: { path: dstDir },
-                recursive: isDir,
-                overwrite: true,
-              }
-            : {
-                from: { path: p },
-                to: { asset_id: assetId, container_id: containerId || undefined, path: dstDir },
-                recursive: isDir,
-                overwrite: true,
-              };
-        await tasksEnqueueTransfer(req);
-      }
+      // Check if any dragged item is a directory (for recursive flag)
+      const hasDir = payload.paths.some((p: string) => byPath.get(p)?.is_dir);
+
+      // Single request with all dragged paths
+      const req: TransferRequest =
+        direction === "remote-to-local"
+          ? {
+              from: { asset_id: assetId, container_id: containerId || undefined, paths: payload.paths },
+              to: { path: dstDir },
+              recursive: hasDir,
+              overwrite: true,
+            }
+          : {
+              from: { paths: payload.paths },
+              to: { asset_id: assetId, container_id: containerId || undefined, path: dstDir },
+              recursive: hasDir,
+              overwrite: true,
+            };
+      await tasksEnqueueTransfer(req);
     },
     [
       assetId,
@@ -1391,30 +1391,29 @@ export default function FileManagerPanel(props: Props) {
       const srcEntries = (fromPane === "local" ? localEntries : remoteEntries) as any[];
       const byPath = new Map<string, any>(srcEntries.map((x) => [String(x.path), x]));
 
+      // Check if any selected item is a directory (for recursive flag)
+      const hasDir = selection.some((p) => byPath.get(String(p))?.is_dir);
+
       setTransferBusy(true);
       setTransferError(null);
       try {
-        for (const p of selection) {
-          const entMeta = byPath.get(String(p));
-          const isDir = !!entMeta?.is_dir;
+        // Single request with all selected paths
+        const req: TransferRequest =
+          direction === "remote-to-local"
+            ? {
+                from: { asset_id: assetId, container_id: containerId || undefined, paths: selection.map(String) },
+                to: { path: dstDir },
+                recursive: hasDir,
+                overwrite: true,
+              }
+            : {
+                from: { paths: selection.map(String) },
+                to: { asset_id: assetId, container_id: containerId || undefined, path: dstDir },
+                recursive: hasDir,
+                overwrite: true,
+              };
 
-          const req: TransferRequest =
-            direction === "remote-to-local"
-              ? {
-                  from: { asset_id: assetId, container_id: containerId || undefined, path: String(p) },
-                  to: { path: dstDir },
-                  recursive: isDir,
-                  overwrite: true,
-                }
-              : {
-                  from: { path: String(p) },
-                  to: { asset_id: assetId, container_id: containerId || undefined, path: dstDir },
-                  recursive: isDir,
-                  overwrite: true,
-                };
-
-          await tasksEnqueueTransfer(req);
-        }
+        await tasksEnqueueTransfer(req);
 
         // Refresh the destination pane.
         if (toPane === "local") await refreshLocal();

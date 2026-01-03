@@ -55,9 +55,9 @@ func (h *TaskHandler) EnqueueTransfer(c *gin.Context) {
 		return
 	}
 
-	// minimal validation - path is always required
-	if req.From.Path == "" || req.To.Path == "" {
-		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from.path and to.path are required"})
+	// minimal validation - paths and destination are required
+	if len(req.From.Paths) == 0 || req.To.Path == "" {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from.paths and to.path are required"})
 		return
 	}
 

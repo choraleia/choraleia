@@ -144,12 +144,38 @@ export default function TaskCenter(props: Props) {
   };
 
   const renderTaskRow = (t: Task) => {
-    const progress = t.progress?.total
+    const hasTotal = t.progress?.total && t.progress.total > 0;
+    const progress = hasTotal
       ? Math.round((t.progress.done / t.progress.total) * 100)
       : 0;
-    const progressText = t.progress?.total
-      ? `${t.progress.done}/${t.progress.total} ${t.progress.unit || ""}`
-      : "";
+
+    // Format bytes for display
+    const formatBytes = (bytes: number): string => {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    };
+
+    const getProgressText = (): string => {
+      if (hasTotal) {
+        return `${t.progress.done}/${t.progress.total} ${t.progress.unit || ""}`;
+      }
+      // When total is unknown, show done value
+      if (t.progress?.done > 0) {
+        if (t.progress.unit === "bytes") {
+          return formatBytes(t.progress.done);
+        }
+        return `${t.progress.done} ${t.progress.unit || ""}`;
+      }
+      // Show note if available
+      if (t.progress?.note) {
+        return t.progress.note;
+      }
+      return "";
+    };
+
+    const progressText = getProgressText();
 
     return (
       <TableRow key={t.id} hover>
@@ -169,7 +195,7 @@ export default function TaskCenter(props: Props) {
           />
         </TableCell>
         <TableCell sx={{ minWidth: 120 }}>
-          {t.status === "running" && t.progress?.total ? (
+          {t.status === "running" && hasTotal ? (
             <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
               <LinearProgress
                 variant="determinate"
@@ -180,9 +206,19 @@ export default function TaskCenter(props: Props) {
                 {progress}%
               </Typography>
             </Box>
+          ) : t.status === "running" && t.progress?.done > 0 ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <LinearProgress
+                variant="indeterminate"
+                sx={{ flex: 1, height: 6, borderRadius: 1 }}
+              />
+              <Typography variant="caption" sx={{ fontSize: 10, minWidth: 50 }} noWrap>
+                {progressText}
+              </Typography>
+            </Box>
           ) : (
-            <Typography variant="caption" color="text.secondary">
-              {progressText || "-"}
+            <Typography variant="caption" color="text.secondary" noWrap>
+              {progressText || (t.status === "running" ? "Starting..." : "-")}
             </Typography>
           )}
         </TableCell>

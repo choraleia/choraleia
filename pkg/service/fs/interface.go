@@ -70,3 +70,16 @@ type FileSystem interface {
 type PwdProvider interface {
 	Pwd(ctx context.Context) (string, error)
 }
+
+// TarStreamer is an optional interface for filesystems that support
+// bulk directory transfer using tar streams. This is more efficient
+// than transferring files one by one.
+type TarStreamer interface {
+	// TarDirectory creates a tar stream of a directory (recursive).
+	// The tar contains files with paths relative to the directory.
+	TarDirectory(ctx context.Context, dirPath string) (io.ReadCloser, error)
+
+	// UntarToDirectory extracts a tar stream to a directory.
+	// Files in the tar are extracted relative to the target directory.
+	UntarToDirectory(ctx context.Context, dirPath string) (io.WriteCloser, error)
+}

@@ -301,7 +301,7 @@ func (s *TaskService) ResourceVersion() uint64 {
 // It optionally replays buffered events strictly newer than sinceRV.
 // If the caller needs a full consistent view, it should call ListSnapshot first.
 func (s *TaskService) SubscribeWatch(sinceRV uint64) (ch <-chan TaskWatchEvent, cancel func(), startRV uint64, ok bool) {
-	c := make(chan TaskWatchEvent, 256)
+	c := make(chan TaskWatchEvent, 1024)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
