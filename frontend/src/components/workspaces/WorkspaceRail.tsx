@@ -5,15 +5,18 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import PauseIcon from "@mui/icons-material/Pause";
 import LaptopIcon from "@mui/icons-material/Laptop";
 import CloudIcon from "@mui/icons-material/Cloud";
+import ViewInArIcon from "@mui/icons-material/ViewInAr";
 import SyncIcon from "@mui/icons-material/Sync";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import { Workspace, useWorkspaces } from "../../state/workspaces";
 
-const statusIcon = (workspace: Workspace) => {
-  switch (workspace.location) {
-    case "Local":
+const runtimeIcon = (workspace: Workspace) => {
+  switch (workspace.runtime.type) {
+    case "local":
       return <LaptopIcon fontSize="small" />;
-    case "Remote":
+    case "docker-local":
+      return <ViewInArIcon fontSize="small" />;
+    case "docker-remote":
     default:
       return <CloudIcon fontSize="small" />;
   }
@@ -83,7 +86,7 @@ const WorkspaceRail: React.FC = () => {
                     .slice(0, 2)
                     .toUpperCase()}
                 </Box>
-                {statusIcon(workspace)}
+                {runtimeIcon(workspace)}
                 <Typography variant="caption" noWrap>
                   {workspace.name}
                 </Typography>

@@ -48,6 +48,24 @@ func (s *FSService) Mkdir(ctx context.Context, spec EndpointSpec, path string) e
 	return fs.MkdirAll(ctx, path)
 }
 
+// Touch creates an empty file. If the file already exists, it updates the modification time.
+func (s *FSService) Touch(ctx context.Context, spec EndpointSpec, path string) error {
+	fs, err := s.openFS(ctx, spec)
+	if err != nil {
+		return err
+	}
+	// Check if filesystem implements Toucher interface
+	if toucher, ok := fs.(fsimpl.Toucher); ok {
+		return toucher.Touch(ctx, path)
+	}
+	// Fallback: create empty file by opening for write and closing immediately
+	w, err := fs.OpenWrite(ctx, path, fsimpl.OpenWriteOptions{Overwrite: false})
+	if err != nil {
+		return err
+	}
+	return w.Close()
+}
+
 // Remove deletes a file or directory.
 func (s *FSService) Remove(ctx context.Context, spec EndpointSpec, path string) error {
 	fs, err := s.openFS(ctx, spec)
@@ -115,6 +133,74 @@ func (s *FSService) Pwd(ctx context.Context, spec EndpointSpec) (string, error) 
 		return "/", nil
 	}
 	return pfs.Pwd(ctx)
+}
+
+// ReadFile reads the entire file content as a string.
+func (s *FSService) ReadFile(ctx context.Context, spec EndpointSpec, path string) (string, error) {
+	fs, err := s.openFS(ctx, spec)
+	if err != nil {
+		return "", err
+	}
+	r, err := fs.OpenRead(ctx, path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = r.Close() }()
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// WriteFile writes string content to a file, creating it if it doesn't exist.
+func (s *FSService) WriteFile(ctx context.Context, spec EndpointSpec, path string, content string) error {
+	fs, err := s.openFS(ctx, spec)
+	if err != nil {
+		return err
+	}
+	w, err := fs.OpenWrite(ctx, path, fsimpl.OpenWriteOptions{Overwrite: true})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = w.Close() }()
+	_, err = w.Write([]byte(content))
+	return err
+}
+
+// Copy copies a file or directory from src to dst.
+func (s *FSService) Copy(ctx context.Context, spec EndpointSpec, src, dst string) error {
+	fs, err := s.openFS(ctx, spec)
+	if err != nil {
+		return err
+	}
+	// Check if the filesystem supports copy operation
+	if copier, ok := fs.(fsimpl.Copier); ok {
+		return copier.Copy(ctx, src, dst)
+	}
+	// Fallback: read and write for files
+	stat, err := fs.Stat(ctx, src)
+	if err != nil {
+		return err
+	}
+	if stat.IsDir {
+		return fsimpl.ErrNotSupported
+	}
+	r, err := fs.OpenRead(ctx, src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+
+	w, err := fs.OpenWrite(ctx, dst, fsimpl.OpenWriteOptions{Overwrite: false})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = w.Close() }()
+
+	_, err = io.Copy(w, r)
+	return err
 }
 
 func basenamePosix(p string) string {

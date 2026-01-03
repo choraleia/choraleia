@@ -69,7 +69,7 @@ export default defineConfig(() => {
     'http://127.0.0.1:8088'
 
   return {
-    plugins: [react()],
+    plugins: [react(), monacoAssetsPlugin()],
     css: {
       postcss: {
         plugins: [

@@ -4,21 +4,27 @@ import {
   AccordionDetails,
   AccordionSummary,
   Box,
-  Button,
   IconButton,
   List,
   ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Menu,
   MenuItem,
   Select,
   Stack,
+  TextField,
   Tooltip,
   Typography,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import PlaylistAddIcon from "@mui/icons-material/PlaylistAdd";
+import AddIcon from "@mui/icons-material/Add";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import FolderIcon from "@mui/icons-material/Folder";
@@ -26,6 +32,9 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import DnsOutlinedIcon from "@mui/icons-material/DnsOutlined";
 import HubOutlinedIcon from "@mui/icons-material/HubOutlined";
+import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
+import CreateNewFolderOutlinedIcon from "@mui/icons-material/CreateNewFolderOutlined";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import { FileNode, useWorkspaces } from "../../state/workspaces";
 
 const renderTree = (
@@ -41,7 +50,7 @@ const renderTree = (
         <React.Fragment key={node.id}>
           <ListItem disablePadding sx={{ pl: paddingLeft / 8 }}>
             <ListItemButton
-              onClick={() =>
+              onDoubleClick={() =>
                 node.type === "file" ? openFile(node.path) : undefined
               }
               dense
@@ -56,7 +65,7 @@ const renderTree = (
     }
     return (
       <ListItem disablePadding key={node.id} sx={{ pl: paddingLeft / 8 }}>
-        <ListItemButton onClick={() => openFile(node.path)} dense>
+        <ListItemButton onDoubleClick={() => openFile(node.path)} dense>
           <ListItemIcon sx={{ minWidth: 32 }}>{icon}</ListItemIcon>
           <ListItemText primary={node.name} primaryTypographyProps={{ noWrap: true }} />
         </ListItemButton>
@@ -74,14 +83,60 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
     activeWorkspaceId,
     activeWorkspace,
     selectWorkspace,
-    activeSpace,
+    activeRoom,
+    fileTree,
+    fileTreeLoading,
+    refreshFileTree,
     openFileFromTree,
     openTerminalTab,
+    addFileNode,
   } = useWorkspaces();
   const [assetsExpanded, setAssetsExpanded] = useState(true);
   const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
+
+  // Add file/folder menu state
+  const [addMenuAnchor, setAddMenuAnchor] = useState<null | HTMLElement>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createType, setCreateType] = useState<"file" | "folder">("file");
+  const [newItemName, setNewItemName] = useState("");
+
   const toggleWorkspace = (_event: React.SyntheticEvent, isExpanded: boolean) => setWorkspaceExpanded(isExpanded);
   const toggleAssets = (_event: React.SyntheticEvent, isExpanded: boolean) => setAssetsExpanded(isExpanded);
+
+  const handleAddClick = (event: React.MouseEvent<HTMLElement>) => {
+    event.stopPropagation();
+    setAddMenuAnchor(event.currentTarget);
+  };
+
+  const handleAddMenuClose = () => {
+    setAddMenuAnchor(null);
+  };
+
+  const handleCreateItem = (type: "file" | "folder") => {
+    setCreateType(type);
+    setNewItemName("");
+    setCreateDialogOpen(true);
+    handleAddMenuClose();
+  };
+
+  const handleCreateConfirm = () => {
+    if (newItemName.trim()) {
+      addFileNode(null, createType, newItemName.trim());
+      setCreateDialogOpen(false);
+      setNewItemName("");
+    }
+  };
+
+  const handleTerminalClick = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    openTerminalTab();
+  };
+
+  const handleRefreshClick = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    refreshFileTree();
+  };
+
   const assetItems = useMemo(
     () => {
       if (!activeWorkspace) return [];
@@ -101,7 +156,7 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
     },
     [activeWorkspace],
   );
-  if (!activeSpace) return null;
+  if (!activeRoom) return null;
   return (
     <Box
       width={300}
@@ -154,12 +209,17 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
           <Typography variant="subtitle2">Workspace</Typography>
           <Box flex={1} />
           <Tooltip title="Add file or folder">
-            <IconButton size="small" sx={{ p: 0.5 }}>
-              <PlaylistAddIcon fontSize="inherit" />
+            <IconButton size="small" sx={{ p: 0.5 }} onClick={handleAddClick}>
+              <AddIcon fontSize="inherit" />
             </IconButton>
           </Tooltip>
-          <Tooltip title="Open terminal tab">
-            <IconButton size="small" sx={{ p: 0.5 }} onClick={openTerminalTab}>
+          <Tooltip title="Refresh">
+            <IconButton size="small" sx={{ p: 0.5 }} onClick={handleRefreshClick}>
+              <RefreshIcon fontSize="inherit" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Open terminal">
+            <IconButton size="small" sx={{ p: 0.5 }} onClick={handleTerminalClick}>
               <TerminalIcon fontSize="inherit" />
             </IconButton>
           </Tooltip>
@@ -181,7 +241,23 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
               "& .MuiListItemButton-root": { py: 0.25 },
             }}
           >
-            {renderTree(activeSpace.fileTree, openFileFromTree)}
+            {fileTreeLoading ? (
+              <ListItem>
+                <ListItemText
+                  primary="Loading files..."
+                  primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
+                />
+              </ListItem>
+            ) : fileTree.length > 0 ? (
+              renderTree(fileTree, openFileFromTree)
+            ) : (
+              <ListItem>
+                <ListItemText
+                  primary="No files"
+                  primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
+                />
+              </ListItem>
+            )}
           </List>
         </AccordionDetails>
       </Accordion>
@@ -248,6 +324,57 @@ const RightInspector: React.FC<RightInspectorProps> = ({ onBackToOverview }) => 
           )}
         </AccordionDetails>
       </Accordion>
+
+      {/* Add file/folder menu */}
+      <Menu
+        anchorEl={addMenuAnchor}
+        open={Boolean(addMenuAnchor)}
+        onClose={handleAddMenuClose}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+        transformOrigin={{ vertical: "top", horizontal: "left" }}
+      >
+        <MenuItem onClick={() => handleCreateItem("file")}>
+          <ListItemIcon>
+            <InsertDriveFileOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primaryTypographyProps={{ variant: "body2" }}>New File</ListItemText>
+        </MenuItem>
+        <MenuItem onClick={() => handleCreateItem("folder")}>
+          <ListItemIcon>
+            <CreateNewFolderOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primaryTypographyProps={{ variant: "body2" }}>New Folder</ListItemText>
+        </MenuItem>
+      </Menu>
+
+      {/* Create file/folder dialog */}
+      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>
+          {createType === "file" ? "New File" : "New Folder"}
+        </DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            placeholder={createType === "file" ? "filename.txt" : "folder-name"}
+            value={newItemName}
+            onChange={(e) => setNewItemName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                handleCreateConfirm();
+              }
+            }}
+            sx={{ mt: 1 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateDialogOpen(false)} size="small">Cancel</Button>
+          <Button onClick={handleCreateConfirm} variant="contained" size="small" disabled={!newItemName.trim()}>
+            Create
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

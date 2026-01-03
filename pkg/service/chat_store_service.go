@@ -2,12 +2,13 @@ package service
 
 import (
 	"encoding/json"
-	"github.com/choraleia/choraleia/pkg/api"
-	"github.com/choraleia/choraleia/pkg/utils"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/choraleia/choraleia/pkg/api"
+	"github.com/choraleia/choraleia/pkg/utils"
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/glebarez/sqlite"
@@ -93,6 +94,11 @@ func (Message) TableName() string {
 type ChatStoreService struct {
 	db     *gorm.DB
 	logger *slog.Logger
+}
+
+// DB returns the database instance for use by other services
+func (cs *ChatStoreService) DB() *gorm.DB {
+	return cs.db
 }
 
 // NewChatStore create chat service

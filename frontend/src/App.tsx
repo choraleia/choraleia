@@ -24,6 +24,7 @@ import Models from "./components/settings/models";
 import AssetPage, { AssetPageHandle } from "./components/assets/AssetPage";
 import SpaceLayout from "./components/workspaces/SpaceLayout";
 import SpacesView from "./components/workspaces/SpacesView";
+import SettingsPage from "./components/settings/SettingsPage.tsx";
 
 // Initialize global event subscriptions (must be before component render)
 initAssetEvents(queryClient);

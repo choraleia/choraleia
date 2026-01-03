@@ -148,3 +148,106 @@ export async function fsRename(params: {
   if (json.code !== 0) throw new Error(json.message || "FS rename failed");
 }
 
+/**
+ * Create an empty file (touch)
+ */
+export async function fsTouch(params: {
+  assetId?: string;
+  containerId?: string;
+  path: string;
+}): Promise<void> {
+  const url = new URL(getApiUrl("/api/fs/touch"));
+  if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
+  url.searchParams.set("path", params.path);
+
+  const res = await fetch(url.toString(), { method: "POST" });
+  if (!res.ok) throw new Error(`FS touch failed: ${res.status}`);
+
+  const json = (await res.json()) as APIResponse<unknown>;
+  if (json.code !== 0) throw new Error(json.message || "FS touch failed");
+}
+
+/**
+ * Read file content as text
+ */
+export async function fsRead(params: {
+  assetId?: string;
+  containerId?: string;
+  path: string;
+}): Promise<string> {
+  const url = new URL(getApiUrl("/api/fs/read"));
+  if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
+  url.searchParams.set("path", params.path);
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`FS read failed: ${res.status}`);
+
+  const json = (await res.json()) as APIResponse<{ content: string }>;
+  if (json.code !== 0) throw new Error(json.message || "FS read failed");
+  return json.data?.content || "";
+}
+
+/**
+ * Write content to a file
+ */
+export async function fsWrite(params: {
+  assetId?: string;
+  containerId?: string;
+  path: string;
+  content: string;
+}): Promise<void> {
+  const url = new URL(getApiUrl("/api/fs/write"));
+  if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
+
+  const res = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path: params.path, content: params.content }),
+  });
+  if (!res.ok) throw new Error(`FS write failed: ${res.status}`);
+
+  const json = (await res.json()) as APIResponse<unknown>;
+  if (json.code !== 0) throw new Error(json.message || "FS write failed");
+}
+
+/**
+ * Copy file or directory
+ */
+export async function fsCopy(params: {
+  assetId?: string;
+  containerId?: string;
+  from: string;
+  to: string;
+}): Promise<void> {
+  const url = new URL(getApiUrl("/api/fs/copy"));
+  if (params.assetId) url.searchParams.set("asset_id", params.assetId);
+  if (params.containerId) url.searchParams.set("container_id", params.containerId);
+  url.searchParams.set("from", params.from);
+  url.searchParams.set("to", params.to);
+
+  const res = await fetch(url.toString(), { method: "POST" });
+  if (!res.ok) throw new Error(`FS copy failed: ${res.status}`);
+
+  const json = (await res.json()) as APIResponse<unknown>;
+  if (json.code !== 0) throw new Error(json.message || "FS copy failed");
+}
+
+/**
+ * Check if path exists
+ */
+export async function fsExists(params: {
+  assetId?: string;
+  containerId?: string;
+  path: string;
+}): Promise<boolean> {
+  try {
+    await fsStat(params);
+    return true;
+  } catch {
+    return false;
+  }
+}
+

@@ -1,9 +1,11 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useState, useMemo } from "react";
 import { Box } from "@mui/material";
+import RoomTopBar from "./SpaceTopBar";
 import SpaceTabs from "./SpaceTabs";
 import SpaceCanvas from "./SpaceCanvas";
 import RightInspector from "./RightInspector";
 import SpaceConfigDialog from "./SpaceConfigDialog";
+import RoomManagerDialog from "./RoomManagerDialog";
 import { useWorkspaces, SpaceConfigInput } from "../../state/workspaces";
 
 interface SpaceLayoutProps {
@@ -21,6 +23,12 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
   const [isConfigOpen, setConfigOpen] = useState(false);
   const openConfig = useCallback(() => setConfigOpen(true), []);
   const closeConfig = useCallback(() => setConfigOpen(false), []);
+
+  // Room manager dialog state
+  const [isRoomManagerOpen, setRoomManagerOpen] = useState(false);
+  const openRoomManager = useCallback(() => setRoomManagerOpen(true), []);
+  const closeRoomManager = useCallback(() => setRoomManagerOpen(false), []);
+
   const handleSaveConfig = useCallback(
     (config: SpaceConfigInput) => {
       if (activeWorkspace) {
@@ -30,10 +38,23 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
     },
     [activeWorkspace, updateWorkspaceConfig, closeConfig],
   );
+
+  const dialogInitialConfig = useMemo(() => {
+    if (!activeWorkspace) return null;
+    return {
+      name: activeWorkspace.name,
+      description: activeWorkspace.description,
+      runtime: activeWorkspace.runtime,
+      assets: activeWorkspace.assets,
+      tools: activeWorkspace.tools,
+    };
+  }, [activeWorkspace]);
+
   return (
     <Box display="flex" height="100%">
       <RightInspector onBackToOverview={onBackToOverview} />
       <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+        <RoomTopBar onOpenManager={openRoomManager} />
         <SpaceTabs />
         <SpaceCanvas
           chatHistoryOpen={isChatHistoryOpen}
@@ -41,20 +62,18 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
           onToggleChatHistory={toggleChatHistory}
         />
       </Box>
-      {activeWorkspace && (
+      {dialogInitialConfig && (
         <SpaceConfigDialog
           open={isConfigOpen}
           onClose={closeConfig}
-          initialConfig={{
-            name: activeWorkspace.name,
-            description: activeWorkspace.description,
-            workDirectories: activeWorkspace.workDirectories,
-            assets: activeWorkspace.assets,
-            tools: activeWorkspace.tools,
-          }}
+          initialConfig={dialogInitialConfig}
           onSave={handleSaveConfig}
         />
       )}
+      <RoomManagerDialog
+        open={isRoomManagerOpen}
+        onClose={closeRoomManager}
+      />
     </Box>
   );
 };

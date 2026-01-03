@@ -280,10 +280,14 @@ func (s *Server) SetupRoutes() {
 		fsGroup.GET("/ls", fsHandler.List)
 		fsGroup.GET("/stat", fsHandler.Stat)
 		fsGroup.GET("/download", fsHandler.Download)
+		fsGroup.GET("/read", fsHandler.Read)
 		fsGroup.POST("/upload", fsHandler.Upload)
+		fsGroup.POST("/write", fsHandler.Write)
 		fsGroup.POST("/mkdir", fsHandler.Mkdir)
+		fsGroup.POST("/touch", fsHandler.Touch)
 		fsGroup.POST("/rm", fsHandler.Remove)
 		fsGroup.POST("/rename", fsHandler.Rename)
+		fsGroup.POST("/copy", fsHandler.Copy)
 		fsGroup.GET("/pwd", fsHandler.Pwd)
 	}
 
@@ -308,6 +312,15 @@ func (s *Server) SetupRoutes() {
 		tunnelsGroup.POST("/:id/start", tunnelHandler.Start)
 		tunnelsGroup.POST("/:id/stop", tunnelHandler.Stop)
 	}
+
+	// Workspace API routes
+	// /api/workspaces
+	workspaceService := service.NewWorkspaceService(chatStoreService.DB())
+	if err := workspaceService.AutoMigrate(); err != nil {
+		s.logger.Error("Failed to migrate workspace tables", "error", err)
+	}
+	workspaceHandler := handler.NewWorkspaceHandler(workspaceService)
+	workspaceHandler.RegisterRoutes(apiGroup)
 
 	// Event notification WebSocket
 	// /api/events/ws

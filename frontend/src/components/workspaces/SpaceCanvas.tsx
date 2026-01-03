@@ -236,7 +236,7 @@ const ActiveToolsDialog: React.FC<{ tools: ToolSession[]; open: boolean; onClose
 
 const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseChatHistory, onToggleChatHistory }) => {
   const {
-    activeSpace,
+    activeRoom,
     sendChatMessage,
     setActiveChatSession,
     createChatSession,
@@ -246,8 +246,8 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
   const [draft, setDraft] = React.useState("");
   const [agentMode, setAgentMode] = useState("agents");
   const [modelChoice, setModelChoice] = useState("gpt-4o-mini");
-  if (!activeSpace) return null;
-  const pane = activeSpace.panes.find((p) => p.id === activeSpace.activePaneId);
+  if (!activeRoom) return null;
+  const pane = activeRoom.panes.find((p) => p.id === activeRoom.activePaneId);
   if (!pane || pane.kind !== "chat" || !pane.sessions?.length) return null;
   const activeSession =
     pane.sessions.find((s) => s.id === pane.activeSessionId) || pane.sessions[0];
@@ -259,7 +259,7 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
       <Box display="flex" flexDirection="column" flex={1} px={3} py={2} gap={2}>
         <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "flex-start", sm: "center" }} gap={1} flexWrap="wrap">
           <Typography variant="subtitle2" color="text.secondary">
-            Chat inside {activeSpace.name} remembers context like files and terminals.
+            Chat inside {activeRoom.name} remembers context like files and terminals.
           </Typography>
           <Box flex={1} />
           <Stack direction="row" spacing={1} alignItems="center">
@@ -416,37 +416,16 @@ const ChatPaneView: React.FC<ChatPaneViewProps> = ({ chatHistoryOpen, onCloseCha
 };
 
 const EditorPaneView: React.FC<{ pane: EditorPane }> = ({ pane }) => {
-  const { updateEditorContent, saveEditorContent, closePane } = useWorkspaces();
+  const { updateEditorContent } = useWorkspaces();
   return (
-    <Box flex={1} display="flex" flexDirection="column" px={3} py={2} gap={1.5}>
-      <Stack direction="row" alignItems="center" gap={1}>
-        <Typography variant="h6">{pane.title}</Typography>
-        {pane.dirty && <Chip label="Unsaved" color="warning" size="small" />}
-        <Box flex={1} />
-        <Button
-          variant="outlined"
-          startIcon={<SaveIcon />}
-          onClick={() => saveEditorContent(pane.id)}
-          disabled={!pane.dirty}
-        >
-          Save
-        </Button>
-        <IconButton onClick={() => closePane(pane.id)}>
-          <CloseIcon />
-        </IconButton>
-      </Stack>
-      <Typography variant="caption" color="text.secondary">
-        {pane.filePath}
-      </Typography>
-      <Box flex={1} minHeight={0} border={(theme) => `1px solid ${theme.palette.divider}`} borderRadius={1} overflow="hidden">
-        <Editor
-          height="100%"
-          defaultLanguage={pane.filePath.endsWith(".md") ? "markdown" : undefined}
-          value={pane.content}
-          onChange={(value) => updateEditorContent(pane.id, value ?? "")}
-          options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}
-        />
-      </Box>
+    <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+      <Editor
+        height="100%"
+        defaultLanguage={pane.filePath.endsWith(".md") ? "markdown" : undefined}
+        value={pane.content}
+        onChange={(value) => updateEditorContent(pane.id, value ?? "")}
+        options={{ minimap: { enabled: false }, fontSize: 13, scrollBeyondLastLine: false }}
+      />
     </Box>
   );
 };
@@ -483,9 +462,9 @@ interface SpaceCanvasProps {
 }
 
 const SpaceCanvas: React.FC<SpaceCanvasProps> = ({ chatHistoryOpen, onCloseChatHistory, onToggleChatHistory }) => {
-  const { activeSpace } = useWorkspaces();
-  if (!activeSpace) return <EmptyState />;
-  const pane = activeSpace.panes.find((p) => p.id === activeSpace.activePaneId);
+  const { activeRoom } = useWorkspaces();
+  if (!activeRoom) return <EmptyState />;
+  const pane = activeRoom.panes.find((p) => p.id === activeRoom.activePaneId);
   if (!pane) return <EmptyState />;
   if (pane.kind === "chat")
     return (
