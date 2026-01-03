@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
 	"io"
@@ -157,6 +158,224 @@ func (l *LocalFileSystem) Pwd(ctx context.Context) (string, error) {
 	}
 	return filepath.ToSlash(h), nil
 }
+
+// TarDirectory creates a tar stream of a directory (recursive).
+func (l *LocalFileSystem) TarDirectory(ctx context.Context, dirPath string) (io.ReadCloser, error) {
+	abs, err := normalizeHostAbs(dirPath)
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+
+	go func() {
+		tw := tar.NewWriter(pw)
+		err := filepath.Walk(abs, func(file string, fi os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Check context cancellation
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+
+			// Get relative path
+			rel, err := filepath.Rel(abs, file)
+			if err != nil {
+				return err
+			}
+			if rel == "." {
+				return nil // Skip root directory itself
+			}
+			rel = filepath.ToSlash(rel)
+
+			// Create tar header
+			header, err := tar.FileInfoHeader(fi, "")
+			if err != nil {
+				return err
+			}
+			header.Name = rel
+
+			// Handle symlinks
+			if fi.Mode()&os.ModeSymlink != 0 {
+				link, err := os.Readlink(file)
+				if err != nil {
+					return err
+				}
+				header.Linkname = link
+			}
+
+			if err := tw.WriteHeader(header); err != nil {
+				return err
+			}
+
+			// Write file content if it's a regular file
+			if fi.Mode().IsRegular() {
+				f, err := os.Open(file)
+				if err != nil {
+					return err
+				}
+				_, err = io.Copy(tw, f)
+				f.Close()
+				if err != nil {
+					return err
+				}
+			}
+
+			return nil
+		})
+
+		tw.Close()
+		if err != nil {
+			pw.CloseWithError(err)
+		} else {
+			pw.Close()
+		}
+	}()
+
+	return pr, nil
+}
+
+// UntarToDirectory extracts a tar stream to a directory.
+func (l *LocalFileSystem) UntarToDirectory(ctx context.Context, dirPath string) (io.WriteCloser, error) {
+	abs, err := normalizeHostAbs(dirPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+	errCh := make(chan error, 1)
+
+	go func() {
+		tr := tar.NewReader(pr)
+		var extractErr error
+
+		for {
+			header, err := tr.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				// Could be due to pipe being closed, or actual tar error
+				extractErr = fmt.Errorf("tar read error: %w", err)
+				break
+			}
+
+			// Check context cancellation
+			select {
+			case <-ctx.Done():
+				extractErr = ctx.Err()
+			default:
+			}
+			if extractErr != nil {
+				break
+			}
+
+			// Skip empty names
+			if header.Name == "" || header.Name == "." {
+				continue
+			}
+
+			// Construct target path
+			target := filepath.Join(abs, filepath.FromSlash(header.Name))
+
+			// Security check: ensure target is within abs
+			cleanTarget := filepath.Clean(target)
+			cleanAbs := filepath.Clean(abs)
+			if cleanTarget != cleanAbs && !strings.HasPrefix(cleanTarget, cleanAbs+string(filepath.Separator)) {
+				continue // Skip files that would escape the target directory
+			}
+
+			switch header.Typeflag {
+			case tar.TypeDir:
+				if err := os.MkdirAll(target, 0o755); err != nil {
+					extractErr = fmt.Errorf("mkdir %s: %w", header.Name, err)
+				}
+			case tar.TypeReg, tar.TypeRegA:
+				if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+					extractErr = fmt.Errorf("mkdir parent for %s: %w", header.Name, err)
+					break
+				}
+				f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+				if err != nil {
+					extractErr = fmt.Errorf("create file %s: %w", header.Name, err)
+					break
+				}
+				if _, err := io.Copy(f, tr); err != nil {
+					f.Close()
+					extractErr = fmt.Errorf("write file %s: %w", header.Name, err)
+					break
+				}
+				f.Close()
+			case tar.TypeSymlink:
+				if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+					continue
+				}
+				os.Remove(target)
+				_ = os.Symlink(header.Linkname, target)
+			case tar.TypeLink:
+				if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+					continue
+				}
+				os.Remove(target)
+				linkTarget := filepath.Join(abs, filepath.FromSlash(header.Linkname))
+				_ = os.Link(linkTarget, target)
+			default:
+				// Skip other types (char devices, block devices, fifos, etc.)
+				continue
+			}
+
+			if extractErr != nil {
+				break
+			}
+		}
+
+		// Send error (or nil) to channel
+		errCh <- extractErr
+
+		// Drain any remaining data to prevent blocking the writer
+		// This is important when we exit early due to error
+		io.Copy(io.Discard, pr)
+		pr.Close()
+	}()
+
+	// Return a wrapper that captures the extraction error on close
+	return &untarWriter{pw: pw, errCh: errCh}, nil
+}
+
+// untarWriter wraps pipe writer and captures extraction error
+type untarWriter struct {
+	pw    *io.PipeWriter
+	errCh chan error
+}
+
+func (w *untarWriter) Write(p []byte) (int, error) {
+	return w.pw.Write(p)
+}
+
+func (w *untarWriter) Close() error {
+	// Close the pipe writer to signal EOF to reader
+	w.pw.Close()
+
+	// Wait for extraction to complete and get any error
+	if err := <-w.errCh; err != nil {
+		return err
+	}
+	return nil
+}
+
+// Verify interface implementations
+var _ FileSystem = (*LocalFileSystem)(nil)
+var _ PwdProvider = (*LocalFileSystem)(nil)
+var _ TarStreamer = (*LocalFileSystem)(nil)
 
 func normalizeHostAbs(p string) (string, error) {
 	p = strings.TrimSpace(p)

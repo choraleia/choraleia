@@ -40,8 +40,15 @@ export type TransferEndpoint = {
   path: string;
 };
 
+// Source endpoint with multiple paths support
+export type TransferSourceEndpoint = {
+  asset_id?: string;
+  container_id?: string;
+  paths: string[]; // multiple source paths
+};
+
 export type TransferRequest = {
-  from: TransferEndpoint;
+  from: TransferSourceEndpoint;
   to: TransferEndpoint;
   recursive: boolean;
   overwrite: boolean;
