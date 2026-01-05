@@ -319,9 +319,15 @@ func (s *Server) SetupRoutes() {
 	if err := workspaceService.AutoMigrate(); err != nil {
 		s.logger.Error("Failed to migrate workspace tables", "error", err)
 	}
-	// Inject DockerService and SSHPool into WorkspaceService's RuntimeManager
+	// Inject DockerService, SSHPool, and RuntimeStatusService into WorkspaceService's RuntimeManager
 	workspaceService.SetDockerService(dockerService)
 	workspaceService.SetSSHPool(fsRegistry.SSHPool())
+	// Create and inject RuntimeStatusService for runtime monitoring
+	runtimeStatusService := service.NewRuntimeStatusService(dockerService, assetService)
+	runtimeStatusService.StartMonitoring(30 * time.Second) // Monitor every 30 seconds
+	workspaceService.SetRuntimeStatusService(runtimeStatusService)
+	// Setup callbacks for runtime events (e.g., save container ID when created)
+	workspaceService.SetupRuntimeCallbacks()
 	workspaceHandler := handler.NewWorkspaceHandler(workspaceService)
 	workspaceHandler.RegisterRoutes(apiGroup)
 

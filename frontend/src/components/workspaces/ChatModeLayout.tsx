@@ -214,7 +214,9 @@ const ChatModeLayout: React.FC = () => {
                         }
                         containerId={
                           activeWorkspace.runtime.type !== "local"
-                            ? activeWorkspace.runtime.containerId
+                            ? (activeWorkspace.runtime.containerName ||
+                               activeWorkspace.runtime.containerId ||
+                               (activeWorkspace.runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined))
                             : undefined
                         }
                         isActive={activePreviewTabId === tab.id}

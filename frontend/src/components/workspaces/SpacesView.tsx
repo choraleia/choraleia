@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import {
   Box,
   Button,
@@ -21,6 +21,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogActions,
+  CircularProgress,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
@@ -45,6 +46,198 @@ const statusColors: Record<string, "success" | "default" | "warning" | "error"> 
   starting: "warning",
   stopping: "warning",
   error: "error",
+};
+
+// Detailed status response type
+type RuntimeDetailedStatus = {
+  workspace_id: string;
+  phase: string;
+  message?: string;
+  progress?: number;
+  error?: string;
+  container_id?: string;
+  container_name?: string;
+  container_status?: string;
+  container_image?: string;
+  started_at?: string;
+  last_updated_at: string;
+  resources?: {
+    cpu_percent: number;
+    memory_percent: number;
+    memory_usage: number;
+    memory_limit: number;
+  };
+};
+
+type WorkspaceStatusResponse = {
+  status: string;
+  runtime?: {
+    type: string;
+    container_id?: string;
+    container_status?: string;
+    uptime?: number;
+  };
+  runtime_detailed?: RuntimeDetailedStatus;
+};
+
+// Status chip with tooltip that shows detailed status on hover
+const StatusChipWithTooltip: React.FC<{ workspace: Workspace }> = ({ workspace }) => {
+  const [detailedStatus, setDetailedStatus] = useState<WorkspaceStatusResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchDetailedStatus = useCallback(async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/workspaces/${workspace.id}/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setDetailedStatus(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch workspace status:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [workspace.id, loading]);
+
+  const handleMouseEnter = () => {
+    fetchDetailedStatus();
+  };
+
+  const formatUptime = (seconds?: number) => {
+    if (!seconds) return "N/A";
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${mins}m`;
+  };
+
+  const formatBytes = (bytes?: number) => {
+    if (!bytes) return "N/A";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const detailed = detailedStatus?.runtime_detailed;
+  const runtime = detailedStatus?.runtime;
+
+  const tooltipContent = (
+    <Box sx={{ p: 0.5, minWidth: 180, maxWidth: 320 }}>
+      {loading && !detailedStatus ? (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <CircularProgress size={12} />
+          <Typography variant="caption">Loading...</Typography>
+        </Box>
+      ) : (
+        <>
+          <Typography variant="caption" fontWeight={600} display="block" gutterBottom>
+            Status: {workspace.status}
+          </Typography>
+
+          {detailed?.phase && detailed.phase !== "idle" && (
+            <Typography variant="caption" display="block">
+              Phase: {detailed.phase}
+            </Typography>
+          )}
+
+          {detailed?.message && (
+            <Typography variant="caption" display="block">
+              {detailed.message}
+            </Typography>
+          )}
+
+          {detailed?.progress !== undefined && detailed.progress > 0 && detailed.progress < 100 && (
+            <Typography variant="caption" display="block">
+              Progress: {detailed.progress}%
+            </Typography>
+          )}
+
+          {detailed?.error && (
+            <Typography
+              variant="caption"
+              display="block"
+              sx={{
+                wordBreak: "break-word",
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              Error: {detailed.error}
+            </Typography>
+          )}
+
+          {(detailed?.container_name || runtime?.container_id) && (
+            <Typography variant="caption" display="block" sx={{ fontFamily: "monospace" }}>
+              Container: {detailed?.container_name || runtime?.container_id?.slice(0, 12)}
+            </Typography>
+          )}
+
+          {runtime?.uptime !== undefined && runtime.uptime > 0 && (
+            <Typography variant="caption" display="block">
+              Uptime: {formatUptime(runtime.uptime)}
+            </Typography>
+          )}
+
+          {detailed?.resources && (
+            <>
+              <Divider sx={{ my: 0.5 }} />
+              <Typography variant="caption" display="block">
+                CPU: {detailed.resources.cpu_percent.toFixed(1)}%
+              </Typography>
+              <Typography variant="caption" display="block">
+                Memory: {formatBytes(detailed.resources.memory_usage)} / {formatBytes(detailed.resources.memory_limit)} ({detailed.resources.memory_percent.toFixed(1)}%)
+              </Typography>
+            </>
+          )}
+
+          {detailed?.last_updated_at && (
+            <Typography variant="caption" display="block" color="text.disabled" sx={{ mt: 0.5, fontSize: "0.6rem" }}>
+              Updated: {new Date(detailed.last_updated_at).toLocaleTimeString()}
+            </Typography>
+          )}
+
+          {!detailed && !runtime && !loading && (
+            <Typography variant="caption">
+              No detailed status available
+            </Typography>
+          )}
+        </>
+      )}
+    </Box>
+  );
+
+  return (
+    <Tooltip
+      title={tooltipContent}
+      arrow
+      placement="top"
+      onOpen={handleMouseEnter}
+      slotProps={{
+        tooltip: {
+          sx: {
+            bgcolor: "background.paper",
+            color: "text.primary",
+            boxShadow: 2,
+            "& .MuiTooltip-arrow": {
+              color: "background.paper",
+            },
+            maxWidth: 360,
+          },
+        },
+      }}
+    >
+      <Chip
+        size="small"
+        label={workspace.status}
+        color={statusColors[workspace.status] || "default"}
+        sx={{ height: 20, fontSize: "0.7rem" }}
+        onClick={(e) => e.stopPropagation()}
+      />
+    </Tooltip>
+  );
 };
 
 // Check if workspace has start/stop capability (only Docker workspaces)
@@ -258,12 +451,7 @@ const SpacesView: React.FC<{ explorerVisible?: boolean }> = ({ explorerVisible =
                           {workspace.name}
                         </Typography>
                         {canStartStop(workspace.runtime.type) && (
-                          <Chip
-                            size="small"
-                            label={workspace.status}
-                            color={statusColors[workspace.status] || "default"}
-                            sx={{ height: 20, fontSize: "0.7rem" }}
-                          />
+                          <StatusChipWithTooltip workspace={workspace} />
                         )}
                       </Stack>
 

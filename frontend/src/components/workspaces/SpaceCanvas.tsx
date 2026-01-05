@@ -458,16 +458,18 @@ const ToolPaneView: React.FC<{ pane: ToolPane; isActive?: boolean }> = ({ pane, 
         </Box>
       );
     } else if ((runtime.type === "docker-local" || runtime.type === "docker-remote") && runtime.dockerAssetId) {
-      // Docker terminal - use docker asset with container ID
-      const containerId = runtime.containerId || runtime.newContainer?.name;
-      if (containerId) {
+      // Docker terminal - use docker asset with container name/ID
+      // Priority: containerName (actual running name) > containerId > generated default name
+      const containerIdentifier = runtime.containerName || runtime.containerId ||
+        (runtime.containerMode === "new" ? `choraleia-${activeWorkspace?.name}` : undefined);
+      if (containerIdentifier) {
         return (
           <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
             <TerminalComponent
-              hostInfo={{ ip: "docker", port: 0, name: `Docker: ${containerId}` }}
+              hostInfo={{ ip: "docker", port: 0, name: `Docker: ${containerIdentifier}` }}
               tabKey={terminalKey}
               assetId={runtime.dockerAssetId}
-              containerId={containerId}
+              containerId={containerIdentifier}
               isActive={isActive}
             />
           </Box>

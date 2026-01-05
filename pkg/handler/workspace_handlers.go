@@ -234,7 +234,7 @@ func (h *WorkspaceHandler) Clone(c *gin.Context) {
 // @Summary Start workspace
 // @Tags workspaces
 // @Param id path string true "Workspace ID"
-// @Success 200 {object} map[string]string
+// @Success 202 {object} map[string]string
 // @Router /workspaces/{id}/start [post]
 func (h *WorkspaceHandler) Start(c *gin.Context) {
 	id := c.Param("id")
@@ -248,7 +248,11 @@ func (h *WorkspaceHandler) Start(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "running", "message": "Workspace started successfully"})
+	// Return 202 Accepted - operation is async
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":  "starting",
+		"message": "Workspace start initiated. Query /status for progress.",
+	})
 }
 
 // Stop stops a workspace
@@ -256,7 +260,7 @@ func (h *WorkspaceHandler) Start(c *gin.Context) {
 // @Tags workspaces
 // @Param id path string true "Workspace ID"
 // @Param force query bool false "Force stop"
-// @Success 200 {object} map[string]string
+// @Success 202 {object} map[string]string
 // @Router /workspaces/{id}/stop [post]
 func (h *WorkspaceHandler) Stop(c *gin.Context) {
 	id := c.Param("id")
@@ -271,7 +275,11 @@ func (h *WorkspaceHandler) Stop(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"status": "stopped", "message": "Workspace stopped successfully"})
+	// Return 202 Accepted - operation is async
+	c.JSON(http.StatusAccepted, gin.H{
+		"status":  "stopping",
+		"message": "Workspace stop initiated. Query /status for progress.",
+	})
 }
 
 // GetStatus gets workspace status

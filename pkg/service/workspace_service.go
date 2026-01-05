@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"regexp"
 	"time"
 
@@ -65,6 +64,26 @@ func (s *WorkspaceService) SetDockerService(ds *DockerService) {
 // SetSSHPool sets the SSH pool on the runtime manager
 func (s *WorkspaceService) SetSSHPool(pool *fs.SSHPool) {
 	s.runtimeManager.SetSSHPool(pool)
+}
+
+// SetRuntimeStatusService sets the runtime status service on the runtime manager
+func (s *WorkspaceService) SetRuntimeStatusService(ss *RuntimeStatusService) {
+	s.runtimeManager.SetStatusService(ss)
+}
+
+// SetupRuntimeCallbacks sets up callbacks for the runtime manager
+func (s *WorkspaceService) SetupRuntimeCallbacks() {
+	s.runtimeManager.SetOnContainerCreated(s.updateRuntimeContainerInfo)
+}
+
+// updateRuntimeContainerInfo updates the container ID and name in the database
+func (s *WorkspaceService) updateRuntimeContainerInfo(workspaceID, containerID, containerName string) error {
+	return s.db.Model(&models.WorkspaceRuntime{}).
+		Where("workspace_id = ?", workspaceID).
+		Updates(map[string]interface{}{
+			"container_id":   containerID,
+			"container_name": containerName,
+		}).Error
 }
 
 // AutoMigrate creates database tables
@@ -471,10 +490,14 @@ func (s *WorkspaceService) Clone(ctx context.Context, id string, newName string)
 	return s.Create(ctx, req)
 }
 
-// Start starts a workspace
+// Start starts a workspace asynchronously
 func (s *WorkspaceService) Start(ctx context.Context, id string) error {
-	workspace, err := s.Get(ctx, id)
-	if err != nil {
+	// Quick status check without preloading relations
+	var workspace models.Workspace
+	if err := s.db.Select("id", "status").First(&workspace, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrWorkspaceNotFound
+		}
 		return err
 	}
 
@@ -482,18 +505,39 @@ func (s *WorkspaceService) Start(ctx context.Context, id string) error {
 		return nil // Already running
 	}
 
-	// Update status to starting
-	if err := s.db.Model(workspace).Update("status", models.WorkspaceStatusStarting).Error; err != nil {
+	if workspace.Status == models.WorkspaceStatusStarting {
+		return nil // Already starting
+	}
+
+	// Update status to starting immediately
+	if err := s.db.Model(&models.Workspace{}).Where("id = ?", id).Update("status", models.WorkspaceStatusStarting).Error; err != nil {
 		return err
+	}
+
+	// Start runtime asynchronously in background (fetch full workspace data in goroutine)
+	go s.startRuntimeAsync(id)
+
+	return nil
+}
+
+// startRuntimeAsync performs the actual runtime start in background
+func (s *WorkspaceService) startRuntimeAsync(workspaceID string) {
+	ctx := context.Background()
+
+	// Fetch full workspace data in background
+	workspace, err := s.Get(ctx, workspaceID)
+	if err != nil {
+		s.db.Model(&models.Workspace{}).Where("id = ?", workspaceID).Update("status", models.WorkspaceStatusError)
+		return
 	}
 
 	// Start runtime (container if Docker)
 	if s.runtimeManager != nil && workspace.Runtime != nil {
 		if err := s.runtimeManager.StartRuntime(ctx, workspace); err != nil {
-			s.db.Model(workspace).Updates(map[string]interface{}{
+			s.db.Model(&models.Workspace{}).Where("id = ?", workspaceID).Updates(map[string]interface{}{
 				"status": models.WorkspaceStatusError,
 			})
-			return fmt.Errorf("failed to start runtime: %w", err)
+			return
 		}
 	}
 
@@ -501,18 +545,21 @@ func (s *WorkspaceService) Start(ctx context.Context, id string) error {
 	if s.toolManager != nil {
 		if err := s.toolManager.InitializeTools(ctx, workspace); err != nil {
 			// Log error but don't fail
-			fmt.Printf("warning: failed to initialize tools: %v\n", err)
 		}
 	}
 
 	// Update status to running
-	return s.db.Model(workspace).Update("status", models.WorkspaceStatusRunning).Error
+	s.db.Model(&models.Workspace{}).Where("id = ?", workspaceID).Update("status", models.WorkspaceStatusRunning)
 }
 
-// Stop stops a workspace
+// Stop stops a workspace asynchronously
 func (s *WorkspaceService) Stop(ctx context.Context, id string, force bool) error {
-	workspace, err := s.Get(ctx, id)
-	if err != nil {
+	// Quick status check without preloading relations
+	var workspace models.Workspace
+	if err := s.db.Select("id", "status").First(&workspace, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrWorkspaceNotFound
+		}
 		return err
 	}
 
@@ -520,15 +567,36 @@ func (s *WorkspaceService) Stop(ctx context.Context, id string, force bool) erro
 		return nil // Already stopped
 	}
 
-	// Update status to stopping
-	if err := s.db.Model(workspace).Update("status", models.WorkspaceStatusStopping).Error; err != nil {
+	if workspace.Status == models.WorkspaceStatusStopping {
+		return nil // Already stopping
+	}
+
+	// Update status to stopping immediately
+	if err := s.db.Model(&models.Workspace{}).Where("id = ?", id).Update("status", models.WorkspaceStatusStopping).Error; err != nil {
 		return err
+	}
+
+	// Stop runtime asynchronously in background (fetch full workspace data in goroutine)
+	go s.stopRuntimeAsync(id, force)
+
+	return nil
+}
+
+// stopRuntimeAsync performs the actual runtime stop in background
+func (s *WorkspaceService) stopRuntimeAsync(workspaceID string, force bool) {
+	ctx := context.Background()
+
+	// Fetch full workspace data in background
+	workspace, err := s.Get(ctx, workspaceID)
+	if err != nil {
+		s.db.Model(&models.Workspace{}).Where("id = ?", workspaceID).Update("status", models.WorkspaceStatusError)
+		return
 	}
 
 	// Shutdown tools
 	if s.toolManager != nil {
 		if err := s.toolManager.ShutdownTools(ctx, workspace.ID); err != nil {
-			fmt.Printf("warning: failed to shutdown tools: %v\n", err)
+			// Log error but continue
 		}
 	}
 
@@ -536,14 +604,14 @@ func (s *WorkspaceService) Stop(ctx context.Context, id string, force bool) erro
 	if s.runtimeManager != nil && workspace.Runtime != nil {
 		if err := s.runtimeManager.StopRuntime(ctx, workspace); err != nil {
 			if !force {
-				s.db.Model(workspace).Update("status", models.WorkspaceStatusError)
-				return fmt.Errorf("failed to stop runtime: %w", err)
+				s.db.Model(&models.Workspace{}).Where("id = ?", workspaceID).Update("status", models.WorkspaceStatusError)
+				return
 			}
 		}
 	}
 
 	// Update status to stopped
-	return s.db.Model(workspace).Update("status", models.WorkspaceStatusStopped).Error
+	s.db.Model(&models.Workspace{}).Where("id = ?", workspaceID).Update("status", models.WorkspaceStatusStopped)
 }
 
 // GetStatus gets the status of a workspace
@@ -562,6 +630,12 @@ func (s *WorkspaceService) GetStatus(ctx context.Context, id string) (*Workspace
 		runtimeStatus, err := s.runtimeManager.GetRuntimeStatus(ctx, workspace)
 		if err == nil {
 			response.Runtime = runtimeStatus
+		}
+
+		// Get detailed status if available
+		detailedStatus := s.runtimeManager.GetDetailedStatus(workspace.ID)
+		if detailedStatus != nil {
+			response.RuntimeDetailed = detailedStatus
 		}
 	}
 
@@ -583,9 +657,10 @@ func (s *WorkspaceService) GetStatus(ctx context.Context, id string) (*Workspace
 
 // WorkspaceStatusResponse represents the status response
 type WorkspaceStatusResponse struct {
-	Status  models.WorkspaceStatus `json:"status"`
-	Runtime *RuntimeStatusInfo     `json:"runtime,omitempty"`
-	Tools   []ToolStatusInfo       `json:"tools,omitempty"`
+	Status          models.WorkspaceStatus `json:"status"`
+	Runtime         *RuntimeStatusInfo     `json:"runtime,omitempty"`
+	RuntimeDetailed *RuntimeDetailedStatus `json:"runtime_detailed,omitempty"`
+	Tools           []ToolStatusInfo       `json:"tools,omitempty"`
 }
 
 // RuntimeStatusInfo represents runtime status info

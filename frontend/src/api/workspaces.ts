@@ -10,6 +10,7 @@ export interface WorkspaceRuntime {
   docker_asset_id?: string;
   container_mode?: "existing" | "new";
   container_id?: string;
+  container_name?: string;
   new_container_image?: string;
   new_container_name?: string;
   work_dir_path: string;

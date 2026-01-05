@@ -76,8 +76,10 @@ export type WorkspaceRuntime = {
   dockerAssetId?: string;
   // Container mode: use existing or create new
   containerMode?: ContainerMode;
-  // Container ID or name (for existing container)
+  // Container ID (for existing container or after new container is created)
   containerId?: string;
+  // Container name (for existing container or after new container is created)
+  containerName?: string;
   // New container configuration (when containerMode is "new")
   newContainer?: NewContainerConfig;
   // Work directory
@@ -889,6 +891,7 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
       dockerAssetId: ws.runtime.docker_asset_id,
       containerMode: ws.runtime.container_mode,
       containerId: ws.runtime.container_id,
+      containerName: ws.runtime.container_name,
       newContainer: ws.runtime.new_container_image ? {
         image: ws.runtime.new_container_image,
         name: ws.runtime.new_container_name,
@@ -1101,7 +1104,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
     try {
       let assetId: string | undefined;
-      let containerId: string | undefined;
+      let containerIdentifier: string | undefined;
       let basePath = runtime.workDir.path;
 
       // Determine how to access files based on runtime type
@@ -1112,14 +1115,16 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           basePath = basePath.replace("~", "/home");  // Backend should handle this properly
         }
       } else if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
-        // Docker container - need assetId and containerId
+        // Docker container - need assetId and container identifier
         assetId = runtime.dockerAssetId;
-        containerId = runtime.containerId;
+        // Use containerName if available, otherwise containerId, otherwise generate default name
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${workspace.name}` : undefined);
         basePath = runtime.workDir.containerPath || runtime.workDir.path || "/";
       }
 
       // Load file tree (max 2 levels deep)
-      const tree = await loadDirectoryTree(basePath, 0, 2, assetId, containerId);
+      const tree = await loadDirectoryTree(basePath, 0, 2, assetId, containerIdentifier);
 
       // Update workspace with file tree
       setWorkspaces((prev) =>
@@ -1288,6 +1293,44 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     [],
   );
 
+  // Poll workspace status after async operations
+  const pollWorkspaceStatus = useCallback(
+    (workspaceId: string, maxAttempts = 60, interval = 2000) => {
+      let attempts = 0;
+      const poll = async () => {
+        attempts++;
+        try {
+          const res = await fetch(`/api/workspaces/${workspaceId}/status`);
+          if (!res.ok) return;
+
+          const data = await res.json();
+          const newStatus = data.status as "running" | "stopped" | "starting" | "stopping" | "error";
+
+          setWorkspaces((prev) =>
+            prev.map((ws) =>
+              ws.id === workspaceId ? { ...ws, status: newStatus } : ws
+            )
+          );
+
+          // Keep polling if still in transition state
+          if ((newStatus === "starting" || newStatus === "stopping") && attempts < maxAttempts) {
+            setTimeout(poll, interval);
+          }
+        } catch (err) {
+          console.error("Failed to poll workspace status:", err);
+          // Retry on error if we haven't exceeded max attempts
+          if (attempts < maxAttempts) {
+            setTimeout(poll, interval);
+          }
+        }
+      };
+
+      // Start polling after a short delay
+      setTimeout(poll, 1000);
+    },
+    [],
+  );
+
   const startWorkspace = useCallback(
     async (workspaceId: string) => {
       // Update status to starting
@@ -1304,11 +1347,9 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           throw new Error(err.error || 'Failed to start workspace');
         }
 
-        setWorkspaces((prev) =>
-          prev.map((ws) =>
-            ws.id === workspaceId ? { ...ws, status: "running" as const } : ws
-          )
-        );
+        // API returns 202 Accepted - operation is async
+        // Keep status as "starting" and poll for actual status
+        pollWorkspaceStatus(workspaceId);
       } catch (error) {
         setWorkspaces((prev) =>
           prev.map((ws) =>
@@ -1318,7 +1359,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         throw error;
       }
     },
-    [],
+    [pollWorkspaceStatus],
   );
 
   const stopWorkspace = useCallback(
@@ -1337,11 +1378,9 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           throw new Error(err.error || 'Failed to stop workspace');
         }
 
-        setWorkspaces((prev) =>
-          prev.map((ws) =>
-            ws.id === workspaceId ? { ...ws, status: "stopped" as const } : ws
-          )
-        );
+        // API returns 202 Accepted - operation is async
+        // Keep status as "stopping" and poll for actual status
+        pollWorkspaceStatus(workspaceId);
       } catch (error) {
         setWorkspaces((prev) =>
           prev.map((ws) =>
@@ -1351,7 +1390,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         throw error;
       }
     },
-    [],
+    [pollWorkspaceStatus],
   );
 
   const renameWorkspace = useCallback(
@@ -1593,18 +1632,20 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
       // Determine API params based on runtime type
       let assetId: string | undefined;
-      let containerId: string | undefined;
+      let containerIdentifier: string | undefined;
 
       if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
         assetId = runtime.dockerAssetId;
-        containerId = runtime.containerId;
+        // Use containerName if available, otherwise containerId, otherwise generate default name
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
       }
 
       try {
         // Read file content from backend
         const content = await fsRead({
           assetId,
-          containerId,
+          containerId: containerIdentifier,
           path: filePath,
         });
 
@@ -1661,18 +1702,20 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
       // Determine API params based on runtime type
       let assetId: string | undefined;
-      let containerId: string | undefined;
+      let containerIdentifier: string | undefined;
 
       if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
         assetId = runtime.dockerAssetId;
-        containerId = runtime.containerId;
+        // Use containerName if available, otherwise containerId, otherwise generate default name
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
       }
 
       try {
         // Call backend API to save file
         await fsWrite({
           assetId,
-          containerId,
+          containerId: containerIdentifier,
           path: pane.filePath,
           content: pane.content,
         });
@@ -1831,19 +1874,21 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
       // Determine API params based on runtime type
       let assetId: string | undefined;
-      let containerId: string | undefined;
+      let containerIdentifier: string | undefined;
 
       if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
         assetId = runtime.dockerAssetId;
-        containerId = runtime.containerId;
+        // Use containerName if available, otherwise containerId, otherwise generate default name
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
       }
 
       try {
         // Call backend API to create file or folder
         if (type === "folder") {
-          await fsMkdir({ assetId, containerId, path: nodePath });
+          await fsMkdir({ assetId, containerId: containerIdentifier, path: nodePath });
         } else {
-          await fsTouch({ assetId, containerId, path: nodePath });
+          await fsTouch({ assetId, containerId: containerIdentifier, path: nodePath });
         }
 
         // Create local node for UI
@@ -1879,16 +1924,18 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
       // Determine API params based on runtime type
       let assetId: string | undefined;
-      let containerId: string | undefined;
+      let containerIdentifier: string | undefined;
 
       if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
         assetId = runtime.dockerAssetId;
-        containerId = runtime.containerId;
+        // Use containerName if available, otherwise containerId, otherwise generate default name
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
       }
 
       try {
         // Call backend API to delete
-        await fsRemove({ assetId, containerId, path: targetPath });
+        await fsRemove({ assetId, containerId: containerIdentifier, path: targetPath });
 
         // Close any editor panes that have this file open
         mutateRoom(activeRoom?.id, (space) => {
@@ -1933,16 +1980,18 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
       // Determine API params based on runtime type
       let assetId: string | undefined;
-      let containerId: string | undefined;
+      let containerIdentifier: string | undefined;
 
       if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
         assetId = runtime.dockerAssetId;
-        containerId = runtime.containerId;
+        // Use containerName if available, otherwise containerId, otherwise generate default name
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
       }
 
       try {
         // Call backend API to rename
-        await fsRename({ assetId, containerId, from: targetPath, to: newPath });
+        await fsRename({ assetId, containerId: containerIdentifier, from: targetPath, to: newPath });
 
         // Update editor panes that have this file/folder open
         mutateRoom(activeRoom?.id, (space) => {
