@@ -10,7 +10,6 @@ import {
   initTunnelEvents,
   initFileManagerEvents,
 } from "./stores";
-import SettingsPage from "./components/settings/SettingsPage";
 import TaskCenter from "./components/TaskCenter";
 import TunnelManager from "./components/TunnelManager";
 
@@ -38,6 +37,7 @@ const AppContent: React.FC = () => {
     "assets",
   );
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
+  const [spacesExplorerVisible, setSpacesExplorerVisible] = useState<boolean>(true);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [tunnelManagerOpen, setTunnelManagerOpen] = useState(false);
   // Preserve app statistics
@@ -106,6 +106,15 @@ const AppContent: React.FC = () => {
     setAssetsVisible((prev) => !prev);
   };
 
+  const handleSpacesClick = () => {
+    if (selectedMenu !== "spaces") {
+      setSelectedMenu("spaces");
+      setSpacesExplorerVisible(true);
+      return;
+    }
+    setSpacesExplorerVisible((prev) => !prev);
+  };
+
   return (
     <Box display="flex" flexDirection="column" height="100%">
       <Box display="flex" flex={1} minHeight={0}>
@@ -143,21 +152,23 @@ const AppContent: React.FC = () => {
             <DesktopMacIcon fontSize="small" />
           </IconButton>
           <IconButton
-            onClick={() => setSelectedMenu("spaces")}
-            sx={(theme) => ({
-              color:
-                selectedMenu === "spaces"
-                  ? theme.palette.primary.main
+            onClick={handleSpacesClick}
+            sx={(theme) => {
+              const spacesActive = selectedMenu === "spaces";
+              const shown = spacesActive && spacesExplorerVisible;
+              return {
+                color: spacesActive
+                  ? shown
+                    ? theme.palette.primary.main
+                    : theme.palette.text.secondary
                   : theme.palette.text.secondary,
-              bgcolor:
-                selectedMenu === "spaces"
-                  ? theme.palette.action.selected
-                  : "transparent",
-              borderRadius: 6,
-              transition: "background-color 0.15s, color 0.15s",
-              "&:hover": { bgcolor: theme.palette.action.hover },
-            })}
-            title="Spaces"
+                bgcolor: shown ? theme.palette.action.selected : "transparent",
+                borderRadius: 6,
+                transition: "background-color 0.15s, color 0.15s",
+                "&:hover": { bgcolor: theme.palette.action.hover },
+              };
+            }}
+            title={spacesExplorerVisible && selectedMenu === "spaces" ? "Hide Explorer" : "Show Spaces"}
           >
             <SpaceDashboardIcon fontSize="small" />
           </IconButton>
@@ -200,7 +211,7 @@ const AppContent: React.FC = () => {
               flexDirection="column"
               minHeight={0}
             >
-              <SpacesView />
+              <SpacesView explorerVisible={spacesExplorerVisible} />
             </Box>
             <Box
               display={selectedMenu === "settings" ? "flex" : "none"}

@@ -10,6 +10,7 @@ import {
   ListItemText,
   Divider,
   CircularProgress,
+  Select,
 } from "@mui/material";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import AddIcon from "@mui/icons-material/Add";
@@ -18,14 +19,16 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import { useWorkspaces } from "../../state/workspaces";
 
 interface RoomTopBarProps {
   onOpenManager: () => void;
+  onBackToOverview?: () => void;
 }
 
-const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager }) => {
-  const { activeWorkspace, selectRoom, createRoom, deleteRoom, duplicateRoom, startWorkspace, stopWorkspace } = useWorkspaces();
+const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview }) => {
+  const { workspaces, activeWorkspaceId, activeWorkspace, selectWorkspace, selectRoom, createRoom, deleteRoom, duplicateRoom, startWorkspace, stopWorkspace } = useWorkspaces();
 
   // Context menu state
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
@@ -79,16 +82,50 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager }) => {
 
   return (
     <Box
-      px={1.5}
-      py={0.75}
       display="flex"
       alignItems="center"
       gap={0.5}
-      sx={(theme) => ({
-        borderBottom: `1px solid ${theme.palette.divider}`,
-        minHeight: 40,
-      })}
     >
+      {/* Back button */}
+      {onBackToOverview && (
+        <Tooltip title="Back to Workspaces">
+          <IconButton size="small" onClick={onBackToOverview}>
+            <ArrowBackIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      )}
+
+
+      {/* Workspace switcher */}
+      <Select
+        size="small"
+        value={activeWorkspaceId || ""}
+        onChange={(event) => selectWorkspace(event.target.value as string)}
+        sx={{
+          minWidth: 120,
+          maxWidth: 180,
+          "& .MuiSelect-select": {
+            py: 0.5,
+            fontSize: 13,
+          },
+        }}
+      >
+        {workspaces.map((workspace) => (
+          <MenuItem key={workspace.id} value={workspace.id} sx={{ fontSize: 13 }}>
+            {workspace.name}
+          </MenuItem>
+        ))}
+      </Select>
+
+      <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+
+      {/* Manage rooms button */}
+      <Tooltip title="Manage Rooms">
+        <IconButton onClick={onOpenManager} size="small">
+          <DashboardIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+
       {/* Room tabs */}
       {rooms.map((room) => {
         const isActive = room.id === activeRoomId;
@@ -120,11 +157,10 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager }) => {
         </IconButton>
       </Tooltip>
 
-      <Box flex={1} />
-
       {/* Workspace status - only for Docker */}
       {showStatus && (
         <>
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
           <Chip
             size="small"
             label={status}
@@ -147,16 +183,8 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager }) => {
               )}
             </IconButton>
           </Tooltip>
-          <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
         </>
       )}
-
-      {/* Manage rooms button */}
-      <Tooltip title="Manage Rooms">
-        <IconButton onClick={onOpenManager} size="small">
-          <DashboardIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
 
       {/* Context Menu */}
       <Menu

@@ -378,6 +378,19 @@ func (t *Terminal) SetDockerHost(asset *models.Asset) {
 
 // Start starts appropriate connection by asset type
 func (t *Terminal) Start() error {
+	// Special case: "local" asset ID means use local terminal directly
+	if t.assetID == "local" {
+		t.connType = ConnectionTypeLocal
+		// Create a virtual local asset with default config
+		virtualAsset := &models.Asset{
+			Type: models.AssetTypeLocal,
+			Config: map[string]interface{}{
+				"shell": "/bin/bash",
+			},
+		}
+		return t.startLocalShell(virtualAsset)
+	}
+
 	// Retrieve asset info
 	asset, err := t.assetService.GetAsset(t.assetID)
 	if err != nil {

@@ -138,3 +138,8 @@ func (r *FSRegistry) Open(ctx context.Context, spec EndpointSpec) (fsimpl.FileSy
 		return nil, fmt.Errorf("unknown filesystem endpoint: %s", typ)
 	}
 }
+
+// SSHPool returns the SSH connection pool
+func (r *FSRegistry) SSHPool() *fsimpl.SSHPool {
+	return r.sshPool
+}

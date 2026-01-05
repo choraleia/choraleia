@@ -72,7 +72,7 @@ const runtimeLabel = (type: RuntimeType) => {
   }
 };
 
-const SpacesView: React.FC = () => {
+const SpacesView: React.FC<{ explorerVisible?: boolean }> = ({ explorerVisible = true }) => {
   const {
     workspaces,
     activeWorkspaceId,
@@ -196,7 +196,7 @@ const SpacesView: React.FC = () => {
   if (viewMode === "workspace" && activeWorkspace) {
     return (
       <Box display="flex" flexDirection="column" flex={1} minHeight={0}>
-        <SpaceLayout onBackToOverview={backToOverview} />
+        <SpaceLayout onBackToOverview={backToOverview} explorerVisible={explorerVisible} />
       </Box>
     );
   }

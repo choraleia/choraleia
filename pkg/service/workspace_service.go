@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/choraleia/choraleia/pkg/models"
+	"github.com/choraleia/choraleia/pkg/service/fs"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -54,6 +55,16 @@ func (s *WorkspaceService) SetRuntimeManager(rm *RuntimeManager) {
 // SetToolManager sets the tool manager (for dependency injection)
 func (s *WorkspaceService) SetToolManager(tm *ToolManager) {
 	s.toolManager = tm
+}
+
+// SetDockerService sets the docker service on the runtime manager
+func (s *WorkspaceService) SetDockerService(ds *DockerService) {
+	s.runtimeManager.SetDockerService(ds)
+}
+
+// SetSSHPool sets the SSH pool on the runtime manager
+func (s *WorkspaceService) SetSSHPool(pool *fs.SSHPool) {
+	s.runtimeManager.SetSSHPool(pool)
 }
 
 // AutoMigrate creates database tables

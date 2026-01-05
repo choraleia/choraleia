@@ -494,10 +494,17 @@ export type Room = {
   description?: string;
   environment: "Local" | "Remote";
   location: "Local" | "Remote" | "Docker" | "Pod";
+  // IDE mode panes (editor, terminals opened in IDE mode)
   panes: SpacePane[];
   activePaneId: string;
+  // Chat mode preview panes (terminals, editors opened by AI)
+  chatPanes: SpacePane[];
+  activeChatPaneId: string;
   toolSessions: ToolSession[];
 };
+
+// Work mode: chat (AI-driven) or ide (developer IDE)
+export type WorkMode = "chat" | "ide";
 
 export type Workspace = {
   id: string;
@@ -505,6 +512,8 @@ export type Workspace = {
   description?: string;
   status: "running" | "stopped" | "starting" | "stopping" | "error";
   color: string;
+  // Work mode: AI chat or IDE development
+  workMode: WorkMode;
   // Runtime environment configuration
   runtime: WorkspaceRuntime;
   // Associated assets for this workspace
@@ -561,6 +570,12 @@ export interface WorkspaceContextValue {
   // Tool operations
   startToolPreview: (toolId: string) => void;
   openTerminalTab: () => void;
+  // Work mode
+  setWorkMode: (mode: WorkMode) => void;
+  // Chat mode preview pane operations
+  openChatTerminal: () => void;
+  setChatActivePane: (paneId: string) => void;
+  closeChatPane: (paneId: string) => void;
 }
 
 
@@ -635,8 +650,12 @@ const createRoom = (name: string): Room => {
     description: "Local space scoped to ops files",
     environment: "Local",
     location: "Local",
+    // Manual mode: starts with chat and welcome editor
     panes: [chatPane, editorPane],
     activePaneId: chatPane.id,
+    // Chat mode: starts empty, AI will open terminals/editors as needed
+    chatPanes: [],
+    activeChatPaneId: "",
     toolSessions,
   };
 };
@@ -656,6 +675,7 @@ const createWorkspace = (name: string, colorIndex: number): Workspace => {
     name: sanitizedName,
     status: "stopped",
     color: palette[colorIndex % palette.length],
+    workMode: "chat",  // Default to chat mode
     runtime: createDefaultRuntime(sanitizedName),
     assets: { hosts: [], k8s: [], assets: [] },
     tools: [],
@@ -847,6 +867,8 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
       location: "Local" as const,
       panes,
       activePaneId,
+      chatPanes: [],
+      activeChatPaneId: "",
       toolSessions: [],
     };
   });
@@ -909,6 +931,7 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
     })),
     rooms,
     activeRoomId: ws.active_room_id || rooms[0]?.id || "",
+    workMode: "chat",  // Default to chat mode
     fileTree: [],  // Will be loaded from runtime environment
     fileTreeLoading: false,
   };
@@ -1186,6 +1209,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         description: config.description,
         status: "stopped",
         color: palette[workspaces.length % palette.length],
+        workMode: "chat",  // Default to chat mode
         runtime: config.runtime,
         assets: config.assets,
         tools: config.tools,
@@ -1986,41 +2010,105 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
   const openTerminalTab = useCallback(() => {
     mutateRoom(activeRoom?.id, (space) => {
-      let terminalSession = space.toolSessions.find(
-        (session) => session.type === "terminal",
-      );
-      let nextRoom = space;
-      if (!terminalSession) {
-        terminalSession = {
-          id: uuid(),
-          label: "Terminal",
-          type: "terminal",
-          status: "running",
-          summary: "Interactive terminal session",
-        };
-        nextRoom = {
-          ...space,
-          toolSessions: [...space.toolSessions, terminalSession],
-        };
-      }
-      const existingPane = nextRoom.panes.find(
+      // Count existing terminals to generate unique name
+      const terminalCount = space.panes.filter(
         (pane): pane is ToolPane =>
-          pane.kind === "tool" && pane.toolId === terminalSession!.id,
-      );
-      if (existingPane) {
-        return { ...nextRoom, activePaneId: existingPane.id };
-      }
+          pane.kind === "tool" && pane.title.startsWith("Terminal"),
+      ).length;
+
+      const terminalId = uuid();
+      const terminalLabel = terminalCount === 0 ? "Terminal" : `Terminal ${terminalCount + 1}`;
+
+      // Create new terminal session
+      const terminalSession: ToolSession = {
+        id: terminalId,
+        label: terminalLabel,
+        type: "terminal",
+        status: "running",
+        summary: "Interactive terminal session",
+      };
+
+      // Create new terminal pane
       const toolPane: ToolPane = {
         id: uuid(),
         kind: "tool",
-        title: terminalSession!.label,
-        toolId: terminalSession!.id,
-        summary: terminalSession!.summary,
+        title: terminalLabel,
+        toolId: terminalId,
+        summary: terminalSession.summary,
       };
+
       return {
-        ...nextRoom,
-        panes: [...nextRoom.panes, toolPane],
+        ...space,
+        toolSessions: [...space.toolSessions, terminalSession],
+        panes: [...space.panes, toolPane],
         activePaneId: toolPane.id,
+      };
+    });
+  }, [activeRoom?.id, mutateRoom]);
+
+  const setWorkMode = useCallback((mode: WorkMode) => {
+    mutateActiveWorkspace((workspace) => ({
+      ...workspace,
+      workMode: mode,
+    }));
+  }, [mutateActiveWorkspace]);
+
+  // Chat mode: open a new terminal in preview panel
+  const openChatTerminal = useCallback(() => {
+    mutateRoom(activeRoom?.id, (space) => {
+      const terminalCount = space.chatPanes.filter(
+        (pane): pane is ToolPane =>
+          pane.kind === "tool" && pane.title.startsWith("Terminal"),
+      ).length;
+
+      const terminalId = uuid();
+      const terminalLabel = terminalCount === 0 ? "Terminal" : `Terminal ${terminalCount + 1}`;
+
+      const terminalSession: ToolSession = {
+        id: terminalId,
+        label: terminalLabel,
+        type: "terminal",
+        status: "running",
+        summary: "Interactive terminal session",
+      };
+
+      const toolPane: ToolPane = {
+        id: uuid(),
+        kind: "tool",
+        title: terminalLabel,
+        toolId: terminalId,
+        summary: terminalSession.summary,
+      };
+
+      return {
+        ...space,
+        toolSessions: [...space.toolSessions, terminalSession],
+        chatPanes: [...space.chatPanes, toolPane],
+        activeChatPaneId: toolPane.id,
+      };
+    });
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Chat mode: set active preview pane
+  const setChatActivePane = useCallback((paneId: string) => {
+    mutateRoom(activeRoom?.id, (space) => ({
+      ...space,
+      activeChatPaneId: paneId,
+    }));
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Chat mode: close a preview pane
+  const closeChatPane = useCallback((paneId: string) => {
+    mutateRoom(activeRoom?.id, (space) => {
+      const newPanes = space.chatPanes.filter((p) => p.id !== paneId);
+      let newActiveId = space.activeChatPaneId;
+      if (space.activeChatPaneId === paneId) {
+        newActiveId = newPanes[0]?.id || "";
+      }
+      return {
+        ...space,
+        chatPanes: newPanes,
+        activeChatPaneId: newActiveId,
       };
     });
   }, [activeRoom?.id, mutateRoom]);
@@ -2063,6 +2151,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         renameFileNode,
         startToolPreview,
         openTerminalTab,
+        setWorkMode,
+        openChatTerminal,
+        setChatActivePane,
+        closeChatPane,
       }}
     >
       {children}

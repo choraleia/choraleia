@@ -32,6 +32,7 @@ import { styled, alpha } from "@mui/material/styles";
 import { useWorkspaces, EditorPane, ToolPane, ChatSession, ToolSession } from "../../state/workspaces";
 import Editor from "@monaco-editor/react";
 import { useMemo, useState } from "react";
+import TerminalComponent from "../assets/Terminal";
 
 const Textarea = styled(TextareaAutosize)(({ theme }) => ({
   width: "100%",
@@ -430,19 +431,75 @@ const EditorPaneView: React.FC<{ pane: EditorPane }> = ({ pane }) => {
   );
 };
 
-const ToolPaneView: React.FC<{ pane: ToolPane }> = ({ pane }) => (
-  <Box flex={1} display="flex" flexDirection="column" px={3} py={2} gap={1.5}>
-    <Typography variant="h6">{pane.title}</Typography>
-    <Typography variant="body2" color="text.secondary">
-      {pane.summary}
-    </Typography>
-    <Box flex={1} border={(theme) => `1px dashed ${theme.palette.divider}`} borderRadius={2}>
-      <Typography p={2} color="text.secondary">
-        Tool preview placeholder. Terminals, browsers, and job consoles render here without stealing chat space.
+const ToolPaneView: React.FC<{ pane: ToolPane; isActive?: boolean }> = ({ pane, isActive = true }) => {
+  const { activeWorkspace } = useWorkspaces();
+
+  // Check if this is a terminal pane by title (since toolSessions may not be persisted)
+  const isTerminal = pane.title.startsWith("Terminal");
+
+  // If this is a terminal tool, render the actual terminal
+  // Use pane ID as terminal key to ensure each terminal has its own connection
+  if (isTerminal && activeWorkspace) {
+    const runtime = activeWorkspace.runtime;
+    // Use pane ID to ensure each terminal pane has independent connection
+    const terminalKey = `workspace-terminal-${activeWorkspace.id}-${pane.id}`;
+
+    // Determine terminal configuration based on runtime type
+    if (runtime.type === "local") {
+      // Local terminal - use local asset
+      return (
+        <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+          <TerminalComponent
+            hostInfo={{ ip: "localhost", port: 0, name: "Local Terminal" }}
+            tabKey={terminalKey}
+            assetId="local"
+            isActive={isActive}
+          />
+        </Box>
+      );
+    } else if ((runtime.type === "docker-local" || runtime.type === "docker-remote") && runtime.dockerAssetId) {
+      // Docker terminal - use docker asset with container ID
+      const containerId = runtime.containerId || runtime.newContainer?.name;
+      if (containerId) {
+        return (
+          <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+            <TerminalComponent
+              hostInfo={{ ip: "docker", port: 0, name: `Docker: ${containerId}` }}
+              tabKey={terminalKey}
+              assetId={runtime.dockerAssetId}
+              containerId={containerId}
+              isActive={isActive}
+            />
+          </Box>
+        );
+      } else {
+        return (
+          <Box flex={1} display="flex" flexDirection="column" px={3} py={2} gap={1.5}>
+            <Typography variant="h6">{pane.title}</Typography>
+            <Typography variant="body2" color="error">
+              No container configured. Please configure a container in workspace settings.
+            </Typography>
+          </Box>
+        );
+      }
+    }
+  }
+
+  // Fallback for non-terminal tools or unconfigured workspaces
+  return (
+    <Box flex={1} display="flex" flexDirection="column" px={3} py={2} gap={1.5}>
+      <Typography variant="h6">{pane.title}</Typography>
+      <Typography variant="body2" color="text.secondary">
+        {pane.summary}
       </Typography>
+      <Box flex={1} border={(theme) => `1px dashed ${theme.palette.divider}`} borderRadius={2}>
+        <Typography p={2} color="text.secondary">
+          Tool preview placeholder. Terminals, browsers, and job consoles render here.
+        </Typography>
+      </Box>
     </Box>
-  </Box>
-);
+  );
+};
 
 const EmptyState: React.FC = () => (
   <Box flex={1} display="flex" alignItems="center" justifyContent="center">
@@ -464,19 +521,46 @@ interface SpaceCanvasProps {
 const SpaceCanvas: React.FC<SpaceCanvasProps> = ({ chatHistoryOpen, onCloseChatHistory, onToggleChatHistory }) => {
   const { activeRoom } = useWorkspaces();
   if (!activeRoom) return <EmptyState />;
-  const pane = activeRoom.panes.find((p) => p.id === activeRoom.activePaneId);
-  if (!pane) return <EmptyState />;
-  if (pane.kind === "chat")
-    return (
-      <ChatPaneView
-        chatHistoryOpen={chatHistoryOpen}
-        onCloseChatHistory={onCloseChatHistory}
-        onToggleChatHistory={onToggleChatHistory}
-      />
-    );
-  if (pane.kind === "editor") return <EditorPaneView pane={pane} />;
-  if (pane.kind === "tool") return <ToolPaneView pane={pane} />;
-  return <EmptyState />;
+
+  const activePane = activeRoom.panes.find((p) => p.id === activeRoom.activePaneId);
+
+  // Get all terminal panes to keep them mounted
+  const terminalPanes = activeRoom.panes.filter(
+    (p): p is ToolPane => p.kind === "tool" && p.title.startsWith("Terminal")
+  );
+
+  return (
+    <Box flex={1} display="flex" flexDirection="column" minHeight={0} position="relative">
+      {/* Keep all terminal panes mounted but hidden when not active */}
+      {terminalPanes.map((pane) => (
+        <Box
+          key={pane.id}
+          flex={1}
+          display={activePane?.id === pane.id ? "flex" : "none"}
+          flexDirection="column"
+          minHeight={0}
+        >
+          <ToolPaneView pane={pane} isActive={activePane?.id === pane.id} />
+        </Box>
+      ))}
+
+      {/* Render active non-terminal panes */}
+      {activePane && activePane.kind === "chat" && (
+        <ChatPaneView
+          chatHistoryOpen={chatHistoryOpen}
+          onCloseChatHistory={onCloseChatHistory}
+          onToggleChatHistory={onToggleChatHistory}
+        />
+      )}
+      {activePane && activePane.kind === "editor" && <EditorPaneView pane={activePane} />}
+      {activePane && activePane.kind === "tool" && !activePane.title.startsWith("Terminal") && (
+        <ToolPaneView pane={activePane} isActive={true} />
+      )}
+
+      {/* Show empty state only when no active pane */}
+      {!activePane && <EmptyState />}
+    </Box>
+  );
 };
 
 export default SpaceCanvas;

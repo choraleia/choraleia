@@ -319,6 +319,9 @@ func (s *Server) SetupRoutes() {
 	if err := workspaceService.AutoMigrate(); err != nil {
 		s.logger.Error("Failed to migrate workspace tables", "error", err)
 	}
+	// Inject DockerService and SSHPool into WorkspaceService's RuntimeManager
+	workspaceService.SetDockerService(dockerService)
+	workspaceService.SetSSHPool(fsRegistry.SSHPool())
 	workspaceHandler := handler.NewWorkspaceHandler(workspaceService)
 	workspaceHandler.RegisterRoutes(apiGroup)
 
