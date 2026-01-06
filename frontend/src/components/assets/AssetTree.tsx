@@ -1,7 +1,6 @@
 import React, {
   useState,
   useEffect,
-  useImperativeHandle,
   useRef,
   useMemo,
   useCallback,
@@ -41,49 +40,21 @@ import SearchIcon from "@mui/icons-material/Search";
 import ClearIcon from "@mui/icons-material/Clear";
 import Popover from "@mui/material/Popover";
 import AddHostDialog from "./AddHostDialog.tsx";
-import { getApiUrl } from "../../api/base";
+import { useAssets } from "../../stores";
+import {
+  createAsset,
+  deleteAsset,
+  updateAsset,
+  moveAsset,
+  listDockerContainers,
+  containerAction,
+  type Asset,
+  type ContainerInfo,
+  type MoveAssetRequest,
+} from "../../api/assets";
 
 
-// Remove old API_BASE constant and use getApiUrl("/api/...") at call sites.
-
-// Unified API base URL
-// (Avoid getApiUrl("") + "/api/..." concatenation; build endpoints with getApiUrl("/api/...") instead.)
-
-// Asset type interface
-export interface Asset {
-  id: string;
-  name: string;
-  type: "local" | "ssh" | "folder" | "docker_host";
-  description: string;
-  config: Record<string, any>;
-  tags: string[];
-  parent_id: string | null;
-  prev_id?: string | null;
-  next_id?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-// Docker container info for dynamic children
-export interface ContainerInfo {
-  id: string;
-  name: string;
-  image: string;
-  state: string;
-  status: string;
-  ports: string;
-  created: string;
-}
-
-interface ApiResponse<T> {
-  code: number;
-  message: string;
-  data?: T;
-}
-interface AssetListResponse {
-  assets: Asset[];
-  total: number;
-}
+// HostNode for tree view
 export interface HostNode {
   title: string;
   key: string;
@@ -99,37 +70,25 @@ export interface HostNode {
   containerInfo?: ContainerInfo;
   dockerHostAssetId?: string; // For container nodes, reference to parent docker host
 }
-export interface AssetTreeHandle {
-  refresh: () => void;
-}
-interface AssetsTreeProps {}
 
-// Move request structure
-interface MoveRequest {
-  new_parent_id: string | null;
-  target_sibling_id?: string | null;
-  position: "before" | "after" | "append";
-}
+
+interface AssetsTreeProps {}
 
 // Extract host info early to avoid TDZ issues inside convertAssetsToTreeData
 function extractHostInfo(asset: Asset): { host: string; port: number } | null {
   if (asset.type === "ssh")
     return {
-      host: asset.config.host || "localhost",
-      port: asset.config.port || 22,
+      host: (asset.config as any)?.host || "localhost",
+      port: (asset.config as any)?.port || 22,
     };
   if (asset.type === "local") return { host: "localhost", port: 0 };
   if (asset.type === "docker_host") return { host: "docker", port: 0 };
   return null;
 }
 
-const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
-  ({}, ref) => {
+
+const AssetTree: React.FC<AssetsTreeProps> = () => {
     // State
-    const [allAssets, setAllAssets] = useState<Asset[]>([]); // full assets
-    const [assets, setAssets] = useState<Asset[]>([]); // visible assets (search + filter)
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string>("");
     const [search, setSearch] = useState("");
     const [typeFilter, setTypeFilter] = useState<string>("all");
     // Replace original showSearch flag with Popover anchor
@@ -204,13 +163,8 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       if (loadingContainers[assetId]) return;
       setLoadingContainers(prev => ({ ...prev, [assetId]: true }));
       try {
-        const resp = await fetch(getApiUrl(`/api/assets/${assetId}/docker/containers?all=${showAll}`));
-        if (resp.ok) {
-          const data = await resp.json();
-          if (data.code === 200 && data.data?.containers) {
-            setDockerContainers(prev => ({ ...prev, [assetId]: data.data.containers }));
-          }
-        }
+        const containers = await listDockerContainers(assetId, showAll);
+        setDockerContainers(prev => ({ ...prev, [assetId]: containers }));
       } catch (e) {
         console.error("Failed to load containers:", e);
       } finally {
@@ -249,6 +203,19 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const dragNodeIdRef = useRef<string | null>(null);
     const draggedAssetRef = useRef<Asset | null>(null); // cache dragged asset to avoid reference loss when filter changes or Safari issues
 
+    // Use external asset store for data
+    // Data is shared across components and auto-refreshes on events
+    const {
+      allAssets,
+      assets,
+      error: fetchError,
+    } = useAssets(search, typeFilter);
+
+    // Derive error message string
+    const error = fetchError?.message || "";
+
+
+
     // ===== Folder options & path display =====
     const folderTreeItems = useMemo(() => {
       const folders = allAssets.filter((a) => a.type === "folder");
@@ -274,7 +241,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       return res;
     }, [allAssets]);
 
-    const getFolderPath = (id: string): string => {
+    const getFolderPath = useCallback((id: string): string => {
       const idMap: Record<string, Asset> = {};
       allAssets.forEach((a) => {
         idMap[a.id] = a;
@@ -289,127 +256,14 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
         cur = idMap[cur.parent_id];
       }
       return parts.reverse().join("/");
-    };
+    }, [allAssets]);
 
     const selectedParentPath = useMemo(() => {
       if (!newFolderParentId) return "";
       return getFolderPath(newFolderParentId);
-    }, [newFolderParentId, allAssets]);
+    }, [newFolderParentId, getFolderPath]);
     // ===== end =====
 
-    // Expose refresh to parent
-    useImperativeHandle(ref, () => ({ refresh: () => fetchAssets() }), []);
-
-    // Load assets
-    const fetchAssets = async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const resp = await fetch(getApiUrl("/api/assets"));
-        if (!resp.ok) {
-          setError(`HTTP ${resp.status}`);
-          setAllAssets([]);
-          setAssets([]);
-          return;
-        }
-        const result: ApiResponse<AssetListResponse> = await resp.json();
-        const list =
-          (result.data as any)?.assets || (result.data as any)?.Assets || [];
-        const full: Asset[] = Array.isArray(list) ? list : [];
-        setAllAssets(full);
-        const visible = computeVisibleAssets(full, search, typeFilter);
-        setAssets(visible);
-      } catch (e: any) {
-        setError(e.message || String(e));
-        setAllAssets([]);
-        setAssets([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-    useEffect(() => {
-      fetchAssets();
-    }, []);
-
-    useEffect(() => {
-      // recompute visible when search or type changes without forcing re-fetch
-      const visible = computeVisibleAssets(allAssets, search, typeFilter);
-      setAssets(visible);
-    }, [search, typeFilter, allAssets]);
-
-    // Compute matches plus ancestors
-    const computeVisibleAssets = (
-      full: Asset[],
-      searchValue: string,
-      typeValue: string,
-    ): Asset[] => {
-      if (!full || full.length === 0) return [];
-      let base = full;
-      if (typeValue !== "all") {
-        base = base.filter((a) => a.type === typeValue);
-      }
-      const q = searchValue.trim().toLowerCase();
-      // Only type filter, no search: include ancestors of matching assets (folders)
-      if (!q) {
-        if (typeValue === "all") return base;
-        const idMap: Record<string, Asset> = {};
-        full.forEach((a) => {
-          idMap[a.id] = a;
-        });
-        const includeSet = new Set<string>(base.map((a) => a.id));
-        const addAncestors = (id: string) => {
-          let cur: Asset | undefined = idMap[id];
-          const guard = new Set<string>();
-          while (cur && cur.parent_id) {
-            if (guard.has(cur.id)) break;
-            guard.add(cur.id);
-            const pid = cur.parent_id;
-            if (pid && !includeSet.has(pid)) includeSet.add(pid);
-            cur = pid ? idMap[pid] : undefined;
-          }
-        };
-        base.forEach((a) => addAncestors(a.id));
-        return full.filter((a) => includeSet.has(a.id));
-      }
-      // Search logic below
-      const matchSet = new Set<string>();
-      const idMap: Record<string, Asset> = {};
-      full.forEach((a) => {
-        idMap[a.id] = a;
-      });
-      const matchAsset = (a: Asset): boolean => {
-        return (
-          a.name.toLowerCase().includes(q) ||
-          (a.description || "").toLowerCase().includes(q) ||
-          (!!a.tags && a.tags.some((t) => t.toLowerCase().includes(q)))
-        );
-      };
-      // Iterate full instead of type-filtered base so ancestor relations are intact
-      full.forEach((a) => {
-        if (matchAsset(a)) matchSet.add(a.id);
-      });
-      if (matchSet.size === 0) return [];
-      const includeSet = new Set<string>([...matchSet]);
-      const addAncestorFolders = (asset: Asset) => {
-        const guard = new Set<string>();
-        let cur = asset.parent_id ? idMap[asset.parent_id] : undefined;
-        while (cur && !guard.has(cur.id)) {
-          guard.add(cur.id);
-          if (cur.type === "folder") includeSet.add(cur.id);
-          cur = cur.parent_id ? idMap[cur.parent_id] : undefined;
-        }
-      };
-      matchSet.forEach((id) => {
-        const a = idMap[id];
-        if (a) addAncestorFolders(a);
-      });
-      // Final filter: if type set, keep matched assets of that type + their ancestor folders (folders always kept)
-      return full.filter(
-        (a) =>
-          includeSet.has(a.id) &&
-          (typeValue === "all" || a.type === "folder" || a.type === typeValue),
-      );
-    };
 
     // Prepare matched ID set for highlight (based on current search + type filter)
     const matchedIDs = React.useMemo(() => {
@@ -609,24 +463,19 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     // Create folder
     const createFolder = async () => {
       if (!newFolderName.trim()) return;
-      const body = {
-        name: newFolderName.trim(),
-        type: "folder",
-        description: "",
-        config: {},
-        tags: [],
-        parent_id: newFolderParentId,
-      };
       try {
-        const resp = await fetch(getApiUrl("/api/assets"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
+        await createAsset({
+          name: newFolderName.trim(),
+          type: "folder",
+          description: "",
+          config: {},
+          tags: [],
+          parent_id: newFolderParentId,
         });
-        if (resp.ok) {
-          await fetchAssets();
-        }
-      } catch {}
+        // Event-driven: asset.created event will trigger refresh automatically
+      } catch (e) {
+        console.error("Failed to create folder:", e);
+      }
       setAddFolderDialogOpen(false);
       setNewFolderName("");
     };
@@ -634,11 +483,11 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     // Delete node
     const deleteNode = async (node: HostNode) => {
       try {
-        const resp = await fetch(getApiUrl(`/api/assets/${node.key}`), {
-          method: "DELETE",
-        });
-        if (resp.ok) await fetchAssets();
-      } catch {}
+        await deleteAsset(node.key);
+        // Event-driven: asset.deleted event will trigger refresh automatically
+      } catch (e) {
+        console.error("Failed to delete asset:", e);
+      }
       closeMenu();
     };
 
@@ -653,13 +502,11 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const submitRename = async () => {
       if (!renamingAssetId) return;
       try {
-        const resp = await fetch(getApiUrl(`/api/assets/${renamingAssetId}`), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: renameValue }),
-        });
-        if (resp.ok) await fetchAssets();
-      } catch {}
+        await updateAsset(renamingAssetId, { name: renameValue });
+        // Event-driven: asset.updated event will trigger refresh automatically
+      } catch (e) {
+        console.error("Failed to rename asset:", e);
+      }
       setRenameDialogOpen(false);
       setRenamingAssetId(null);
       setRenameValue("");
@@ -674,29 +521,15 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const submitMove = async () => {
       if (!contextNode?.asset) return;
       setMoveError("");
-      const req: MoveRequest = {
+      const req: MoveAssetRequest = {
         new_parent_id: moveTargetParent,
         position: movePosition,
         target_sibling_id: moveReferenceSibling,
       };
       if (movePosition === "append") req.target_sibling_id = null;
       try {
-        const resp = await fetch(
-          getApiUrl(`/api/assets/${contextNode.asset.id}/move`),
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(req),
-          },
-        );
-        const j = await resp
-          .json()
-          .catch(() => ({ code: resp.status, message: resp.statusText }));
-        if (!resp.ok || j.code !== 200) {
-          setMoveError(j.message || `Move failed: HTTP ${resp.status}`);
-          return;
-        }
-        await fetchAssets();
+        await moveAsset(contextNode.asset.id, req);
+        // Event-driven: asset.updated event will trigger refresh automatically
         setMoveDialogOpen(false);
       } catch (e: any) {
         setMoveError(e.message || String(e));
@@ -787,8 +620,8 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
       }
 
       const targetAsset = target.asset;
-      let newParent: string | null = draggedAsset.parent_id;
-      let position: MoveRequest["position"] = "before";
+      let newParent: string | null = draggedAsset.parent_id ?? null;
+      let position: MoveAssetRequest["position"] = "before";
       let siblingRef: string | null = targetAsset.id;
 
       if (effectiveIntent === "append") {
@@ -808,7 +641,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
           clearDragHover();
           return;
         }
-        newParent = targetAsset.parent_id;
+        newParent = targetAsset.parent_id ?? null;
         position = effectiveIntent;
         siblingRef = targetAsset.id;
       } else {
@@ -900,33 +733,18 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const performMove = async (
       assetId: string,
       newParent: string | null,
-      position: MoveRequest["position"] = "append",
+      position: MoveAssetRequest["position"] = "append",
       siblingId: string | null = null,
     ): Promise<boolean> => {
-      const req: MoveRequest = {
+      const req: MoveAssetRequest = {
         new_parent_id: newParent,
         position,
         target_sibling_id: siblingId,
       };
       if (position === "append") req.target_sibling_id = null;
       try {
-        const resp = await fetch(getApiUrl(`/api/assets/${assetId}/move`), {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(req),
-        });
-        if (!resp.ok) {
-          DEBUG_DND &&
-            console.error("[DND] move failed HTTP", resp.status, req);
-          return false;
-        }
-        const j = await resp.json().catch(() => ({ code: resp.status }));
-        const ok = j.code === 200 || j.code === undefined || j.code === 0;
-        if (!ok) {
-          DEBUG_DND && console.error("[DND] move failed body", j);
-          return false;
-        }
-        await fetchAssets();
+        await moveAsset(assetId, req);
+        // Event-driven: asset.updated event will trigger refresh automatically
         return true;
       } catch (e: any) {
         DEBUG_DND && console.error("[DND] move error", e);
@@ -979,10 +797,7 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
     const handleContainerAction = async (action: "start" | "stop" | "restart") => {
       if (!contextNode?.containerInfo || !contextNode?.dockerHostAssetId) return;
       try {
-        await fetch(
-          getApiUrl(`/api/assets/${contextNode.dockerHostAssetId}/docker/containers/${contextNode.containerInfo.id}/${action}`),
-          { method: "POST" }
-        );
+        await containerAction(contextNode.dockerHostAssetId, contextNode.containerInfo.id, action);
         // Refresh containers after action
         loadDockerContainers(contextNode.dockerHostAssetId);
       } catch (e) {
@@ -1041,13 +856,6 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
               <MenuItem value="docker_host">Docker</MenuItem>
             </Select>
           </FormControl>
-          <IconButton
-            size="small"
-            onClick={() => fetchAssets()}
-            disabled={loading}
-          >
-            <RefreshIcon fontSize="small" />
-          </IconButton>
           <IconButton
             size="small"
             onClick={(e) => setSearchAnchorEl(e.currentTarget)}
@@ -1448,12 +1256,15 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
         <AddHostDialog
           open={addHostModalVisible}
           parentId={addHostParentId || undefined}
-          asset={editingAsset}
+          asset={editingAsset ? {
+            ...editingAsset,
+            config: (editingAsset.config ?? {}) as Record<string, any>,
+          } : null}
           onClose={() => {
             setAddHostModalVisible(false);
             setEditingAsset(null);
           }}
-          onSuccess={() => fetchAssets()}
+          // Event-driven: asset.created/updated event will trigger refresh automatically
         />
 
         {/* New folder dialog */}
@@ -1668,7 +1479,6 @@ const AssetTree = React.forwardRef<AssetTreeHandle, AssetsTreeProps>(
         </Popover>
       </Box>
     );
-  },
-);
+};
 
 export default AssetTree;

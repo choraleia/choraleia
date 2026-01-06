@@ -38,6 +38,13 @@ export default defineConfig(() => {
           changeOrigin: true,
         },
 
+        // Event notification WebSocket (must be before /api).
+        '/api/events/ws': {
+          target: backendTarget,
+          ws: true,
+          changeOrigin: true,
+        },
+
         // REST API
         '/api': {
           target: backendTarget,

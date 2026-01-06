@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/choraleia/choraleia/pkg/config"
+	"github.com/choraleia/choraleia/pkg/event"
 	"github.com/choraleia/choraleia/pkg/handler"
 	"github.com/choraleia/choraleia/pkg/service"
 	"github.com/choraleia/choraleia/pkg/utils"
@@ -264,8 +265,9 @@ func (s *Server) SetupRoutes() {
 	// /api/tasks
 	tasksGroup := apiGroup.Group("/tasks")
 	{
-		tasksGroup.GET("/active", taskHandler.ListActive)
-		tasksGroup.GET("/history", taskHandler.ListHistory)
+		tasksGroup.GET("", taskHandler.List)                // Unified list (active + history)
+		tasksGroup.GET("/active", taskHandler.ListActive)   // Deprecated: use GET /tasks
+		tasksGroup.GET("/history", taskHandler.ListHistory) // Deprecated: use GET /tasks
 		tasksGroup.POST("/transfer", taskHandler.EnqueueTransfer)
 		tasksGroup.POST("/:id/cancel", taskHandler.Cancel)
 		tasksGroup.GET("/ws", taskHandler.EventsWS)
@@ -306,6 +308,11 @@ func (s *Server) SetupRoutes() {
 		tunnelsGroup.POST("/:id/start", tunnelHandler.Start)
 		tunnelsGroup.POST("/:id/stop", tunnelHandler.Stop)
 	}
+
+	// Event notification WebSocket
+	// /api/events/ws
+	eventsHandler := event.NewWSHandler()
+	apiGroup.GET("/events/ws", eventsHandler.Handle)
 }
 
 // Dialogue management handlers

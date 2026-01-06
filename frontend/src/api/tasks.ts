@@ -54,6 +54,21 @@ export type TransferRequest = {
   overwrite: boolean;
 };
 
+/**
+ * List all tasks (active + history).
+ * @param limit - Max history items to include (default 50)
+ */
+export async function tasksList(limit = 50): Promise<Task[]> {
+  const url = new URL(getApiUrl("/api/tasks"));
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error(`Tasks list failed: ${res.status}`);
+  const json = (await res.json()) as APIResponse<Task[]>;
+  if (json.code !== 0) throw new Error(json.message || "Tasks list failed");
+  return json.data ?? [];
+}
+
+/** @deprecated Use tasksList() instead */
 export async function tasksListActive(): Promise<Task[]> {
   const res = await fetch(getApiUrl("/api/tasks/active"));
   if (!res.ok) throw new Error(`Tasks list failed: ${res.status}`);
@@ -62,6 +77,7 @@ export async function tasksListActive(): Promise<Task[]> {
   return json.data ?? [];
 }
 
+/** @deprecated Use tasksList() instead */
 export async function tasksListHistory(limit = 50): Promise<Task[]> {
   const url = new URL(getApiUrl("/api/tasks/history"));
   url.searchParams.set("limit", String(limit));

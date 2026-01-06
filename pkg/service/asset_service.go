@@ -3,14 +3,16 @@ package service
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/choraleia/choraleia/pkg/models"
-	"github.com/google/uuid"
-	"golang.org/x/crypto/ssh"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/choraleia/choraleia/pkg/event"
+	"github.com/choraleia/choraleia/pkg/models"
+	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 )
 
 // AssetService asset management service (in-memory + file persistence)
@@ -46,10 +48,24 @@ func (s *AssetService) loadAssets() error {
 	if err := json.Unmarshal(data, &list); err != nil {
 		return err
 	}
+
+	needsSave := false
 	for i := range list {
 		asset := list[i]
+		// Migrate: ensure SSH assets have tunnel IDs
+		if asset.Type == models.AssetTypeSSH && asset.Config != nil {
+			if ensureTunnelIDs(asset.Config) {
+				needsSave = true
+			}
+		}
 		s.assets[asset.ID] = &asset
 	}
+
+	// Save if migration occurred
+	if needsSave {
+		_ = s.saveAssets()
+	}
+
 	return nil
 }
 
@@ -68,6 +84,11 @@ func (s *AssetService) saveAssets() error {
 
 // CreateAsset creates a new asset, appending at tail of sibling list
 func (s *AssetService) CreateAsset(req *models.CreateAssetRequest) (*models.Asset, error) {
+	// Ensure tunnel IDs exist for SSH assets
+	if req.Type == models.AssetTypeSSH && req.Config != nil {
+		ensureTunnelIDs(req.Config)
+	}
+
 	asset := &models.Asset{
 		ID:          uuid.New().String(),
 		Name:        req.Name,
@@ -91,6 +112,14 @@ func (s *AssetService) CreateAsset(req *models.CreateAssetRequest) (*models.Asse
 	if err := s.saveAssets(); err != nil {
 		return nil, fmt.Errorf("failed to save asset: %v", err)
 	}
+	// Emit asset created event
+	event.Emit(event.AssetCreatedEvent{AssetID: asset.ID})
+
+	// Emit tunnel created events for SSH assets
+	if asset.Type == models.AssetTypeSSH {
+		emitTunnelCreatedEvents(asset.ID, asset.Config)
+	}
+
 	return asset, nil
 }
 
@@ -228,6 +257,8 @@ func (s *AssetService) MoveAsset(id string, req *models.MoveAssetRequest) (*mode
 	if err := s.saveAssets(); err != nil {
 		return nil, err
 	}
+	// Emit asset updated event (move is a form of update)
+	event.Emit(event.AssetUpdatedEvent{AssetID: a.ID})
 	return a, nil
 }
 
@@ -246,6 +277,13 @@ func (s *AssetService) UpdateAsset(id string, req *models.UpdateAssetRequest) (*
 	if !exists {
 		return nil, fmt.Errorf("asset not found")
 	}
+
+	// Track old tunnel IDs for SSH assets to detect additions/deletions
+	var oldTunnelIDs []string
+	if asset.Type == models.AssetTypeSSH && req.Config != nil {
+		oldTunnelIDs = getTunnelIDs(asset.Config)
+	}
+
 	if req.Name != nil {
 		asset.Name = *req.Name
 	}
@@ -253,6 +291,10 @@ func (s *AssetService) UpdateAsset(id string, req *models.UpdateAssetRequest) (*
 		asset.Description = *req.Description
 	}
 	if req.Config != nil {
+		// Ensure tunnel IDs exist for SSH assets
+		if asset.Type == models.AssetTypeSSH {
+			ensureTunnelIDs(req.Config)
+		}
 		asset.Config = req.Config
 	}
 	if req.Tags != nil {
@@ -265,7 +307,127 @@ func (s *AssetService) UpdateAsset(id string, req *models.UpdateAssetRequest) (*
 	if err := s.saveAssets(); err != nil {
 		return nil, fmt.Errorf("failed to save asset: %v", err)
 	}
+	// Emit asset updated event
+	event.Emit(event.AssetUpdatedEvent{AssetID: asset.ID})
+
+	// Emit tunnel created/deleted events for SSH assets
+	if asset.Type == models.AssetTypeSSH && req.Config != nil {
+		newTunnelIDs := getTunnelIDs(asset.Config)
+		emitTunnelDiffEvents(asset.ID, oldTunnelIDs, newTunnelIDs)
+	}
+
 	return asset, nil
+}
+
+// ensureTunnelIDs ensures all tunnels in SSH config have unique IDs
+// Returns true if any IDs were generated (config was modified)
+func ensureTunnelIDs(config map[string]interface{}) bool {
+	tunnels, ok := config["tunnels"]
+	if !ok {
+		return false
+	}
+
+	tunnelList, ok := tunnels.([]interface{})
+	if !ok {
+		return false
+	}
+
+	modified := false
+	for _, t := range tunnelList {
+		tunnel, ok := t.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// Check if ID exists and is non-empty
+		id, hasID := tunnel["id"]
+		if !hasID || id == nil || id == "" {
+			tunnel["id"] = uuid.New().String()
+			modified = true
+		}
+	}
+
+	if modified {
+		config["tunnels"] = tunnelList
+	}
+
+	return modified
+}
+
+// getTunnelIDs extracts tunnel IDs from SSH config
+func getTunnelIDs(config map[string]interface{}) []string {
+	if config == nil {
+		return nil
+	}
+	tunnels, ok := config["tunnels"]
+	if !ok {
+		return nil
+	}
+	tunnelList, ok := tunnels.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var ids []string
+	for _, t := range tunnelList {
+		tunnel, ok := t.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if id, ok := tunnel["id"].(string); ok && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// emitTunnelCreatedEvents emits TunnelCreated events for all tunnels in config
+func emitTunnelCreatedEvents(assetID string, config map[string]interface{}) {
+	for _, tunnelID := range getTunnelIDs(config) {
+		event.Emit(event.TunnelCreatedEvent{
+			TunnelID: tunnelID,
+			AssetID:  assetID,
+		})
+	}
+}
+
+// emitTunnelDeletedEvents emits TunnelDeleted events for all tunnels in config
+func emitTunnelDeletedEvents(config map[string]interface{}) {
+	for _, tunnelID := range getTunnelIDs(config) {
+		event.Emit(event.TunnelDeletedEvent{
+			TunnelID: tunnelID,
+		})
+	}
+}
+
+// emitTunnelDiffEvents compares old and new tunnel IDs and emits created/deleted events
+func emitTunnelDiffEvents(assetID string, oldIDs, newIDs []string) {
+	oldSet := make(map[string]bool)
+	for _, id := range oldIDs {
+		oldSet[id] = true
+	}
+	newSet := make(map[string]bool)
+	for _, id := range newIDs {
+		newSet[id] = true
+	}
+
+	// Emit created events for new tunnels
+	for _, id := range newIDs {
+		if !oldSet[id] {
+			event.Emit(event.TunnelCreatedEvent{
+				TunnelID: id,
+				AssetID:  assetID,
+			})
+		}
+	}
+
+	// Emit deleted events for removed tunnels
+	for _, id := range oldIDs {
+		if !newSet[id] {
+			event.Emit(event.TunnelDeletedEvent{
+				TunnelID: id,
+			})
+		}
+	}
 }
 
 // DeleteAsset deletes an asset and its children recursively
@@ -274,6 +436,12 @@ func (s *AssetService) DeleteAsset(id string) error {
 	if !exists {
 		return fmt.Errorf("asset not found")
 	}
+
+	// Emit tunnel deleted events for SSH assets before deletion
+	if asset.Type == models.AssetTypeSSH {
+		emitTunnelDeletedEvents(asset.Config)
+	}
+
 	// detach self from siblings
 	s.detach(asset)
 	// recursive delete children
@@ -283,7 +451,12 @@ func (s *AssetService) DeleteAsset(id string) error {
 		}
 	}
 	delete(s.assets, id)
-	return s.saveAssets()
+	if err := s.saveAssets(); err != nil {
+		return err
+	}
+	// Emit asset deleted event
+	event.Emit(event.AssetDeletedEvent{AssetID: id})
+	return nil
 }
 
 // ListAssets lists assets with filters (ordering handled by client via linked list)

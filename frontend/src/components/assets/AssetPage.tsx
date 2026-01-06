@@ -17,7 +17,7 @@ import ViewInArIcon from "@mui/icons-material/ViewInAr";
 import HomeIcon from "@mui/icons-material/Home";
 import TerminalComponent, { cleanupTerminal } from "./Terminal";
 import Toolbar from "./Toolbar.tsx";
-import AssetTree, { AssetTreeHandle } from "./AssetTree";
+import AssetTree from "./AssetTree";
 
 // Get icon for tab based on asset type
 function getTabIcon(assetType?: string): React.ReactNode {
@@ -94,7 +94,6 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
     const [terminalStates, setTerminalStates] = useState<
       Map<string, { connected: boolean; connectionTime?: number }>
     >(new Map());
-    const assetTreeRef = useRef<AssetTreeHandle>(null);
 
     // Right-click menu
     const [tabMenuAnchor, setTabMenuAnchor] = useState<HTMLElement | null>(
@@ -323,7 +322,7 @@ const AssetPage = React.forwardRef<AssetPageHandle, AssetPageProps>(
     return (
       <Box display="flex" height="100%" flex={1} minHeight={0}>
         {/* Left asset tree */}
-        {assetsVisible && <AssetTree ref={assetTreeRef} />}
+        {assetsVisible && <AssetTree />}
         <Box flex={1} display="flex" flexDirection="row" minHeight={0}>
           <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
             <Tabs
