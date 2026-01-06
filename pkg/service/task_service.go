@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/event"
+
 	"github.com/google/uuid"
 )
 
@@ -136,6 +138,9 @@ func (s *TaskService) Enqueue(tt TaskType, title string, meta any, runner TaskRu
 	s.broadcastLocked(*t)
 	s.broadcastWatchLocked(TaskEventAdded, *t)
 
+	// Emit event for WebSocket clients
+	event.Emit(event.TaskCreatedEvent{TaskID: id, TaskType: string(tt)})
+
 	go s.maybeStartWorkers(runner)
 	return t
 }
@@ -166,14 +171,33 @@ func (s *TaskService) maybeStartWorkers(runner TaskRunner) {
 				rt.task.Progress = p
 				s.broadcastLocked(*rt.task)
 				s.broadcastWatchLocked(TaskEventModified, *rt.task)
+				taskID := rt.task.ID
 				s.mu.Unlock()
+				// Emit progress event with data
+				event.Emit(event.TaskProgressEvent{
+					TaskID: taskID,
+					Total:  p.Total,
+					Done:   p.Done,
+					Unit:   p.Unit,
+					Note:   p.Note,
+				})
 			},
 			func(note string) {
 				s.mu.Lock()
 				rt.task.Progress.Note = note
 				s.broadcastLocked(*rt.task)
 				s.broadcastWatchLocked(TaskEventModified, *rt.task)
+				taskID := rt.task.ID
+				p := rt.task.Progress
 				s.mu.Unlock()
+				// Emit progress event with note update
+				event.Emit(event.TaskProgressEvent{
+					TaskID: taskID,
+					Total:  p.Total,
+					Done:   p.Done,
+					Unit:   p.Unit,
+					Note:   note,
+				})
 			},
 		)
 
@@ -201,7 +225,12 @@ func (s *TaskService) maybeStartWorkers(runner TaskRunner) {
 		}
 		s.broadcastLocked(*rt.task)
 		s.broadcastWatchLocked(TaskEventModified, *rt.task)
+		taskID := rt.task.ID
+		success := rt.task.Status == TaskStatusSucceeded
 		s.mu.Unlock()
+
+		// Emit completion event
+		event.Emit(event.TaskCompletedEvent{TaskID: taskID, Success: success})
 	}
 }
 

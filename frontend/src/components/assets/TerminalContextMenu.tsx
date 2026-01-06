@@ -134,32 +134,28 @@ const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
         <ListItemText>Scroll to Bottom</ListItemText>
       </MenuItem>
 
-      {onSearch && (
-        <>
-          <Divider sx={{ my: 0.5 }} />
-          <MenuItem onClick={() => handleAction(onSearch)}>
-            <ListItemIcon>
-              <SearchIcon />
-            </ListItemIcon>
-            <ListItemText>Find...</ListItemText>
-            <Typography variant="body2" color="text.secondary" sx={{ ml: 2, fontSize: 10 }}>
-              Ctrl+Shift+F
-            </Typography>
-          </MenuItem>
-        </>
-      )}
+      {onSearch && [
+        <Divider key="search-divider" sx={{ my: 0.5 }} />,
+        <MenuItem key="search-item" onClick={() => handleAction(onSearch)}>
+          <ListItemIcon>
+            <SearchIcon />
+          </ListItemIcon>
+          <ListItemText>Find...</ListItemText>
+          <Typography variant="body2" color="text.secondary" sx={{ ml: 2, fontSize: 10 }}>
+            Ctrl+Shift+F
+          </Typography>
+        </MenuItem>,
+      ]}
 
-      {onOpenQuickCommands && (
-        <>
-          <Divider sx={{ my: 0.5 }} />
-          <MenuItem onClick={() => handleAction(onOpenQuickCommands)}>
-            <ListItemIcon>
-              <TerminalIcon />
-            </ListItemIcon>
-            <ListItemText>Quick Commands</ListItemText>
-          </MenuItem>
-        </>
-      )}
+      {onOpenQuickCommands && [
+        <Divider key="quickcmd-divider" sx={{ my: 0.5 }} />,
+        <MenuItem key="quickcmd-item" onClick={() => handleAction(onOpenQuickCommands)}>
+          <ListItemIcon>
+            <TerminalIcon />
+          </ListItemIcon>
+          <ListItemText>Quick Commands</ListItemText>
+        </MenuItem>,
+      ]}
 
       <Divider sx={{ my: 0.5 }} />
 
@@ -181,17 +177,15 @@ const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
         </MenuItem>
       )}
 
-      {onExportOutput && (
-        <>
-          <Divider sx={{ my: 0.5 }} />
-          <MenuItem onClick={() => handleAction(onExportOutput)}>
-            <ListItemIcon>
-              <SaveAltIcon />
-            </ListItemIcon>
-            <ListItemText>Export Output...</ListItemText>
-          </MenuItem>
-        </>
-      )}
+      {onExportOutput && [
+        <Divider key="export-divider" sx={{ my: 0.5 }} />,
+        <MenuItem key="export-item" onClick={() => handleAction(onExportOutput)}>
+          <ListItemIcon>
+            <SaveAltIcon />
+          </ListItemIcon>
+          <ListItemText>Export Output...</ListItemText>
+        </MenuItem>,
+      ]}
     </Menu>
   );
 };

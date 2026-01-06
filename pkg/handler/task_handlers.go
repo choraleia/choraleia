@@ -21,6 +21,28 @@ func NewTaskHandler(tasks *service.TaskService, transfers *service.TransferTaskS
 	return &TaskHandler{tasks: tasks, transfers: transfers}
 }
 
+// List returns all tasks (active + history).
+// Query params:
+// - limit: max history items (default 50)
+func (h *TaskHandler) List(c *gin.Context) {
+	limit := 50
+	if v := c.Query("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			limit = n
+		}
+	}
+
+	active := h.tasks.ListRunning()
+	history := h.tasks.ListHistory(limit)
+
+	// Combine: active first, then history
+	all := make([]service.Task, 0, len(active)+len(history))
+	all = append(all, active...)
+	all = append(all, history...)
+
+	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok", Data: all})
+}
+
 func (h *TaskHandler) ListActive(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok", Data: h.tasks.ListRunning()})
 }

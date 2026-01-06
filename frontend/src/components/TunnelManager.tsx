@@ -1,5 +1,7 @@
-// filepath: /home/blue/codes/choraleia/frontend/src/components/TunnelManager.tsx
-import React, { useState, useEffect, useCallback } from "react";
+// Tunnel Manager - Dialog for managing SSH tunnels
+// Uses TanStack Query for data fetching with event-driven updates
+
+import React from "react";
 import {
   Dialog,
   DialogTitle,
@@ -23,33 +25,17 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
-import { getApiUrl } from "../api/base";
 
-export interface TunnelInfo {
-  id: string;
-  asset_id: string;
-  asset_name: string;
-  type: "local" | "remote" | "dynamic";
-  local_host: string;
-  local_port: number;
-  remote_host?: string;
-  remote_port?: number;
-  status: "running" | "stopped" | "error";
-  error_message?: string;
-  bytes_sent?: number;
-  bytes_received?: number;
-  connections?: number;
-  started_at?: string;
-}
+import {
+  useTunnels,
+  useStartTunnel,
+  useStopTunnel,
+  useInvalidateTunnels,
+} from "../stores";
+import type { TunnelInfo } from "../api/tunnels";
 
-export interface TunnelStats {
-  total: number;
-  running: number;
-  stopped: number;
-  error: number;
-  total_bytes_sent: number;
-  total_bytes_received: number;
-}
+// Re-export types for backward compatibility
+export type { TunnelInfo, TunnelStats } from "../api/tunnels";
 
 interface TunnelManagerProps {
   open: boolean;
@@ -80,82 +66,34 @@ function formatDuration(startedAt?: string): string {
 }
 
 const TunnelManager: React.FC<TunnelManagerProps> = ({ open, onClose }) => {
-  const [tunnels, setTunnels] = useState<TunnelInfo[]>([]);
-  const [stats, setStats] = useState<TunnelStats>({
-    total: 0,
-    running: 0,
-    stopped: 0,
-    error: 0,
-    total_bytes_sent: 0,
-    total_bytes_received: 0,
-  });
-  const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // Use TanStack Query for data
+  const { tunnels, stats, loading } = useTunnels();
+  const invalidate = useInvalidateTunnels();
 
-  const fetchTunnels = useCallback(async () => {
-    setLoading(true);
-    try {
-      const resp = await fetch(getApiUrl("/api/tunnels"));
-      const data = await resp.json();
-      if (data.code === 200 && data.data) {
-        setTunnels(data.data.tunnels || []);
-        setStats(data.data.stats || {
-          total: 0,
-          running: 0,
-          stopped: 0,
-          error: 0,
-          total_bytes_sent: 0,
-          total_bytes_received: 0,
-        });
-      }
-    } catch (e) {
-      console.error("Failed to fetch tunnels:", e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  // Mutations for start/stop - invalidate on error to show error in status tooltip
+  const startMutation = useStartTunnel();
+  const stopMutation = useStopTunnel();
 
-  useEffect(() => {
-    if (open) {
-      fetchTunnels();
-      // Auto refresh every 5 seconds
-      const interval = setInterval(fetchTunnels, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [open, fetchTunnels]);
+  const actionLoading = startMutation.isPending || stopMutation.isPending
+    ? (startMutation.variables || stopMutation.variables)
+    : null;
 
-  const handleStart = async (tunnelId: string) => {
-    setActionLoading(tunnelId);
-    try {
-      const resp = await fetch(getApiUrl(`/api/tunnels/${tunnelId}/start`), {
-        method: "POST",
-      });
-      const data = await resp.json();
-      if (data.code === 200) {
-        fetchTunnels();
-      }
-    } catch (e) {
-      console.error("Failed to start tunnel:", e);
-    } finally {
-      setActionLoading(null);
-    }
+  const handleStart = (tunnelId: string) => {
+    startMutation.mutate(tunnelId, {
+      onError: () => {
+        // Refresh list to get updated error status
+        invalidate();
+      },
+    });
   };
 
-  const handleStop = async (tunnelId: string) => {
-    setActionLoading(tunnelId);
-    try {
-      const resp = await fetch(getApiUrl(`/api/tunnels/${tunnelId}/stop`), {
-        method: "POST",
-      });
-      const data = await resp.json();
-      if (data.code === 200) {
-        fetchTunnels();
-      }
-    } catch (e) {
-      console.error("Failed to stop tunnel:", e);
-    } finally {
-      setActionLoading(null);
-    }
+  const handleStop = (tunnelId: string) => {
+    stopMutation.mutate(tunnelId, {
+      onError: () => {
+        // Refresh list to get updated error status
+        invalidate();
+      },
+    });
   };
 
   const getStatusColor = (status: string) => {
@@ -202,7 +140,7 @@ const TunnelManager: React.FC<TunnelManagerProps> = ({ open, onClose }) => {
         <Typography variant="h6" component="span" sx={{ flex: 1 }}>
           Tunnel Manager
         </Typography>
-        <IconButton size="small" onClick={fetchTunnels} disabled={loading}>
+        <IconButton size="small" onClick={() => invalidate()} disabled={loading}>
           <RefreshIcon fontSize="small" />
         </IconButton>
         <IconButton size="small" onClick={onClose} sx={{ ml: 1 }}>

@@ -1,12 +1,20 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
-import { tasksWSClient } from "./api/tasks_ws_client";
-import { tasksStore } from "./api/tasks_store";
+import React, { useEffect, useRef, useState } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { useEventClientInit } from "./api/event_hooks";
+import {
+  queryClient,
+  useTasks,
+  useTunnelStats,
+  initAssetEvents,
+  initTaskEvents,
+  initTunnelEvents,
+  initFileManagerEvents,
+} from "./stores";
 import StatusBar from "./components/StatusBar";
 import SettingsPage from "./components/settings/SettingsPage";
 import AssetPage, { AssetPageHandle } from "./components/assets/AssetPage";
 import TaskCenter from "./components/TaskCenter";
 import TunnelManager from "./components/TunnelManager";
-import { getApiUrl } from "./api/base";
 
 // MUI components
 import { Box, IconButton } from "@mui/material";
@@ -15,16 +23,20 @@ import { Box, IconButton } from "@mui/material";
 import DesktopMacIcon from "@mui/icons-material/DesktopMac";
 import SettingsIcon from "@mui/icons-material/Settings";
 
-// App
-const App: React.FC = () => {
+// Initialize global event subscriptions (must be before component render)
+initAssetEvents(queryClient);
+initTaskEvents(queryClient);
+initTunnelEvents(queryClient);
+initFileManagerEvents(queryClient);
+
+// Inner component that uses hooks (must be inside QueryClientProvider)
+const AppContent: React.FC = () => {
   const [selectedMenu, setSelectedMenu] = useState<"assets" | "settings">(
     "assets",
   );
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
-  const [tasksActive, setTasksActive] = useState(0);
   const [tunnelManagerOpen, setTunnelManagerOpen] = useState(false);
-  const [tunnelStats, setTunnelStats] = useState({ running: 0, total: 0 });
   // Preserve app statistics
   const [appStats, setAppStats] = useState({
     memoryUsage: 0,
@@ -34,27 +46,14 @@ const App: React.FC = () => {
   // Asset page ref
   const assetPageRef = useRef<AssetPageHandle>(null);
 
-  // Fetch tunnel stats periodically
-  const fetchTunnelStats = useCallback(async () => {
-    try {
-      const resp = await fetch(getApiUrl("/api/tunnels/stats"));
-      const data = await resp.json();
-      if (data.code === 200 && data.data) {
-        setTunnelStats({
-          running: data.data.running || 0,
-          total: data.data.total || 0,
-        });
-      }
-    } catch (e) {
-      // Ignore errors
-    }
-  }, []);
+  // Initialize event client for real-time notifications
+  useEventClientInit();
 
-  useEffect(() => {
-    fetchTunnelStats();
-    const interval = setInterval(fetchTunnelStats, 10000);
-    return () => clearInterval(interval);
-  }, [fetchTunnelStats]);
+  // Get task and tunnel stats from stores
+  const { active: activeTasks } = useTasks();
+  const { data: tunnelStats } = useTunnelStats();
+
+  const tasksActive = activeTasks.length;
 
   useEffect(() => {
     const update = () =>
@@ -80,6 +79,7 @@ const App: React.FC = () => {
     if (selectedMenu === "assets")
       [0, 60, 150].forEach((d) => setTimeout(trigger, d));
   }, [selectedMenu]);
+
   useEffect(() => {
     if (selectedMenu === "assets" && assetsVisible) {
       const trigger = () => {
@@ -97,25 +97,6 @@ const App: React.FC = () => {
   const totalTerminals = assetPageRef.current?.getTotalTerminals() || 0;
   const activeConnections =
     assetPageRef.current?.getActiveConnectionsCount() || 0;
-
-  // Start the shared tasks events websocket once.
-  // This avoids React StrictMode mount/unmount churn closing sockets.
-  useEffect(() => {
-    tasksWSClient.start();
-    return () => {
-      // Keep the socket alive even if App is remounted in dev; stop only on full teardown.
-      // In typical Wails apps, App stays mounted for the process lifetime.
-      tasksWSClient.stop();
-    };
-  }, []);
-
-  // Keep the status bar task count updated even when TaskCenter is closed.
-  useEffect(() => {
-    return tasksStore.subscribe((s) => {
-      const n = s.active.filter((t) => t.status === "running" || t.status === "queued").length;
-      setTasksActive(n);
-    });
-  }, []);
 
   return (
     <Box display="flex" flexDirection="column" height="100%">
@@ -219,10 +200,7 @@ const App: React.FC = () => {
 
       <TunnelManager
         open={tunnelManagerOpen}
-        onClose={() => {
-          setTunnelManagerOpen(false);
-          fetchTunnelStats();
-        }}
+        onClose={() => setTunnelManagerOpen(false)}
       />
 
       {/* Bottom status bar */}
@@ -235,11 +213,20 @@ const App: React.FC = () => {
         cpuUsage={appStats.cpuUsage}
         tasksActive={tasksActive}
         onTasksClick={() => setTaskCenterOpen(true)}
-        tunnelsRunning={tunnelStats.running}
-        tunnelsTotal={tunnelStats.total}
+        tunnelsRunning={tunnelStats?.running ?? 0}
+        tunnelsTotal={tunnelStats?.total ?? 0}
         onTunnelsClick={() => setTunnelManagerOpen(true)}
       />
     </Box>
+  );
+};
+
+// App wrapper - provides QueryClientProvider
+const App: React.FC = () => {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+    </QueryClientProvider>
   );
 };
 

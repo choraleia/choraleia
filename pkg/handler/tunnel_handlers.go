@@ -70,6 +70,11 @@ func (h *TunnelHandler) Start(c *gin.Context) {
 		return
 	}
 
+	// Reload tunnels from assets to ensure tunnel exists in memory
+	if err := h.tunnelService.LoadTunnelsFromAssets(); err != nil {
+		h.logger.Warn("Failed to load tunnels from assets", "error", err)
+	}
+
 	if err := h.tunnelService.StartTunnel(tunnelID); err != nil {
 		h.logger.Error("Failed to start tunnel", "id", tunnelID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -95,6 +100,11 @@ func (h *TunnelHandler) Stop(c *gin.Context) {
 			"message": "tunnel ID is required",
 		})
 		return
+	}
+
+	// Reload tunnels from assets to ensure tunnel exists in memory
+	if err := h.tunnelService.LoadTunnelsFromAssets(); err != nil {
+		h.logger.Warn("Failed to load tunnels from assets", "error", err)
 	}
 
 	if err := h.tunnelService.StopTunnel(tunnelID); err != nil {

@@ -37,6 +37,7 @@ import {
   type FSEntry,
 } from "../../api/fs";
 import { tasksEnqueueTransfer, type TransferRequest } from "../../api/tasks";
+import { useFileManagerList, useInvalidateFileManager } from "../../stores";
 
 type LayoutMode = "horizontal" | "vertical";
 
@@ -710,25 +711,77 @@ export default function FileManagerPanel(props: Props) {
     ) as string | null;
   }, [tabs, activeTabKey]);
 
-  const [remotePath, setRemotePath] = useState<string>("");
-  const [localPath, setLocalPath] = useState<string>("/");
-
-  const [remoteLoading, setRemoteLoading] = useState<boolean>(false);
-  const [localLoading, setLocalLoading] = useState<boolean>(false);
-
-  const [remoteError, setRemoteError] = useState<string | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
-
-  const [remoteEntries, setRemoteEntries] = useState<FSEntry[]>([]);
-  const [localEntries, setLocalEntries] = useState<FSEntry[]>([]);
-
-  const [asset, setAsset] = useState<Asset | null>(null);
-
   // Get containerId for Docker container terminals
   const containerId = useMemo(() => {
     const tab = tabs?.find((t) => (t?.key ?? t?.id) === activeTabKey) ?? null;
     return (tab?.meta?.containerId ?? null) as string | null;
   }, [tabs, activeTabKey]);
+
+  const [showHidden, setShowHidden] = useState<boolean>(() => readShowHidden());
+
+  const [remotePath, setRemotePath] = useState<string>("");
+  const [localPath, setLocalPath] = useState<string>("/");
+
+  const [remotePathInput, setRemotePathInput] = useState<string>("");
+  const [localPathInput, setLocalPathInput] = useState<string>("/");
+
+  const [asset, setAsset] = useState<Asset | null>(null);
+
+  // Use TanStack Query for file listings (auto-refreshes on fs events)
+  const {
+    data: localData,
+    isLoading: localLoading,
+    error: localQueryError,
+    refetch: refetchLocal,
+  } = useFileManagerList({
+    path: localPath || "/",
+    showHidden,
+    enabled: true,
+  });
+
+  const {
+    data: remoteData,
+    isLoading: remoteLoading,
+    error: remoteQueryError,
+    refetch: refetchRemote,
+  } = useFileManagerList({
+    assetId,
+    containerId,
+    path: remotePath || undefined,
+    showHidden,
+    enabled: !!assetId,
+  });
+
+  // Derived state from query results
+  const localEntries = localData?.entries ?? [];
+  const remoteEntries = remoteData?.entries ?? [];
+  const localError = localQueryError ? (localQueryError instanceof Error ? localQueryError.message : String(localQueryError)) : null;
+  const remoteError = remoteQueryError ? (remoteQueryError instanceof Error ? remoteQueryError.message : String(remoteQueryError)) : null;
+
+  // Sync path inputs with actual paths from server response
+  useEffect(() => {
+    if (localData?.path) {
+      setLocalPath(localData.path);
+      setLocalPathInput(localData.path);
+    }
+  }, [localData?.path]);
+
+  useEffect(() => {
+    if (remoteData?.path) {
+      setRemotePath(remoteData.path);
+      setRemotePathInput(remoteData.path);
+    }
+  }, [remoteData?.path]);
+
+  // Manual refresh functions (for toolbar buttons)
+  const refreshLocal = useCallback(() => {
+    void refetchLocal();
+  }, [refetchLocal]);
+
+  const refreshRemote = useCallback(() => {
+    void refetchRemote();
+  }, [refetchRemote]);
+
 
   // Asset type can be momentarily unknown while loading; avoid hiding the remote pane during that window.
   const hasAssetLoaded = assetId ? asset !== null : true;
@@ -750,7 +803,6 @@ export default function FileManagerPanel(props: Props) {
   const [paneOrder, setPaneOrder] = useState<PaneOrder>(() => readPaneOrder());
 
   const [columns, setColumns] = useState<EntryColumn[]>(() => readColumns());
-  const [showHidden, setShowHidden] = useState<boolean>(() => readShowHidden());
 
   const [sortKey, setSortKey] = useState<SortKey>(() => readSortState().key);
   const [sortDir, setSortDir] = useState<SortDir>(() => readSortState().dir);
@@ -808,8 +860,6 @@ export default function FileManagerPanel(props: Props) {
   const splitRafRef = useRef<number | null>(null);
   const splitPendingRef = useRef<number | null>(null);
 
-  const [localPathInput, setLocalPathInput] = useState<string>(localPath);
-  const [remotePathInput, setRemotePathInput] = useState<string>(remotePath);
 
   const [activePathEditPane, setActivePathEditPane] = useState<PaneId | null>(
     null,
@@ -846,57 +896,33 @@ export default function FileManagerPanel(props: Props) {
     [localPath, remotePath],
   );
 
+  // Navigation just updates the path - TanStack Query handles the fetch automatically
   const navigateLocal = useCallback(
-    async (nextPath: string) => {
+    (nextPath: string) => {
       const p = normalizePosixPath(nextPath);
       setLocalPath(p);
       setLocalPathInput(p);
-      await fsList({ path: p, includeHidden: showHidden })
-        .then((data) => {
-          setLocalEntries(data.entries);
-          setLocalPath(data.path);
-          setLocalPathInput(data.path);
-          setLocalError(null);
-        })
-        .catch((e) => {
-          setLocalError(e instanceof Error ? e.message : String(e));
-        });
     },
-    [showHidden],
+    [],
   );
 
   const navigateRemote = useCallback(
-    async (nextPath: string) => {
+    (nextPath: string) => {
       if (!assetId) return;
       const p = normalizePosixPath(nextPath);
       setRemotePath(p);
       setRemotePathInput(p);
-      await fsList({
-        assetId,
-        containerId: containerId || undefined,
-        path: p,
-        includeHidden: showHidden,
-      })
-        .then((data) => {
-          setRemoteEntries(data.entries);
-          setRemotePath(data.path);
-          setRemotePathInput(data.path);
-          setRemoteError(null);
-        })
-        .catch((e) => {
-          setRemoteError(e instanceof Error ? e.message : String(e));
-        });
     },
-    [assetId, containerId, showHidden],
+    [assetId],
   );
 
   const commitEdit = useCallback(
     (pane: PaneId) => {
       setActivePathEditPane(null);
       if (pane === "local") {
-        void navigateLocal(localPathInput);
+        navigateLocal(localPathInput);
       } else {
-        void navigateRemote(remotePathInput);
+        navigateRemote(remotePathInput);
       }
     },
     [navigateLocal, navigateRemote, localPathInput, remotePathInput],
@@ -1015,81 +1041,6 @@ export default function FileManagerPanel(props: Props) {
     };
   }, [layout, stopDrag, split]);
 
-  // Keep input synced when path is changed via breadcrumbs or list navigation.
-  useEffect(() => setLocalPathInput(localPath), [localPath]);
-  useEffect(() => setRemotePathInput(remotePath), [remotePath]);
-
-  const refreshRemote = useCallback(async () => {
-    if (!assetId) return;
-
-    setRemoteLoading(true);
-    setRemoteError(null);
-
-    try {
-      const reqPath = remotePathInput || remotePath || undefined;
-      const data = await fsList({
-        assetId,
-        containerId: containerId || undefined,
-        path: reqPath || undefined,
-        includeHidden: showHidden,
-      });
-      setRemoteEntries(data.entries);
-      setRemotePath(data.path);
-      setRemotePathInput(data.path);
-    } catch (e) {
-      setRemoteError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setRemoteLoading(false);
-    }
-  }, [assetId, containerId, remotePath, remotePathInput, showHidden]);
-
-  const refreshLocal = useCallback(async () => {
-    setLocalLoading(true);
-    setLocalError(null);
-
-    try {
-      const reqPath = localPathInput || localPath || undefined;
-      const data = await fsList({
-        path: reqPath || undefined,
-        includeHidden: showHidden,
-      });
-      setLocalEntries(data.entries);
-      setLocalPath(data.path);
-      setLocalPathInput(data.path);
-      setLocalError(null);
-
-      if ((data.entries?.length ?? 0) === 0 && normalizePosixPath(data.path) === "/") {
-        const candidates = ["/home", "/tmp", "/Downloads", "/Desktop"];
-        for (const cand of candidates) {
-          try {
-            const candData = await fsList({ path: cand, includeHidden: showHidden });
-            if ((candData.entries?.length ?? 0) > 0) {
-              setLocalEntries(candData.entries);
-              setLocalPath(candData.path);
-              setLocalPathInput(candData.path);
-              break;
-            }
-          } catch {
-            // ignore
-          }
-        }
-      }
-    } catch (e) {
-      setLocalError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLocalLoading(false);
-    }
-  }, [localPath, localPathInput, showHidden]);
-
-  // Load both sides on mount / asset change.
-  useEffect(() => {
-    void refreshLocal();
-  }, [refreshLocal]);
-
-  useEffect(() => {
-    if (!assetId) return;
-    void refreshRemote();
-  }, [refreshRemote, assetId]);
 
   const [selectedLocal, setSelectedLocal] = useState<Set<string>>(() => new Set());
   const [selectedRemote, setSelectedRemote] = useState<Set<string>>(() => new Set());
@@ -1414,10 +1365,7 @@ export default function FileManagerPanel(props: Props) {
               };
 
         await tasksEnqueueTransfer(req);
-
-        // Refresh the destination pane.
-        if (toPane === "local") await refreshLocal();
-        else await refreshRemote();
+        // Note: File list will refresh automatically when task.completed event is received
       } catch (e) {
         setTransferError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -1431,8 +1379,6 @@ export default function FileManagerPanel(props: Props) {
       hasRemoteFS,
       localEntries,
       localPath,
-      refreshLocal,
-      refreshRemote,
       remoteEntries,
       remotePath,
     ],

@@ -83,6 +83,7 @@ type SSHConfig struct {
 
 // SSHTunnel represents a port forwarding tunnel configuration
 type SSHTunnel struct {
+	ID         string `json:"id,omitempty"`         // unique tunnel ID (auto-generated if empty)
 	Type       string `json:"type"`                 // "local", "remote", "dynamic"
 	LocalHost  string `json:"local_host,omitempty"` // default "127.0.0.1"
 	LocalPort  int    `json:"local_port"`

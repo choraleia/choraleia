@@ -26,6 +26,7 @@
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/postcss": "^4.1.13",
+    "@tanstack/react-query": "^5.90.16",
     "@types/react-window": "^2.0.0",
     "@wailsio/runtime": "latest",
     "@xterm/addon-canvas": "^0.7.0",

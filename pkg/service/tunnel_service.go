@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/event"
 	"github.com/choraleia/choraleia/pkg/models"
-	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -154,12 +154,8 @@ func (s *TunnelService) LoadTunnelsFromAssets() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Clear existing tunnels that are stopped
-	for id, t := range s.tunnels {
-		if t.Status == TunnelStatusStopped {
-			delete(s.tunnels, id)
-		}
-	}
+	// Track which tunnel IDs are still valid (exist in asset configs)
+	validTunnelIDs := make(map[string]bool)
 
 	// Load tunnels from SSH assets
 	for _, asset := range assets {
@@ -173,38 +169,49 @@ func (s *TunnelService) LoadTunnelsFromAssets() error {
 		}
 
 		for _, tunnelCfg := range sshConfig.Tunnels {
-			// Check if tunnel already exists
-			exists := false
-			for _, t := range s.tunnels {
-				if t.AssetID == asset.ID &&
-					t.Config.Type == tunnelCfg.Type &&
-					t.Config.LocalPort == tunnelCfg.LocalPort {
-					exists = true
-					break
-				}
+			// Skip tunnels without ID (should not happen after migration)
+			if tunnelCfg.ID == "" {
+				continue
 			}
 
-			if !exists {
-				localHost := tunnelCfg.LocalHost
-				if localHost == "" {
-					localHost = "127.0.0.1"
-				}
+			tunnelID := tunnelCfg.ID
+			validTunnelIDs[tunnelID] = true
 
-				tunnel := &Tunnel{
-					ID:        uuid.New().String(),
-					AssetID:   asset.ID,
-					AssetName: asset.Name,
-					Config: models.SSHTunnel{
-						Type:       tunnelCfg.Type,
-						LocalHost:  localHost,
-						LocalPort:  tunnelCfg.LocalPort,
-						RemoteHost: tunnelCfg.RemoteHost,
-						RemotePort: tunnelCfg.RemotePort,
-					},
-					Status: TunnelStatusStopped,
-				}
-				s.tunnels[tunnel.ID] = tunnel
+			// Check if tunnel already exists in memory
+			if existing, ok := s.tunnels[tunnelID]; ok {
+				// Update asset name in case it changed
+				existing.AssetName = asset.Name
+				continue
 			}
+
+			// Create new tunnel entry
+			localHost := tunnelCfg.LocalHost
+			if localHost == "" {
+				localHost = "127.0.0.1"
+			}
+
+			tunnel := &Tunnel{
+				ID:        tunnelID,
+				AssetID:   asset.ID,
+				AssetName: asset.Name,
+				Config: models.SSHTunnel{
+					ID:         tunnelCfg.ID,
+					Type:       tunnelCfg.Type,
+					LocalHost:  localHost,
+					LocalPort:  tunnelCfg.LocalPort,
+					RemoteHost: tunnelCfg.RemoteHost,
+					RemotePort: tunnelCfg.RemotePort,
+				},
+				Status: TunnelStatusStopped,
+			}
+			s.tunnels[tunnel.ID] = tunnel
+		}
+	}
+
+	// Remove tunnels that no longer exist in asset configs (only if stopped)
+	for id, t := range s.tunnels {
+		if !validTunnelIDs[id] && t.Status == TunnelStatusStopped {
+			delete(s.tunnels, id)
 		}
 	}
 
@@ -306,6 +313,12 @@ func (s *TunnelService) StopTunnel(tunnelID string) error {
 	tunnel.Status = TunnelStatusStopped
 	tunnel.ErrorMessage = ""
 	tunnel.StartedAt = nil
+
+	// Emit status changed event
+	event.Emit(event.TunnelStatusChangedEvent{
+		TunnelID: tunnel.ID,
+		Status:   string(TunnelStatusStopped),
+	})
 
 	return nil
 }
@@ -702,6 +715,12 @@ func (s *TunnelService) startLocalForward(tunnel *Tunnel) error {
 	tunnel.ErrorMessage = ""
 	tunnel.mu.Unlock()
 
+	// Emit status changed event
+	event.Emit(event.TunnelStatusChangedEvent{
+		TunnelID: tunnel.ID,
+		Status:   string(TunnelStatusRunning),
+	})
+
 	// Accept connections in goroutine
 	go func() {
 		for {
@@ -778,6 +797,12 @@ func (s *TunnelService) startRemoteForward(tunnel *Tunnel) error {
 	tunnel.ErrorMessage = ""
 	tunnel.mu.Unlock()
 
+	// Emit status changed event
+	event.Emit(event.TunnelStatusChangedEvent{
+		TunnelID: tunnel.ID,
+		Status:   string(TunnelStatusRunning),
+	})
+
 	// Accept connections in goroutine
 	go func() {
 		for {
@@ -836,6 +861,12 @@ func (s *TunnelService) startDynamicForward(tunnel *Tunnel) error {
 	tunnel.StartedAt = &now
 	tunnel.ErrorMessage = ""
 	tunnel.mu.Unlock()
+
+	// Emit status changed event
+	event.Emit(event.TunnelStatusChangedEvent{
+		TunnelID: tunnel.ID,
+		Status:   string(TunnelStatusRunning),
+	})
 
 	// Accept connections in goroutine - simplified SOCKS5 implementation
 	go func() {
@@ -989,4 +1020,10 @@ func (s *TunnelService) setTunnelError(tunnel *Tunnel, msg string) {
 	tunnel.Status = TunnelStatusError
 	tunnel.ErrorMessage = msg
 	tunnel.mu.Unlock()
+
+	// Emit status changed event
+	event.Emit(event.TunnelStatusChangedEvent{
+		TunnelID: tunnel.ID,
+		Status:   string(TunnelStatusError),
+	})
 }
