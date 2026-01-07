@@ -225,26 +225,46 @@ export type ToolType =
   | "browser-service" // Cloud browser service (Browserless, BrowserBase, etc.)
   | "builtin";       // Built-in tools
 
+// Runtime environment for tools that need to execute locally or in workspace
+export type RuntimeEnv = "local" | "workspace";
+
 // MCP stdio configuration
 export type MCPStdioConfig = {
   command: string;           // Command to run (e.g. "npx", "python", "node")
   args?: string[];           // Command arguments (e.g. ["-y", "@modelcontextprotocol/server-filesystem"])
   env?: Record<string, string>; // Environment variables
   cwd?: string;              // Working directory
+  runtimeEnv?: RuntimeEnv;   // Where to run: "local" (host machine) or "workspace" (container/pod)
+};
+
+// Authentication configuration for remote MCP servers
+export type MCPAuthConfig = {
+  type: "none" | "bearer" | "basic" | "apiKey" | "custom";
+  token?: string;            // For bearer auth
+  username?: string;         // For basic auth
+  password?: string;         // For basic auth
+  apiKey?: string;           // For API key auth
+  apiKeyHeader?: string;     // Header name for API key (default: X-API-Key)
+  customHeaders?: Record<string, string>; // For custom auth
 };
 
 // MCP SSE configuration (Server-Sent Events)
 export type MCPSSEConfig = {
   url: string;               // SSE endpoint URL
-  headers?: Record<string, string>; // Custom headers (for auth, etc.)
+  headers?: Record<string, string>; // Custom headers
+  auth?: MCPAuthConfig;      // Authentication configuration
   timeout?: number;          // Connection timeout in ms
+  reconnect?: boolean;       // Auto-reconnect on disconnect (default: true)
+  reconnectInterval?: number; // Reconnect interval in ms (default: 1000)
 };
 
 // MCP HTTP configuration (Streamable HTTP)
 export type MCPHTTPConfig = {
   url: string;               // HTTP endpoint URL
   headers?: Record<string, string>; // Custom headers
+  auth?: MCPAuthConfig;      // Authentication configuration
   timeout?: number;          // Request timeout in ms
+  retries?: number;          // Number of retries on failure (default: 3)
 };
 
 // OpenAPI configuration
@@ -272,6 +292,7 @@ export type ScriptConfig = {
   env?: Record<string, string>; // Environment variables
   cwd?: string;              // Working directory
   timeout?: number;          // Execution timeout in ms
+  runtimeEnv?: RuntimeEnv;   // Where to run: "local" (host machine) or "workspace" (container/pod)
 };
 
 // Built-in tool configuration

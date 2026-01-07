@@ -26,6 +26,7 @@ import {
   Collapse,
   Switch,
   Divider,
+  Checkbox,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
@@ -49,12 +50,13 @@ import {
   MCPStdioConfig,
   MCPSSEConfig,
   MCPHTTPConfig,
+  MCPAuthConfig,
+  RuntimeEnv,
   OpenAPIConfig,
   ScriptConfig,
   BrowserServiceConfig,
   BuiltinConfig,
   PRESET_MCP_SERVERS,
-  BUILTIN_TOOLS,
   BROWSER_SERVICE_PROVIDERS,
   ContainerMode,
   WorkspaceAssetRef,
@@ -67,6 +69,7 @@ import {
   sanitizeWorkspaceName,
 } from "../../state/workspaces";
 import { listAssets, AssetLike, AssetType } from "../assets/api/assets";
+import { listBuiltinTools, BuiltinToolDefinition } from "../../api/builtin-tools";
 
 interface SpaceConfigDialogProps {
   open: boolean;
@@ -170,6 +173,289 @@ function ChipListInput({
           }
         }}
       />
+    </Box>
+  );
+}
+
+// Environment Variables Editor component
+function EnvVarsEditor({
+  env,
+  onChange,
+}: {
+  env?: Record<string, string>;
+  onChange: (env: Record<string, string> | undefined) => void;
+}) {
+  const entries = Object.entries(env || {});
+  const [newKey, setNewKey] = React.useState("");
+  const [newValue, setNewValue] = React.useState("");
+
+  const addEntry = () => {
+    if (newKey.trim()) {
+      onChange({ ...env, [newKey.trim()]: newValue });
+      setNewKey("");
+      setNewValue("");
+    }
+  };
+
+  const removeEntry = (key: string) => {
+    const newEnv = { ...env };
+    delete newEnv[key];
+    onChange(Object.keys(newEnv).length > 0 ? newEnv : undefined);
+  };
+
+  const updateEntry = (oldKey: string, newKey: string, value: string) => {
+    const newEnv = { ...env };
+    if (oldKey !== newKey) {
+      delete newEnv[oldKey];
+    }
+    newEnv[newKey] = value;
+    onChange(newEnv);
+  };
+
+  return (
+    <Box>
+      <FieldLabel label="Environment Variables" />
+      <Box display="flex" flexDirection="column" gap={0.5}>
+        {entries.map(([key, value], idx) => (
+          <Box key={idx} display="flex" gap={1} alignItems="center">
+            <TextField
+              size="small"
+              placeholder="KEY"
+              value={key}
+              onChange={(e) => updateEntry(key, e.target.value, value)}
+              sx={{ width: 140 }}
+            />
+            <Typography color="text.secondary">=</Typography>
+            <TextField
+              size="small"
+              placeholder="value"
+              value={value}
+              onChange={(e) => updateEntry(key, key, e.target.value)}
+              sx={{ flex: 1 }}
+            />
+            <IconButton size="small" onClick={() => removeEntry(key)}>
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Box>
+        ))}
+        <Box display="flex" gap={1} alignItems="center">
+          <TextField
+            size="small"
+            placeholder="NEW_KEY"
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            sx={{ width: 140 }}
+          />
+          <Typography color="text.secondary">=</Typography>
+          <TextField
+            size="small"
+            placeholder="value"
+            value={newValue}
+            onChange={(e) => setNewValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addEntry()}
+            sx={{ flex: 1 }}
+          />
+          <IconButton size="small" onClick={addEntry} disabled={!newKey.trim()}>
+            <AddIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+// Headers Editor component (similar to EnvVarsEditor but for HTTP headers)
+function HeadersEditor({
+  headers,
+  onChange,
+}: {
+  headers?: Record<string, string>;
+  onChange: (headers: Record<string, string> | undefined) => void;
+}) {
+  const entries = Object.entries(headers || {});
+  const [newKey, setNewKey] = React.useState("");
+  const [newValue, setNewValue] = React.useState("");
+
+  const addEntry = () => {
+    if (newKey.trim()) {
+      onChange({ ...headers, [newKey.trim()]: newValue });
+      setNewKey("");
+      setNewValue("");
+    }
+  };
+
+  const removeEntry = (key: string) => {
+    const newHeaders = { ...headers };
+    delete newHeaders[key];
+    onChange(Object.keys(newHeaders).length > 0 ? newHeaders : undefined);
+  };
+
+  return (
+    <Box>
+      <FieldLabel label="Custom Headers" />
+      <Box display="flex" flexDirection="column" gap={0.5}>
+        {entries.map(([key, value], idx) => (
+          <Box key={idx} display="flex" gap={1} alignItems="center">
+            <TextField
+              size="small"
+              placeholder="Header-Name"
+              value={key}
+              sx={{ width: 160 }}
+              InputProps={{ readOnly: true }}
+            />
+            <TextField
+              size="small"
+              placeholder="value"
+              value={value}
+              onChange={(e) => {
+                const newHeaders = { ...headers, [key]: e.target.value };
+                onChange(newHeaders);
+              }}
+              sx={{ flex: 1 }}
+            />
+            <IconButton size="small" onClick={() => removeEntry(key)}>
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Box>
+        ))}
+        <Box display="flex" gap={1} alignItems="center">
+          <TextField
+            size="small"
+            placeholder="Header-Name"
+            value={newKey}
+            onChange={(e) => setNewKey(e.target.value)}
+            sx={{ width: 160 }}
+          />
+          <TextField
+            size="small"
+            placeholder="value"
+            value={newValue}
+            onChange={(e) => setNewValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addEntry()}
+            sx={{ flex: 1 }}
+          />
+          <IconButton size="small" onClick={addEntry} disabled={!newKey.trim()}>
+            <AddIcon fontSize="small" />
+          </IconButton>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+// Authentication Config Editor
+function AuthConfigEditor({
+  auth,
+  onChange,
+}: {
+  auth?: MCPAuthConfig;
+  onChange: (auth: MCPAuthConfig | undefined) => void;
+}) {
+  const authType = auth?.type || "none";
+
+  return (
+    <Box>
+      <FieldLabel label="Authentication" />
+      <FormControl size="small" fullWidth sx={{ mb: 1 }}>
+        <Select
+          value={authType}
+          onChange={(e) => {
+            const type = e.target.value as MCPAuthConfig["type"];
+            if (type === "none") {
+              onChange(undefined);
+            } else {
+              onChange({ type });
+            }
+          }}
+        >
+          <MenuItem value="none">None</MenuItem>
+          <MenuItem value="bearer">Bearer Token</MenuItem>
+          <MenuItem value="basic">Basic Auth</MenuItem>
+          <MenuItem value="apiKey">API Key</MenuItem>
+        </Select>
+      </FormControl>
+
+      {authType === "bearer" && (
+        <TextField
+          size="small"
+          fullWidth
+          placeholder="Bearer token"
+          type="password"
+          value={auth?.token || ""}
+          onChange={(e) => onChange({ ...auth, type: "bearer", token: e.target.value })}
+        />
+      )}
+
+      {authType === "basic" && (
+        <Box display="flex" gap={1}>
+          <TextField
+            size="small"
+            placeholder="Username"
+            value={auth?.username || ""}
+            onChange={(e) => onChange({ ...auth, type: "basic", username: e.target.value })}
+            sx={{ flex: 1 }}
+          />
+          <TextField
+            size="small"
+            placeholder="Password"
+            type="password"
+            value={auth?.password || ""}
+            onChange={(e) => onChange({ ...auth, type: "basic", password: e.target.value })}
+            sx={{ flex: 1 }}
+          />
+        </Box>
+      )}
+
+      {authType === "apiKey" && (
+        <Box display="flex" gap={1}>
+          <TextField
+            size="small"
+            placeholder="Header name (default: X-API-Key)"
+            value={auth?.apiKeyHeader || ""}
+            onChange={(e) => onChange({ ...auth, type: "apiKey", apiKeyHeader: e.target.value || undefined })}
+            sx={{ width: 200 }}
+          />
+          <TextField
+            size="small"
+            placeholder="API Key value"
+            type="password"
+            value={auth?.apiKey || ""}
+            onChange={(e) => onChange({ ...auth, type: "apiKey", apiKey: e.target.value })}
+            sx={{ flex: 1 }}
+          />
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+// Runtime Environment Selector
+function RuntimeEnvSelector({
+  value,
+  onChange,
+  label = "Runtime Environment",
+}: {
+  value?: RuntimeEnv;
+  onChange: (env: RuntimeEnv) => void;
+  label?: string;
+}) {
+  return (
+    <Box>
+      <FieldLabel label={label} />
+      <FormControl size="small" fullWidth>
+        <Select
+          value={value || "workspace"}
+          onChange={(e) => onChange(e.target.value as RuntimeEnv)}
+        >
+          <MenuItem value="workspace">Workspace (Container/Pod)</MenuItem>
+          <MenuItem value="local">Local (Host Machine)</MenuItem>
+        </Select>
+      </FormControl>
+      <FormHelperText>
+        {value === "local"
+          ? "Runs on the host machine where the app is running"
+          : "Runs inside the workspace runtime (Docker container or K8s pod)"}
+      </FormHelperText>
     </Box>
   );
 }
@@ -591,47 +877,146 @@ function ToolConfigItem({
                   />
                 </Box>
               </Box>
-              <Box>
-                <FieldLabel label="Working Directory" />
-                <TextField
-                  size="small"
-                  fullWidth
-                  placeholder="Optional working directory"
-                  value={tool.mcpStdio?.cwd || ""}
-                  onChange={(e) =>
-                    onUpdate({ mcpStdio: { ...tool.mcpStdio, command: tool.mcpStdio?.command || "", cwd: e.target.value || undefined } })
-                  }
-                />
+              <Box display="flex" gap={2}>
+                <Box flex={1}>
+                  <FieldLabel label="Working Directory" />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    placeholder="Optional working directory"
+                    value={tool.mcpStdio?.cwd || ""}
+                    onChange={(e) =>
+                      onUpdate({ mcpStdio: { ...tool.mcpStdio, command: tool.mcpStdio?.command || "", cwd: e.target.value || undefined } })
+                    }
+                  />
+                </Box>
+                <Box flex={1}>
+                  <RuntimeEnvSelector
+                    value={tool.mcpStdio?.runtimeEnv}
+                    onChange={(env) =>
+                      onUpdate({ mcpStdio: { ...tool.mcpStdio, command: tool.mcpStdio?.command || "", runtimeEnv: env } })
+                    }
+                  />
+                </Box>
               </Box>
+              <EnvVarsEditor
+                env={tool.mcpStdio?.env}
+                onChange={(env) =>
+                  onUpdate({ mcpStdio: { ...tool.mcpStdio, command: tool.mcpStdio?.command || "", env } })
+                }
+              />
             </>
           )}
 
           {/* MCP SSE config */}
           {tool.type === "mcp-sse" && (
-            <Box>
-              <FieldLabel label="SSE Endpoint URL" />
-              <TextField
-                size="small"
-                fullWidth
-                placeholder="https://example.com/mcp/sse"
-                value={tool.mcpSse?.url || ""}
-                onChange={(e) => onUpdate({ mcpSse: { url: e.target.value } })}
+            <>
+              <Box>
+                <FieldLabel label="SSE Endpoint URL" />
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="https://example.com/mcp/sse"
+                  value={tool.mcpSse?.url || ""}
+                  onChange={(e) => onUpdate({ mcpSse: { ...tool.mcpSse, url: e.target.value } })}
+                />
+              </Box>
+              <Box display="flex" gap={2}>
+                <Box flex={1}>
+                  <FieldLabel label="Timeout (ms)" />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    type="number"
+                    placeholder="30000"
+                    value={tool.mcpSse?.timeout || ""}
+                    onChange={(e) =>
+                      onUpdate({ mcpSse: { ...tool.mcpSse, url: tool.mcpSse?.url || "", timeout: e.target.value ? parseInt(e.target.value) : undefined } })
+                    }
+                  />
+                </Box>
+                <Box flex={1}>
+                  <Box display="flex" alignItems="center" gap={1} mt={2.5}>
+                    <Switch
+                      size="small"
+                      checked={tool.mcpSse?.reconnect !== false}
+                      onChange={(e) =>
+                        onUpdate({ mcpSse: { ...tool.mcpSse, url: tool.mcpSse?.url || "", reconnect: e.target.checked } })
+                      }
+                    />
+                    <Typography variant="body2">Auto-reconnect</Typography>
+                  </Box>
+                </Box>
+              </Box>
+              <AuthConfigEditor
+                auth={tool.mcpSse?.auth}
+                onChange={(auth) =>
+                  onUpdate({ mcpSse: { ...tool.mcpSse, url: tool.mcpSse?.url || "", auth } })
+                }
               />
-            </Box>
+              <HeadersEditor
+                headers={tool.mcpSse?.headers}
+                onChange={(headers) =>
+                  onUpdate({ mcpSse: { ...tool.mcpSse, url: tool.mcpSse?.url || "", headers } })
+                }
+              />
+            </>
           )}
 
           {/* MCP HTTP config */}
           {tool.type === "mcp-http" && (
-            <Box>
-              <FieldLabel label="HTTP Endpoint URL" />
-              <TextField
-                size="small"
-                fullWidth
-                placeholder="https://example.com/mcp"
-                value={tool.mcpHttp?.url || ""}
-                onChange={(e) => onUpdate({ mcpHttp: { url: e.target.value } })}
+            <>
+              <Box>
+                <FieldLabel label="HTTP Endpoint URL" />
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="https://example.com/mcp"
+                  value={tool.mcpHttp?.url || ""}
+                  onChange={(e) => onUpdate({ mcpHttp: { ...tool.mcpHttp, url: e.target.value } })}
+                />
+              </Box>
+              <Box display="flex" gap={2}>
+                <Box flex={1}>
+                  <FieldLabel label="Timeout (ms)" />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    type="number"
+                    placeholder="30000"
+                    value={tool.mcpHttp?.timeout || ""}
+                    onChange={(e) =>
+                      onUpdate({ mcpHttp: { ...tool.mcpHttp, url: tool.mcpHttp?.url || "", timeout: e.target.value ? parseInt(e.target.value) : undefined } })
+                    }
+                  />
+                </Box>
+                <Box flex={1}>
+                  <FieldLabel label="Retries" />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    type="number"
+                    placeholder="3"
+                    value={tool.mcpHttp?.retries || ""}
+                    onChange={(e) =>
+                      onUpdate({ mcpHttp: { ...tool.mcpHttp, url: tool.mcpHttp?.url || "", retries: e.target.value ? parseInt(e.target.value) : undefined } })
+                    }
+                  />
+                </Box>
+              </Box>
+              <AuthConfigEditor
+                auth={tool.mcpHttp?.auth}
+                onChange={(auth) =>
+                  onUpdate({ mcpHttp: { ...tool.mcpHttp, url: tool.mcpHttp?.url || "", auth } })
+                }
               />
-            </Box>
+              <HeadersEditor
+                headers={tool.mcpHttp?.headers}
+                onChange={(headers) =>
+                  onUpdate({ mcpHttp: { ...tool.mcpHttp, url: tool.mcpHttp?.url || "", headers } })
+                }
+              />
+            </>
           )}
 
           {/* OpenAPI config */}
@@ -698,6 +1083,53 @@ function ToolConfigItem({
                   />
                 </Box>
               </Box>
+              <Box display="flex" gap={2}>
+                <Box flex={1}>
+                  <FieldLabel label="Working Directory" />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    placeholder="Optional working directory"
+                    value={tool.script?.cwd || ""}
+                    onChange={(e) =>
+                      onUpdate({
+                        script: { ...tool.script, runtime: tool.script?.runtime || "python", cwd: e.target.value || undefined },
+                      })
+                    }
+                  />
+                </Box>
+                <Box flex={1}>
+                  <FieldLabel label="Timeout (ms)" />
+                  <TextField
+                    size="small"
+                    fullWidth
+                    type="number"
+                    placeholder="60000"
+                    value={tool.script?.timeout || ""}
+                    onChange={(e) =>
+                      onUpdate({
+                        script: { ...tool.script, runtime: tool.script?.runtime || "python", timeout: e.target.value ? parseInt(e.target.value) : undefined },
+                      })
+                    }
+                  />
+                </Box>
+              </Box>
+              <RuntimeEnvSelector
+                value={tool.script?.runtimeEnv}
+                onChange={(env) =>
+                  onUpdate({
+                    script: { ...tool.script, runtime: tool.script?.runtime || "python", runtimeEnv: env },
+                  })
+                }
+              />
+              <EnvVarsEditor
+                env={tool.script?.env}
+                onChange={(env) =>
+                  onUpdate({
+                    script: { ...tool.script, runtime: tool.script?.runtime || "python", env },
+                  })
+                }
+              />
             </>
           )}
 
@@ -861,6 +1293,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
 
   // Tools tab state
   const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
+  const [toolSource, setToolSource] = useState<"builtin" | "manual">("builtin");
   const [newToolType, setNewToolType] = useState<ToolType>("mcp-stdio");
   const [newToolName, setNewToolName] = useState("");
   const [newToolUrl, setNewToolUrl] = useState("");
@@ -869,6 +1302,13 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   const [newScriptRuntime, setNewScriptRuntime] = useState<ScriptConfig["runtime"]>("python");
   const [newBrowserProvider, setNewBrowserProvider] = useState<BrowserServiceConfig["provider"]>("browserless");
   const [newBrowserApiKey, setNewBrowserApiKey] = useState("");
+
+  // Built-in tools from backend
+  const [builtinTools, setBuiltinTools] = useState<BuiltinToolDefinition[]>([]);
+  const [loadingBuiltinTools, setLoadingBuiltinTools] = useState(false);
+  const [selectedBuiltinTools, setSelectedBuiltinTools] = useState<Set<string>>(new Set());
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["workspace", "asset", "database", "transfer"]));
+
 
   // Asset type icons
   const getAssetIcon = (type: string) => {
@@ -905,6 +1345,18 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
       fetchAllAssets(assetTypeFilter);
     }
   }, [open, tab, assetTypeFilter, fetchAllAssets]);
+
+  // Fetch built-in tools when Tools tab is active
+  useEffect(() => {
+    if (open && tab === 2 && builtinTools.length === 0 && !loadingBuiltinTools) {
+      setLoadingBuiltinTools(true);
+      listBuiltinTools()
+        .then((res) => setBuiltinTools(res.tools || []))
+        .catch((err) => console.error("Failed to fetch builtin tools:", err))
+        .finally(() => setLoadingBuiltinTools(false));
+    }
+  }, [open, tab, builtinTools.length, loadingBuiltinTools]);
+
 
   // Add asset to workspace
   const addAssetToWorkspace = (asset: AssetLike) => {
@@ -1041,7 +1493,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     setState((prev) => ({ ...prev, tools: [...prev.tools, newTool] }));
   };
 
-  const addBuiltinTool = (builtin: typeof BUILTIN_TOOLS[number]) => {
+  const addBuiltinTool = (builtin: BuiltinToolDefinition) => {
     const newTool: ToolConfig = {
       id: uid(),
       name: builtin.name,
@@ -1052,6 +1504,82 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     };
     setState((prev) => ({ ...prev, tools: [...prev.tools, newTool] }));
   };
+
+  // Batch add selected builtin tools
+  const addSelectedBuiltinTools = () => {
+    const toolsToAdd = builtinTools.filter(
+      (t) => selectedBuiltinTools.has(t.id) && !state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id)
+    );
+    const newTools: ToolConfig[] = toolsToAdd.map((builtin) => ({
+      id: uid(),
+      name: builtin.name,
+      type: "builtin" as ToolType,
+      description: builtin.description,
+      enabled: true,
+      builtin: { toolId: builtin.id },
+    }));
+    setState((prev) => ({ ...prev, tools: [...prev.tools, ...newTools] }));
+    setSelectedBuiltinTools(new Set());
+  };
+
+  // Add all tools in a category
+  const addCategoryTools = (category: string) => {
+    const categoryTools = builtinTools.filter(
+      (t) => t.category === category && !state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id)
+    );
+    const newTools: ToolConfig[] = categoryTools.map((builtin) => ({
+      id: uid(),
+      name: builtin.name,
+      type: "builtin" as ToolType,
+      description: builtin.description,
+      enabled: true,
+      builtin: { toolId: builtin.id },
+    }));
+    setState((prev) => ({ ...prev, tools: [...prev.tools, ...newTools] }));
+  };
+
+  // Toggle single builtin tool selection
+  const toggleBuiltinSelection = (toolId: string) => {
+    setSelectedBuiltinTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) {
+        next.delete(toolId);
+      } else {
+        next.add(toolId);
+      }
+      return next;
+    });
+  };
+
+  // Toggle all tools in a category
+  const toggleCategorySelection = (category: string, checked: boolean) => {
+    const categoryToolIds = builtinTools
+      .filter((t) => t.category === category && !state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id))
+      .map((t) => t.id);
+    setSelectedBuiltinTools((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        categoryToolIds.forEach((id) => next.add(id));
+      } else {
+        categoryToolIds.forEach((id) => next.delete(id));
+      }
+      return next;
+    });
+  };
+
+  // Toggle category expand/collapse
+  const toggleCategoryExpand = (category: string) => {
+    setExpandedCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  };
+
 
   const addCustomTool = () => {
     let newTool: ToolConfig = {
@@ -1987,33 +2515,52 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
             {/* Add Tool Section */}
             <FormSection title="Add Tool">
               <Box display="flex" flexDirection="column" gap={1.5}>
-                {/* Tool Type Selection */}
+                {/* Tool Source Selection */}
                 <Box>
-                  <FieldLabel label="Tool Type" />
-                  <Box display="flex" flexWrap="wrap" gap={1}>
+                  <FieldLabel label="Tool Source" />
+                  <Box display="flex" gap={1} mb={1}>
                     {[
-                      { type: "mcp-stdio", label: "MCP (Local)", desc: "Local MCP server via stdio" },
-                      { type: "mcp-sse", label: "MCP (SSE)", desc: "Remote MCP via Server-Sent Events" },
-                      { type: "mcp-http", label: "MCP (HTTP)", desc: "Remote MCP via HTTP streaming" },
-                      { type: "openapi", label: "OpenAPI", desc: "REST API via OpenAPI spec" },
-                      { type: "script", label: "Script", desc: "Python, Node.js, or Shell script" },
-                      { type: "browser-service", label: "Browser Service", desc: "Cloud browser provider" },
-                      { type: "builtin", label: "Built-in", desc: "Built-in workspace tools" },
-                    ].map(({ type, label, desc }) => (
+                      { source: "builtin" as const, label: "Built-in Tools" },
+                      { source: "manual" as const, label: "Preset & Manual" },
+                    ].map(({ source, label }) => (
                       <Chip
-                        key={type}
+                        key={source}
                         label={label}
-                        variant={newToolType === type ? "filled" : "outlined"}
-                        color={newToolType === type ? "primary" : "default"}
-                        onClick={() => setNewToolType(type as ToolType)}
+                        variant={toolSource === source ? "filled" : "outlined"}
+                        color={toolSource === source ? "primary" : "default"}
+                        onClick={() => setToolSource(source)}
                         sx={{ cursor: "pointer" }}
                       />
                     ))}
                   </Box>
+
+                  {/* Manual tool type selection */}
+                  {toolSource === "manual" && (
+                    <Box display="flex" flexWrap="wrap" gap={0.5}>
+                      {[
+                        { type: "mcp-stdio", label: "MCP (Stdio)" },
+                        { type: "mcp-sse", label: "MCP (SSE)" },
+                        { type: "mcp-http", label: "MCP (HTTP)" },
+                        { type: "openapi", label: "OpenAPI" },
+                        { type: "script", label: "Script" },
+                        { type: "browser-service", label: "Browser" },
+                      ].map(({ type, label }) => (
+                        <Chip
+                          key={type}
+                          label={label}
+                          size="small"
+                          variant={newToolType === type ? "filled" : "outlined"}
+                          color={newToolType === type ? "secondary" : "default"}
+                          onClick={() => setNewToolType(type as ToolType)}
+                          sx={{ cursor: "pointer" }}
+                        />
+                      ))}
+                    </Box>
+                  )}
                 </Box>
 
                 {/* MCP Preset Servers */}
-                {newToolType === "mcp-stdio" && (
+                {toolSource === "manual" && newToolType === "mcp-stdio" && (
                   <Box>
                     <FieldLabel label="Quick Add (MCP Servers)" />
                     <Box
@@ -2068,61 +2615,179 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                 )}
 
                 {/* Built-in Tools */}
-                {newToolType === "builtin" && (
+                {toolSource === "builtin" && (
                   <Box>
-                    <FieldLabel label="Available Built-in Tools" />
-                    <Box
-                      sx={{
-                        maxHeight: 160,
-                        overflow: "auto",
-                        border: "1px solid",
-                        borderColor: "divider",
-                        borderRadius: 1,
-                      }}
-                    >
-                      {BUILTIN_TOOLS.map((builtin) => {
-                        const isAdded = state.tools.some(
-                          (t) => t.type === "builtin" && t.builtin?.toolId === builtin.id
-                        );
-                        return (
-                          <Box
-                            key={builtin.id}
-                            display="flex"
-                            alignItems="center"
-                            gap={1}
-                            px={1.5}
-                            py={1}
-                            sx={{
-                              borderBottom: "1px solid",
-                              borderColor: "divider",
-                              "&:last-child": { borderBottom: "none" },
-                              "&:hover": { bgcolor: "action.hover" },
-                            }}
-                          >
-                            <Box flex={1}>
-                              <Typography variant="body2">{builtin.name}</Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {builtin.description}
-                              </Typography>
-                            </Box>
-                            <Button
-                              size="small"
-                              variant={isAdded ? "outlined" : "contained"}
-                              disabled={isAdded}
-                              onClick={() => addBuiltinTool(builtin)}
-                              sx={{ minWidth: 60 }}
-                            >
-                              {isAdded ? "Added" : "Add"}
-                            </Button>
-                          </Box>
-                        );
-                      })}
+                    <Box display="flex" alignItems="center" justifyContent="space-between" mb={1}>
+                      <FieldLabel label="Available Built-in Tools" />
+                      {selectedBuiltinTools.size > 0 && (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          startIcon={<AddIcon />}
+                          onClick={addSelectedBuiltinTools}
+                        >
+                          Add Selected ({selectedBuiltinTools.size})
+                        </Button>
+                      )}
                     </Box>
+                    {loadingBuiltinTools ? (
+                      <Box display="flex" justifyContent="center" py={2}>
+                        <CircularProgress size={24} />
+                      </Box>
+                    ) : builtinTools.length === 0 ? (
+                      <Typography variant="body2" color="text.secondary" py={2} textAlign="center">
+                        No built-in tools available
+                      </Typography>
+                    ) : (
+                      <Box
+                        sx={{
+                          maxHeight: 320,
+                          overflow: "auto",
+                          border: "1px solid",
+                          borderColor: "divider",
+                          borderRadius: 1,
+                        }}
+                      >
+                        {/* Group by category */}
+                        {[
+                          { id: "workspace", label: "Workspace Tools", desc: "File operations & command execution in workspace" },
+                          { id: "asset", label: "Remote Asset Tools", desc: "File operations & commands on remote servers" },
+                          { id: "database", label: "Database Tools", desc: "MySQL, PostgreSQL, Redis operations" },
+                          { id: "transfer", label: "Transfer Tools", desc: "File transfer between workspace and assets" },
+                        ].map(({ id: category, label, desc }) => {
+                          const categoryTools = builtinTools.filter((t) => t.category === category);
+                          if (categoryTools.length === 0) return null;
+
+                          const addedCount = categoryTools.filter((t) =>
+                            state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id)
+                          ).length;
+                          const availableTools = categoryTools.filter((t) =>
+                            !state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id)
+                          );
+                          const selectedInCategory = availableTools.filter((t) => selectedBuiltinTools.has(t.id)).length;
+                          const allSelectedInCategory = availableTools.length > 0 && selectedInCategory === availableTools.length;
+                          const someSelectedInCategory = selectedInCategory > 0 && selectedInCategory < availableTools.length;
+                          const isExpanded = expandedCategories.has(category);
+
+                          return (
+                            <Box key={category}>
+                              {/* Category Header */}
+                              <Box
+                                display="flex"
+                                alignItems="center"
+                                gap={0.5}
+                                px={1}
+                                py={0.75}
+                                sx={{
+                                  bgcolor: "action.hover",
+                                  borderBottom: "1px solid",
+                                  borderColor: "divider",
+                                  cursor: "pointer",
+                                  "&:hover": { bgcolor: "action.selected" },
+                                }}
+                                onClick={() => toggleCategoryExpand(category)}
+                              >
+                                <Checkbox
+                                  size="small"
+                                  checked={allSelectedInCategory}
+                                  indeterminate={someSelectedInCategory}
+                                  disabled={availableTools.length === 0}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onChange={(e) => toggleCategorySelection(category, e.target.checked)}
+                                  sx={{ p: 0.25 }}
+                                />
+                                <Box flex={1} ml={0.5}>
+                                  <Box display="flex" alignItems="center" gap={1}>
+                                    <Typography variant="body2" fontWeight={600}>
+                                      {label}
+                                    </Typography>
+                                    <Chip
+                                      label={`${addedCount}/${categoryTools.length}`}
+                                      size="small"
+                                      color={addedCount === categoryTools.length ? "success" : "default"}
+                                      sx={{ height: 18, fontSize: 10 }}
+                                    />
+                                  </Box>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {desc}
+                                  </Typography>
+                                </Box>
+                                <IconButton size="small" sx={{ p: 0.25 }}>
+                                  {isExpanded ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                                </IconButton>
+                                <Button
+                                  size="small"
+                                  variant="text"
+                                  disabled={availableTools.length === 0}
+                                  onClick={(e) => { e.stopPropagation(); addCategoryTools(category); }}
+                                  sx={{ minWidth: 60, fontSize: 11 }}
+                                >
+                                  Add All
+                                </Button>
+                              </Box>
+
+                              {/* Category Tools */}
+                              <Collapse in={isExpanded}>
+                                {categoryTools.map((builtin) => {
+                                  const isAdded = state.tools.some(
+                                    (t) => t.type === "builtin" && t.builtin?.toolId === builtin.id
+                                  );
+                                  const isSelected = selectedBuiltinTools.has(builtin.id);
+                                  return (
+                                    <Box
+                                      key={builtin.id}
+                                      display="flex"
+                                      alignItems="center"
+                                      gap={0.5}
+                                      pl={2}
+                                      pr={1.5}
+                                      py={0.5}
+                                      sx={{
+                                        borderBottom: "1px solid",
+                                        borderColor: "divider",
+                                        "&:last-child": { borderBottom: "none" },
+                                        "&:hover": { bgcolor: "action.hover" },
+                                        opacity: isAdded ? 0.5 : 1,
+                                      }}
+                                    >
+                                      <Checkbox
+                                        size="small"
+                                        checked={isSelected || isAdded}
+                                        disabled={isAdded}
+                                        onChange={() => toggleBuiltinSelection(builtin.id)}
+                                        sx={{ p: 0.25 }}
+                                      />
+                                      <Box flex={1} ml={0.5}>
+                                        <Box display="flex" alignItems="center" gap={0.5}>
+                                          <Typography variant="body2" fontSize={13}>
+                                            {builtin.name}
+                                          </Typography>
+                                          {builtin.dangerous && (
+                                            <Chip label="Write" size="small" color="warning" sx={{ height: 16, fontSize: 9 }} />
+                                          )}
+                                          {isAdded && (
+                                            <Chip label="Added" size="small" color="success" sx={{ height: 16, fontSize: 9 }} />
+                                          )}
+                                        </Box>
+                                        <Typography variant="caption" color="text.secondary" fontSize={11}>
+                                          {builtin.description}
+                                        </Typography>
+                                      </Box>
+                                    </Box>
+                                  );
+                                })}
+                              </Collapse>
+                            </Box>
+                          );
+                        })}
+                      </Box>
+                    )}
                   </Box>
                 )}
 
+
                 {/* Browser Service Providers */}
-                {newToolType === "browser-service" && (
+                {toolSource === "manual" && newToolType === "browser-service" && (
                   <Box display="flex" flexDirection="column" gap={1.5}>
                     <Box>
                       <FieldLabel label="Browser Service Provider" />
@@ -2258,7 +2923,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                 )}
 
                 {/* Manual Tool Configuration */}
-                {(newToolType === "mcp-sse" || newToolType === "mcp-http" || newToolType === "openapi" || newToolType === "script") && (
+                {toolSource === "manual" && (newToolType === "mcp-sse" || newToolType === "mcp-http" || newToolType === "openapi" || newToolType === "script") && (
                   <Box display="flex" flexDirection="column" gap={1.5}>
                     <Box display="flex" gap={2}>
                       <Box flex={1}>
@@ -2363,11 +3028,8 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                 )}
 
                 {/* MCP stdio manual add */}
-                {newToolType === "mcp-stdio" && (
+                {toolSource === "manual" && newToolType === "mcp-stdio" && (
                   <Box display="flex" flexDirection="column" gap={1.5}>
-                    <Typography variant="caption" color="text.secondary">
-                      Or add a custom MCP server:
-                    </Typography>
                     <Box display="flex" gap={2}>
                       <Box flex={1}>
                         <FieldLabel label="Name" required />

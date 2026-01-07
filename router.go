@@ -16,9 +16,13 @@ import (
 	"github.com/choraleia/choraleia/pkg/event"
 	"github.com/choraleia/choraleia/pkg/handler"
 	"github.com/choraleia/choraleia/pkg/service"
+	"github.com/choraleia/choraleia/pkg/tools"
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+
+	// Import to register built-in tools
+	_ "github.com/choraleia/choraleia/pkg/tools/all"
 )
 
 type Server struct {
@@ -330,6 +334,49 @@ func (s *Server) SetupRoutes() {
 	workspaceService.SetupRuntimeCallbacks()
 	workspaceHandler := handler.NewWorkspaceHandler(workspaceService)
 	workspaceHandler.RegisterRoutes(apiGroup)
+
+	// Built-in Tools API route
+	// /api/builtin-tools
+	apiGroup.GET("/builtin-tools", func(c *gin.Context) {
+		category := c.Query("category")
+		scope := c.Query("scope")
+		safeOnly := c.Query("safe_only") == "true"
+
+		var defs []tools.ToolDefinition
+
+		if category != "" {
+			defs = tools.ListToolsByCategory(tools.ToolCategory(category))
+		} else if scope != "" {
+			defs = tools.ListToolsByScope(tools.ToolScope(scope))
+		} else if safeOnly {
+			defs = tools.ListSafeTools()
+		} else {
+			defs = tools.ListToolDefinitions()
+		}
+
+		// Convert to response format
+		result := make([]map[string]interface{}, len(defs))
+		for i, def := range defs {
+			result[i] = map[string]interface{}{
+				"id":          string(def.ID),
+				"name":        def.Name,
+				"description": def.Description,
+				"category":    string(def.Category),
+				"scope":       string(def.Scope),
+				"dangerous":   def.Dangerous,
+			}
+		}
+
+		c.JSON(200, gin.H{
+			"tools": result,
+			"categories": []string{
+				string(tools.CategoryWorkspace),
+				string(tools.CategoryAsset),
+				string(tools.CategoryDatabase),
+				string(tools.CategoryTransfer),
+			},
+		})
+	})
 
 	// Event notification WebSocket
 	// /api/events/ws

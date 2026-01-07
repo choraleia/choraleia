@@ -33,7 +33,7 @@ initFileManagerEvents(queryClient);
 
 // Inner component that uses hooks (must be inside QueryClientProvider)
 const AppContent: React.FC = () => {
-  const [selectedMenu, setSelectedMenu] = useState<"assets" | "settings">(
+  const [selectedMenu, setSelectedMenu] = useState<"assets" | "spaces" | "settings">(
     "assets",
   );
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
