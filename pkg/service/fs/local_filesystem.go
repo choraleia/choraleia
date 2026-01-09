@@ -380,15 +380,11 @@ var _ TarStreamer = (*LocalFileSystem)(nil)
 func normalizeHostAbs(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
-		p = "/"
+		p = "."
 	}
-	abs := filepath.Clean(p)
-	if abs == "." {
-		abs = "/"
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
 	}
-	if !filepath.IsAbs(abs) {
-		return "", fmt.Errorf("path must be absolute")
-	}
-	// Ensure POSIX slashes in the API.
 	return filepath.ToSlash(abs), nil
 }

@@ -485,7 +485,6 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
       borderRight={(theme) => `1px solid ${theme.palette.divider}`}
       display="flex"
       flexDirection="column"
-      sx={{ bgcolor: "background.paper" }}
     >
       <Accordion
         disableGutters

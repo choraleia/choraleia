@@ -868,6 +868,7 @@ const renameNode = (
 
 // Convert backend workspace format to frontend format
 const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
+
   const rooms: Room[] = (ws.rooms || []).map((r) => {
     // Get panes from layout, or create default panes
     let panes = r.layout?.panes as SpacePane[] || [];
@@ -937,22 +938,26 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
         restrictions: a.restrictions as AssetRestrictions | undefined,
       })),
     },
-    tools: (ws.tools || []).map((t) => ({
-      id: t.id,
-      name: t.name,
-      type: t.type as ToolType,
-      description: t.description,
-      enabled: t.enabled,
-      aiHint: t.ai_hint,
-      // Parse config based on tool type
-      ...(t.type === "mcp-stdio" && { mcpStdio: t.config as MCPStdioConfig }),
-      ...(t.type === "mcp-sse" && { mcpSse: t.config as MCPSSEConfig }),
-      ...(t.type === "mcp-http" && { mcpHttp: t.config as MCPHTTPConfig }),
-      ...(t.type === "openapi" && { openapi: t.config as OpenAPIConfig }),
-      ...(t.type === "script" && { script: t.config as ScriptConfig }),
-      ...(t.type === "browser-service" && { browserService: t.config as BrowserServiceConfig }),
-      ...(t.type === "builtin" && { builtin: t.config as BuiltinConfig }),
-    })),
+    tools: (ws.tools || []).map((t) => {
+      // Backend stores config with type prefix (mcp_stdio, mcp_sse, etc.)
+      const config = t.config || {};
+      return {
+        id: t.id,
+        name: t.name,
+        type: t.type as ToolType,
+        description: t.description,
+        enabled: t.enabled,
+        aiHint: t.ai_hint,
+        // Parse config based on tool type - check both nested and flat formats
+        mcpStdio: t.type === "mcp-stdio" ? (config.mcp_stdio || config) as MCPStdioConfig : undefined,
+        mcpSse: t.type === "mcp-sse" ? (config.mcp_sse || config) as MCPSSEConfig : undefined,
+        mcpHttp: t.type === "mcp-http" ? (config.mcp_http || config) as MCPHTTPConfig : undefined,
+        openapi: t.type === "openapi" ? (config.openapi || config) as OpenAPIConfig : undefined,
+        script: t.type === "script" ? (config.script || config) as ScriptConfig : undefined,
+        browserService: t.type === "browser-service" ? (config.browser_service || config) as BrowserServiceConfig : undefined,
+        builtin: t.type === "builtin" ? (config.builtin || config) as BuiltinConfig : undefined,
+      };
+    }),
     rooms,
     activeRoomId: ws.active_room_id || rooms[0]?.id || "",
     workMode: "chat",  // Default to chat mode
@@ -987,8 +992,17 @@ const convertToBackendRequest = (ws: Workspace): workspacesApi.CreateWorkspaceRe
       type: t.type,
       description: t.description,
       enabled: t.enabled,
-      config: t.mcpStdio || t.mcpSse || t.mcpHttp || t.openapi || t.script || t.browserService || t.builtin || {},
       ai_hint: t.aiHint,
+      config: {
+        // Include type-specific config
+        ...(t.mcpStdio && { mcp_stdio: t.mcpStdio }),
+        ...(t.mcpSse && { mcp_sse: t.mcpSse }),
+        ...(t.mcpHttp && { mcp_http: t.mcpHttp }),
+        ...(t.openapi && { openapi: t.openapi }),
+        ...(t.script && { script: t.script }),
+        ...(t.browserService && { browser_service: t.browserService }),
+        ...(t.builtin && { builtin: t.builtin }),
+      },
     })),
   };
 };
@@ -1275,6 +1289,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
   const updateWorkspaceConfig = useCallback(
     async (workspaceId: string, config: SpaceConfigInput) => {
+
       // Update locally first (optimistic)
       setWorkspaces((prev) =>
         prev.map((workspace) =>
@@ -1292,8 +1307,8 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
       );
 
       try {
-        // Sync to backend
-        await workspacesApi.updateWorkspace(workspaceId, {
+        // Build the request payload
+        const requestPayload = {
           name: config.name,
           description: config.description,
           runtime: config.runtime ? {
@@ -1306,9 +1321,47 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
             work_dir_path: config.runtime.workDir.path,
             work_dir_container_path: config.runtime.workDir.containerPath,
           } : undefined,
-        });
+          // Convert assets to API format
+          assets: config.assets.assets?.map((a) => ({
+            asset_id: a.assetId,
+            ai_hint: a.aiHint,
+            restrictions: a.restrictions as Record<string, unknown>,
+          })),
+          // Convert tools to API format
+          tools: config.tools?.map((t) => ({
+            name: t.name,
+            type: t.type,
+            description: t.description,
+            enabled: t.enabled ?? true,
+            ai_hint: t.aiHint,
+            config: {
+              // Include type-specific config
+              ...(t.mcpStdio && { mcp_stdio: t.mcpStdio }),
+              ...(t.mcpSse && { mcp_sse: t.mcpSse }),
+              ...(t.mcpHttp && { mcp_http: t.mcpHttp }),
+              ...(t.openapi && { openapi: t.openapi }),
+              ...(t.script && { script: t.script }),
+              ...(t.browserService && { browser_service: t.browserService }),
+              ...(t.builtin && { builtin: t.builtin }),
+            },
+          })),
+        };
+
+        // Sync to backend
+        const updatedWorkspace = await workspacesApi.updateWorkspace(workspaceId, requestPayload);
+
+        // Update local state with the actual response from backend
+        const convertedWorkspace = convertBackendWorkspace(updatedWorkspace);
+        setWorkspaces((prev) =>
+          prev.map((workspace) =>
+            workspace.id === workspaceId
+              ? { ...workspace, ...convertedWorkspace, rooms: workspace.rooms, activeRoomId: workspace.activeRoomId }
+              : workspace,
+          ),
+        );
       } catch (err) {
         console.error("Failed to update workspace on backend:", err);
+        // TODO: Rollback optimistic update on error
       }
     },
     [],

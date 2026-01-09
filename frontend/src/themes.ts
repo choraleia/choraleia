@@ -30,7 +30,7 @@ export const lightTheme = createTheme({
     error: { main: "#ff4d4f" },
     // Info color set to lighter gray for consistency
     info: { main: "#595959" },
-    background: { default: "#f0f2f5", paper: "#ffffff" },
+    background: { default: "#ffffff", paper: "#ffffff" },
     text: { primary: "rgba(0,0,0,0.88)", secondary: "rgba(0,0,0,0.65)" },
   },
   shape: { borderRadius: 3 },

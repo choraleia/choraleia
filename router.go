@@ -326,6 +326,8 @@ func (s *Server) SetupRoutes() {
 	// Inject DockerService, SSHPool, and RuntimeStatusService into WorkspaceService's RuntimeManager
 	workspaceService.SetDockerService(dockerService)
 	workspaceService.SetSSHPool(fsRegistry.SSHPool())
+	// Explicitly set AssetService on RuntimeManager for workspace command execution
+	workspaceService.GetRuntimeManager().SetAssetService(assetService)
 	// Create and inject RuntimeStatusService for runtime monitoring
 	runtimeStatusService := service.NewRuntimeStatusService(dockerService, assetService)
 	runtimeStatusService.StartMonitoring(30 * time.Second) // Monitor every 30 seconds
@@ -377,6 +379,24 @@ func (s *Server) SetupRoutes() {
 			},
 		})
 	})
+
+	// Chat API routes (OpenAI-compatible)
+	// /api/v1/chat/completions, /api/v1/conversations
+	chatService := service.NewChatService(chatStoreService.DB(), modelService, workspaceService)
+	if err := chatService.AutoMigrate(); err != nil {
+		slog.Error("Failed to migrate chat tables", "error", err)
+	}
+
+	// Initialize tool context and loader for workspace tools
+	toolCtx := tools.NewToolContext(fsService, assetService)
+	// Configure workspace services for command execution in workspace runtime
+	toolCtx.WithWorkspaceServices(workspaceService.GetRuntimeManager(), workspaceService)
+	toolLoader := tools.NewToolLoaderAdapter(toolCtx)
+	chatService.SetToolLoader(toolLoader)
+
+	chatHandler := handler.NewChatHandler(chatService)
+	v1Group := apiGroup.Group("/v1")
+	chatHandler.RegisterRoutes(v1Group)
 
 	// Event notification WebSocket
 	// /api/events/ws

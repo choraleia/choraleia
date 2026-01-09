@@ -16,7 +16,7 @@ import CircleIcon from "@mui/icons-material/Circle";
 import { useWorkspaces, EditorPane } from "../../state/workspaces";
 import TerminalComponent from "../assets/Terminal";
 import Editor from "@monaco-editor/react";
-import ChatPanel from "./ChatPanel";
+import WorkspaceChat from "./WorkspaceChat";
 
 // Preview tab item interface
 interface PreviewTab {
@@ -112,151 +112,189 @@ const ChatModeLayout: React.FC = () => {
   };
 
   return (
-    <Box display="flex" flex={1} minHeight={0}>
-      {/* Left: Preview Panel */}
-      <Box flex={1} display="flex" flexDirection="column" minHeight={0} minWidth={0}>
-        {/* Preview Tabs */}
-        <Box
-          display="flex"
-          alignItems="center"
-          borderBottom={(theme) => `1px solid ${theme.palette.divider}`}
-          px={1}
-          minHeight={36}
-        >
-          <Tabs
-            value={activePreviewTabId || false}
-            onChange={handleTabChange}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{
+    <Box display="flex" flex={1} minHeight={0} width="100%">
+      {/* Full width: WorkspaceChat with Preview as right panel */}
+      {activeWorkspace && (
+        <WorkspaceChat
+          workspaceId={activeWorkspace.id}
+          previewComponent={
+            <PreviewPanel
+              previewTabs={previewTabs}
+              activePreviewTabId={activePreviewTabId}
+              activeTab={activeTab}
+              activeWorkspace={activeWorkspace}
+              onTabChange={handleTabChange}
+              onAddTerminal={handleAddTerminal}
+              onCloseTab={handleCloseTab}
+              getTabIcon={getTabIcon}
+              getLanguage={getLanguage}
+              updateEditorContent={updateEditorContent}
+            />
+          }
+        />
+      )}
+    </Box>
+  );
+};
+
+// Preview Panel Component
+interface PreviewPanelProps {
+  previewTabs: PreviewTab[];
+  activePreviewTabId: string | null;
+  activeTab: PreviewTab | undefined;
+  activeWorkspace: any;
+  onTabChange: (event: React.SyntheticEvent, value: string) => void;
+  onAddTerminal: () => void;
+  onCloseTab: (tabId: string, event: React.MouseEvent) => void;
+  getTabIcon: (type: PreviewTab["type"]) => React.ReactNode;
+  getLanguage: (filePath?: string) => string | undefined;
+  updateEditorContent: (id: string, content: string) => void;
+}
+
+const PreviewPanel: React.FC<PreviewPanelProps> = ({
+  previewTabs,
+  activePreviewTabId,
+  activeTab,
+  activeWorkspace,
+  onTabChange,
+  onAddTerminal,
+  onCloseTab,
+  getTabIcon,
+  getLanguage,
+  updateEditorContent,
+}) => {
+  return (
+    <Box display="flex" flexDirection="column" height="100%" minWidth={0}>
+      {/* Preview Tabs */}
+      <Box
+        display="flex"
+        alignItems="center"
+        borderBottom={(theme) => `1px solid ${theme.palette.divider}`}
+        px={1}
+        minHeight={36}
+      >
+        <Tabs
+          value={activePreviewTabId || false}
+          onChange={onTabChange}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{
+            minHeight: 36,
+            flex: 1,
+            "& .MuiTab-root": {
               minHeight: 36,
-              flex: 1,
-              "& .MuiTab-root": {
-                minHeight: 36,
-                textTransform: "none",
-                fontSize: 13,
-                py: 0,
-                px: 1.5,
-              },
-            }}
-          >
-            {previewTabs.map((tab) => (
-              <Tab
-                key={tab.id}
-                value={tab.id}
-                label={
-                  <Box display="flex" alignItems="center" gap={0.5}>
-                    {getTabIcon(tab.type)}
-                    <Typography variant="body2" noWrap sx={{ maxWidth: 120 }}>
-                      {tab.title}
-                    </Typography>
-                    {tab.modified && (
-                      <CircleIcon sx={{ fontSize: 8, color: "primary.main" }} />
-                    )}
-                    <IconButton
-                      size="small"
-                      sx={{ p: 0.25, ml: 0.5 }}
-                      onClick={(e) => handleCloseTab(tab.id, e)}
-                    >
-                      <CloseIcon sx={{ fontSize: 14 }} />
-                    </IconButton>
-                  </Box>
-                }
-              />
-            ))}
-          </Tabs>
-          <Tooltip title="New Terminal">
-            <IconButton size="small" onClick={handleAddTerminal}>
-              <AddIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        </Box>
-
-        {/* Preview Content */}
-        <Box flex={1} display="flex" flexDirection="column" minHeight={0} position="relative">
-          {previewTabs.length === 0 ? (
-            <Box
-              flex={1}
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              flexDirection="column"
-              gap={2}
-            >
-              <Typography variant="body1" color="text.secondary">
-                No preview tabs open
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                AI will open terminals and files here as needed
-              </Typography>
-            </Box>
-          ) : (
-            <>
-              {/* Render all terminal tabs but hide inactive ones */}
-              {previewTabs
-                .filter((tab) => tab.type === "terminal")
-                .map((tab) => (
-                  <Box
-                    key={tab.id}
-                    flex={1}
-                    display={activePreviewTabId === tab.id ? "flex" : "none"}
-                    flexDirection="column"
-                    minHeight={0}
+              textTransform: "none",
+              fontSize: 13,
+              py: 0,
+              px: 1.5,
+            },
+          }}
+        >
+          {previewTabs.map((tab) => (
+            <Tab
+              key={tab.id}
+              value={tab.id}
+              label={
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  {getTabIcon(tab.type)}
+                  <Typography variant="body2" noWrap sx={{ maxWidth: 120 }}>
+                    {tab.title}
+                  </Typography>
+                  {tab.modified && (
+                    <CircleIcon sx={{ fontSize: 8, color: "primary.main" }} />
+                  )}
+                  <IconButton
+                    size="small"
+                    sx={{ p: 0.25, ml: 0.5 }}
+                    onClick={(e) => onCloseTab(tab.id, e)}
                   >
-                    {activeWorkspace && (
-                      <TerminalComponent
-                        hostInfo={{ ip: "localhost", port: 0, name: tab.title }}
-                        tabKey={tab.terminalKey!}
-                        assetId={
-                          activeWorkspace.runtime.type === "local"
-                            ? "local"
-                            : activeWorkspace.runtime.dockerAssetId || "local"
-                        }
-                        containerId={
-                          activeWorkspace.runtime.type !== "local"
-                            ? (activeWorkspace.runtime.containerName ||
-                               activeWorkspace.runtime.containerId ||
-                               (activeWorkspace.runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined))
-                            : undefined
-                        }
-                        isActive={activePreviewTabId === tab.id}
-                      />
-                    )}
-                  </Box>
-                ))}
-
-              {/* Render active editor tab */}
-              {activeTab?.type === "editor" && (
-                <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
-                  <Editor
-                    height="100%"
-                    language={getLanguage(activeTab.filePath)}
-                    value={activeTab.content}
-                    onChange={(value) => updateEditorContent(activeTab.id, value ?? "")}
-                    options={{
-                      minimap: { enabled: false },
-                      fontSize: 13,
-                      scrollBeyondLastLine: false,
-                      wordWrap: "on",
-                      automaticLayout: true,
-                    }}
-                  />
+                    <CloseIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
                 </Box>
-              )}
-            </>
-          )}
-        </Box>
+              }
+            />
+          ))}
+        </Tabs>
+        <Tooltip title="New Terminal">
+          <IconButton size="small" onClick={onAddTerminal}>
+            <AddIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
       </Box>
 
-      {/* Right: Chat Panel */}
-      <Box
-        flex={1}
-        display="flex"
-        flexDirection="column"
-        borderLeft={(theme) => `1px solid ${theme.palette.divider}`}
-        minWidth={0}
-      >
-        <ChatPanel />
+      {/* Preview Content */}
+      <Box flex={1} display="flex" flexDirection="column" minHeight={0} position="relative">
+        {previewTabs.length === 0 ? (
+          <Box
+            flex={1}
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            flexDirection="column"
+            gap={2}
+          >
+            <Typography variant="body1" color="text.secondary">
+              No preview tabs open
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              AI will open terminals and files here as needed
+            </Typography>
+          </Box>
+        ) : (
+          <>
+            {/* Render all terminal tabs but hide inactive ones */}
+            {previewTabs
+              .filter((tab) => tab.type === "terminal")
+              .map((tab) => (
+                <Box
+                  key={tab.id}
+                  flex={1}
+                  display={activePreviewTabId === tab.id ? "flex" : "none"}
+                  flexDirection="column"
+                  minHeight={0}
+                >
+                  {activeWorkspace && (
+                    <TerminalComponent
+                      hostInfo={{ ip: "localhost", port: 0, name: tab.title }}
+                      tabKey={tab.terminalKey!}
+                      assetId={
+                        activeWorkspace.runtime.type === "local"
+                          ? "local"
+                          : activeWorkspace.runtime.dockerAssetId || "local"
+                      }
+                      containerId={
+                        activeWorkspace.runtime.type !== "local"
+                          ? (activeWorkspace.runtime.containerName ||
+                             activeWorkspace.runtime.containerId ||
+                             (activeWorkspace.runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined))
+                          : undefined
+                      }
+                      isActive={activePreviewTabId === tab.id}
+                    />
+                  )}
+                </Box>
+              ))}
+
+            {/* Render active editor tab */}
+            {activeTab?.type === "editor" && (
+              <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+                <Editor
+                  height="100%"
+                  language={getLanguage(activeTab.filePath)}
+                  value={activeTab.content}
+                  onChange={(value) => updateEditorContent(activeTab.id, value ?? "")}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    scrollBeyondLastLine: false,
+                    wordWrap: "on",
+                    automaticLayout: true,
+                  }}
+                />
+              </Box>
+            )}
+          </>
+        )}
       </Box>
     </Box>
   );

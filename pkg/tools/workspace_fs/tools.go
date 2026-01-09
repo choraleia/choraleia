@@ -105,7 +105,7 @@ func NewListTool(tc *tools.ToolContext) tool.InvokableTool {
 			"all":  {Type: schema.Boolean, Required: false, Desc: "Include hidden files (default: false)"},
 		}),
 	}, func(ctx context.Context, input *ListInput) (string, error) {
-		result, err := tc.ListDir(ctx, tc.LocalEndpoint(), input.Path, input.All)
+		result, err := tc.ListDir(ctx, tc.WorkspaceEndpoint(), input.Path, input.All)
 		if err != nil {
 			return "", fmt.Errorf("failed to list directory: %w", err)
 		}
@@ -144,7 +144,7 @@ func NewReadTool(tc *tools.ToolContext) tool.InvokableTool {
 			"max_bytes": {Type: schema.Integer, Required: false, Desc: "Maximum bytes to read (default: no limit)"},
 		}),
 	}, func(ctx context.Context, input *ReadInput) (string, error) {
-		content, err := tc.ReadFile(ctx, tc.LocalEndpoint(), input.Path)
+		content, err := tc.ReadFile(ctx, tc.WorkspaceEndpoint(), input.Path)
 		if err != nil {
 			return "", fmt.Errorf("failed to read file: %w", err)
 		}
@@ -175,7 +175,7 @@ func NewWriteTool(tc *tools.ToolContext) tool.InvokableTool {
 			"overwrite": {Type: schema.Boolean, Required: false, Desc: "Overwrite existing file (default: true)"},
 		}),
 	}, func(ctx context.Context, input *WriteInput) (string, error) {
-		err := tc.WriteFile(ctx, tc.LocalEndpoint(), input.Path, input.Content)
+		err := tc.WriteFile(ctx, tc.WorkspaceEndpoint(), input.Path, input.Content)
 		if err != nil {
 			return "", fmt.Errorf("failed to write file: %w", err)
 		}
@@ -198,7 +198,7 @@ func NewStatTool(tc *tools.ToolContext) tool.InvokableTool {
 			"path": {Type: schema.String, Required: true, Desc: "File or directory path"},
 		}),
 	}, func(ctx context.Context, input *StatInput) (string, error) {
-		info, err := tc.Stat(ctx, tc.LocalEndpoint(), input.Path)
+		info, err := tc.Stat(ctx, tc.WorkspaceEndpoint(), input.Path)
 		if err != nil {
 			return "", fmt.Errorf("failed to get file info: %w", err)
 		}
@@ -230,7 +230,7 @@ func NewMkdirTool(tc *tools.ToolContext) tool.InvokableTool {
 			"path": {Type: schema.String, Required: true, Desc: "Directory path to create"},
 		}),
 	}, func(ctx context.Context, input *MkdirInput) (string, error) {
-		err := tc.Mkdir(ctx, tc.LocalEndpoint(), input.Path)
+		err := tc.Mkdir(ctx, tc.WorkspaceEndpoint(), input.Path)
 		if err != nil {
 			return "", fmt.Errorf("failed to create directory: %w", err)
 		}
@@ -252,7 +252,7 @@ func NewRemoveTool(tc *tools.ToolContext) tool.InvokableTool {
 			"path": {Type: schema.String, Required: true, Desc: "File or directory path to remove"},
 		}),
 	}, func(ctx context.Context, input *RemoveInput) (string, error) {
-		err := tc.Remove(ctx, tc.LocalEndpoint(), input.Path)
+		err := tc.Remove(ctx, tc.WorkspaceEndpoint(), input.Path)
 		if err != nil {
 			return "", fmt.Errorf("failed to remove: %w", err)
 		}
@@ -276,7 +276,7 @@ func NewRenameTool(tc *tools.ToolContext) tool.InvokableTool {
 			"to":   {Type: schema.String, Required: true, Desc: "Destination path"},
 		}),
 	}, func(ctx context.Context, input *RenameInput) (string, error) {
-		err := tc.Rename(ctx, tc.LocalEndpoint(), input.From, input.To)
+		err := tc.Rename(ctx, tc.WorkspaceEndpoint(), input.From, input.To)
 		if err != nil {
 			return "", fmt.Errorf("failed to rename: %w", err)
 		}
@@ -300,7 +300,7 @@ func NewCopyTool(tc *tools.ToolContext) tool.InvokableTool {
 			"destination": {Type: schema.String, Required: true, Desc: "Destination file path"},
 		}),
 	}, func(ctx context.Context, input *CopyInput) (string, error) {
-		err := tc.Copy(ctx, tc.LocalEndpoint(), input.Source, input.Destination)
+		err := tc.Copy(ctx, tc.WorkspaceEndpoint(), input.Source, input.Destination)
 		if err != nil {
 			return "", fmt.Errorf("failed to copy: %w", err)
 		}

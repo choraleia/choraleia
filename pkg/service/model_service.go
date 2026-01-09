@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/utils"
@@ -15,6 +17,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino-ext/components/model/qianfan"
 	"github.com/cloudwego/eino-ext/components/model/qwen"
+	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -343,6 +346,124 @@ func (m *ModelService) TestModelConnection(c *gin.Context) {
 
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Unknown provider"})
+	}
+}
+
+// CreateChatModel creates an eino chat model from config
+func (m *ModelService) CreateChatModel(ctx context.Context, config *models.ModelConfig) (einoModel.ToolCallingChatModel, error) {
+	if config == nil {
+		return nil, fmt.Errorf("model config is nil")
+	}
+
+	switch config.Provider {
+	case "openai", "custom":
+		chatModel, err := openai.NewChatModel(ctx, &openai.ChatModelConfig{
+			BaseURL: config.BaseUrl,
+			APIKey:  config.ApiKey,
+			Model:   config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OpenAI model: %w", err)
+		}
+		return chatModel, nil
+
+	case "ark":
+		timeout := time.Second * 600
+		retries := 3
+		region := ""
+		if config.Extra != nil {
+			if v, ok := config.Extra["region"]; ok {
+				region, _ = v.(string)
+			}
+		}
+		chatModel, err := ark.NewChatModel(ctx, &ark.ChatModelConfig{
+			BaseURL:    config.BaseUrl,
+			Region:     region,
+			Timeout:    &timeout,
+			RetryTimes: &retries,
+			APIKey:     config.ApiKey,
+			Model:      config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Ark model: %w", err)
+		}
+		return chatModel, nil
+
+	case "deepseek":
+		chatModel, err := deepseek.NewChatModel(ctx, &deepseek.ChatModelConfig{
+			BaseURL: config.BaseUrl,
+			APIKey:  config.ApiKey,
+			Model:   config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DeepSeek model: %w", err)
+		}
+		return chatModel, nil
+
+	case "anthropic":
+		chatModel, err := claude.NewChatModel(ctx, &claude.Config{
+			BaseURL:   &config.BaseUrl,
+			APIKey:    config.ApiKey,
+			Model:     config.Model,
+			MaxTokens: 8192,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Claude model: %w", err)
+		}
+		return chatModel, nil
+
+	case "ollama":
+		chatModel, err := ollama.NewChatModel(ctx, &ollama.ChatModelConfig{
+			BaseURL: config.BaseUrl,
+			Model:   config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Ollama model: %w", err)
+		}
+		return chatModel, nil
+
+	case "google":
+		genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  config.ApiKey,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+		}
+		chatModel, err := gemini.NewChatModel(ctx, &gemini.Config{
+			Client: genaiClient,
+			Model:  config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini model: %w", err)
+		}
+		return chatModel, nil
+
+	case "qianfan":
+		qianfanConfig := qianfan.GetQianfanSingletonConfig()
+		qianfanConfig.BaseURL = config.BaseUrl
+		qianfanConfig.BearerToken = config.ApiKey
+		chatModel, err := qianfan.NewChatModel(ctx, &qianfan.ChatModelConfig{
+			Model: config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Qianfan model: %w", err)
+		}
+		return chatModel, nil
+
+	case "qwen":
+		chatModel, err := qwen.NewChatModel(ctx, &qwen.ChatModelConfig{
+			BaseURL: config.BaseUrl,
+			APIKey:  config.ApiKey,
+			Model:   config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Qwen model: %w", err)
+		}
+		return chatModel, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported model provider: %s", config.Provider)
 	}
 }
 

@@ -1274,6 +1274,14 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   const [hostServiceInput, setHostServiceInput] = useState<Record<string, string>>({});
   const [k8sServiceInput, setK8sServiceInput] = useState<Record<string, string>>({});
 
+  // Reset state when dialog opens with new initialConfig
+  useEffect(() => {
+    if (open) {
+      setState(initialConfig);
+      setTab(0); // Reset to first tab
+    }
+  }, [open, initialConfig]);
+
   // Container selection state
   const [containerMode, setContainerMode] = useState<ContainerMode>("new");
   const [containers, setContainers] = useState<Array<{ id: string; name: string; image: string; status: string }>>([]);

@@ -58,6 +58,11 @@ func (m *RuntimeManager) SetDockerService(ds *DockerService) {
 	}
 }
 
+// SetAssetService sets the asset service directly
+func (m *RuntimeManager) SetAssetService(as *AssetService) {
+	m.assetService = as
+}
+
 // SetSSHPool sets the SSH pool
 func (m *RuntimeManager) SetSSHPool(pool *fs.SSHPool) {
 	m.sshPool = pool
@@ -510,23 +515,39 @@ func (m *RuntimeManager) Exec(ctx context.Context, workspace *models.Workspace, 
 		return m.execLocal(ctx, cmd)
 
 	case models.RuntimeTypeDockerLocal:
+		// First try to get container from runtime cache
 		m.mu.RLock()
 		info, exists := m.containers[workspace.ID]
 		m.mu.RUnlock()
 
-		if !exists {
-			return "", fmt.Errorf("container not running")
+		var containerID string
+		if exists {
+			containerID = info.ContainerID
+		} else {
+			// Fallback to workspace runtime config (e.g., after program restart)
+			containerID = m.getContainerIDFromRuntime(workspace.Runtime)
+			if containerID == "" {
+				return "", fmt.Errorf("container not configured")
+			}
 		}
 
-		return m.execInContainer(ctx, nil, info.ContainerID, cmd)
+		return m.execInContainer(ctx, nil, containerID, cmd)
 
 	case models.RuntimeTypeDockerRemote:
+		// First try to get container from runtime cache
 		m.mu.RLock()
 		info, exists := m.containers[workspace.ID]
 		m.mu.RUnlock()
 
-		if !exists {
-			return "", fmt.Errorf("container not running")
+		var containerID string
+		if exists {
+			containerID = info.ContainerID
+		} else {
+			// Fallback to workspace runtime config (e.g., after program restart)
+			containerID = m.getContainerIDFromRuntime(workspace.Runtime)
+			if containerID == "" {
+				return "", fmt.Errorf("container not configured")
+			}
 		}
 
 		var dockerAsset *models.Asset
@@ -538,11 +559,22 @@ func (m *RuntimeManager) Exec(ctx context.Context, workspace *models.Workspace, 
 			}
 		}
 
-		return m.execInContainer(ctx, dockerAsset, info.ContainerID, cmd)
+		return m.execInContainer(ctx, dockerAsset, containerID, cmd)
 
 	default:
 		return "", fmt.Errorf("unsupported runtime type: %s", workspace.Runtime.Type)
 	}
+}
+
+// getContainerIDFromRuntime extracts container ID or name from runtime config
+func (m *RuntimeManager) getContainerIDFromRuntime(runtime *models.WorkspaceRuntime) string {
+	if runtime.ContainerName != nil && *runtime.ContainerName != "" {
+		return *runtime.ContainerName
+	}
+	if runtime.ContainerID != nil && *runtime.ContainerID != "" {
+		return *runtime.ContainerID
+	}
+	return ""
 }
 
 // execLocal executes a command locally
@@ -569,7 +601,9 @@ func (m *RuntimeManager) execLocal(ctx context.Context, cmd []string) (string, e
 
 // execInContainer executes a command in a container
 func (m *RuntimeManager) execInContainer(ctx context.Context, dockerAsset *models.Asset, containerID string, cmd []string) (string, error) {
-	args := append([]string{"exec", containerID}, cmd...)
+	// Join command parts and execute via shell to handle complex commands
+	cmdStr := strings.Join(cmd, " ")
+	args := []string{"exec", containerID, "/bin/sh", "-c", cmdStr}
 	return m.execDocker(ctx, dockerAsset, args...)
 }
 

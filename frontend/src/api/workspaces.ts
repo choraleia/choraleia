@@ -111,6 +111,8 @@ export interface UpdateWorkspaceRequest {
   description?: string;
   color?: string;
   runtime?: CreateWorkspaceRequest["runtime"];
+  assets?: CreateWorkspaceRequest["assets"];
+  tools?: CreateWorkspaceRequest["tools"];
 }
 
 export interface WorkspaceStatus {

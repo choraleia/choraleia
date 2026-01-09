@@ -51,6 +51,11 @@ func (s *WorkspaceService) SetRuntimeManager(rm *RuntimeManager) {
 	s.runtimeManager = rm
 }
 
+// GetRuntimeManager returns the runtime manager
+func (s *WorkspaceService) GetRuntimeManager() *RuntimeManager {
+	return s.runtimeManager
+}
+
 // SetToolManager sets the tool manager (for dependency injection)
 func (s *WorkspaceService) SetToolManager(tm *ToolManager) {
 	s.toolManager = tm
@@ -285,6 +290,11 @@ func (s *WorkspaceService) Get(ctx context.Context, id string) (*models.Workspac
 	return &workspace, nil
 }
 
+// GetWorkspace retrieves a workspace by ID (implements tools.WorkspaceGetter interface)
+func (s *WorkspaceService) GetWorkspace(id string) (*models.Workspace, error) {
+	return s.Get(context.Background(), id)
+}
+
 // GetByName retrieves a workspace by name
 func (s *WorkspaceService) GetByName(ctx context.Context, name string) (*models.Workspace, error) {
 	var workspace models.Workspace
@@ -327,10 +337,12 @@ func (s *WorkspaceService) List(ctx context.Context, filter *WorkspaceFilter) ([
 
 // UpdateWorkspaceRequest represents a request to update a workspace
 type UpdateWorkspaceRequest struct {
-	Name        *string               `json:"name,omitempty"`
-	Description *string               `json:"description,omitempty"`
-	Color       *string               `json:"color,omitempty"`
-	Runtime     *CreateRuntimeRequest `json:"runtime,omitempty"`
+	Name        *string                 `json:"name,omitempty"`
+	Description *string                 `json:"description,omitempty"`
+	Color       *string                 `json:"color,omitempty"`
+	Runtime     *CreateRuntimeRequest   `json:"runtime,omitempty"`
+	Assets      []CreateAssetRefRequest `json:"assets,omitempty"`
+	Tools       []CreateToolRequest     `json:"tools,omitempty"`
 }
 
 // Update updates a workspace
@@ -405,6 +417,69 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *UpdateWor
 					WorkDirContainerPath: req.Runtime.WorkDirContainerPath,
 				}
 				if err := tx.Create(runtime).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		// Update assets if provided (replace all)
+		if req.Assets != nil {
+			// Delete existing assets
+			if err := tx.Where("workspace_id = ?", id).Delete(&models.WorkspaceAssetRef{}).Error; err != nil {
+				return err
+			}
+			// Create new assets
+			for _, assetReq := range req.Assets {
+				// Get asset info from asset service
+				var assetType, assetName string
+				var asset models.Asset
+				if err := tx.Where("id = ?", assetReq.AssetID).First(&asset).Error; err == nil {
+					assetType = string(asset.Type)
+					assetName = asset.Name
+				}
+
+				assetRef := &models.WorkspaceAssetRef{
+					ID:           uuid.New().String(),
+					WorkspaceID:  id,
+					AssetID:      assetReq.AssetID,
+					AssetType:    assetType,
+					AssetName:    assetName,
+					AIHint:       assetReq.AIHint,
+					Restrictions: assetReq.Restrictions,
+					CreatedAt:    time.Now(),
+				}
+				if err := tx.Create(assetRef).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		// Update tools if provided (replace all)
+		if req.Tools != nil {
+			// Delete existing tools
+			if err := tx.Where("workspace_id = ?", id).Delete(&models.WorkspaceTool{}).Error; err != nil {
+				return err
+			}
+			// Create new tools
+			now := time.Now()
+			for _, toolReq := range req.Tools {
+				enabled := true
+				if toolReq.Enabled != nil {
+					enabled = *toolReq.Enabled
+				}
+				tool := &models.WorkspaceTool{
+					ID:          uuid.New().String(),
+					WorkspaceID: id,
+					Name:        toolReq.Name,
+					Type:        models.ToolType(toolReq.Type),
+					Description: toolReq.Description,
+					Enabled:     enabled,
+					Config:      toolReq.Config,
+					AIHint:      toolReq.AIHint,
+					CreatedAt:   now,
+					UpdatedAt:   now,
+				}
+				if err := tx.Create(tool).Error; err != nil {
 					return err
 				}
 			}

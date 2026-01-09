@@ -96,7 +96,7 @@ func NewUploadTool(tc *tools.ToolContext) tool.InvokableTool {
 		}
 
 		// Get file info
-		localSpec := tc.LocalEndpoint()
+		localSpec := tc.WorkspaceEndpoint()
 		stat, err := tc.Stat(ctx, localSpec, input.LocalPath)
 		if err != nil {
 			return "", fmt.Errorf("local file not found: %w", err)
@@ -160,7 +160,7 @@ func NewDownloadTool(tc *tools.ToolContext) tool.InvokableTool {
 		}
 
 		remoteSpec := tc.AssetEndpoint(input.AssetID)
-		localSpec := tc.LocalEndpoint()
+		localSpec := tc.WorkspaceEndpoint()
 
 		// Get remote file info
 		stat, err := tc.Stat(ctx, remoteSpec, input.RemotePath)

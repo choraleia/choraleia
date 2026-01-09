@@ -85,9 +85,54 @@ func (c *ToolContext) GetAsset(assetID string) (*models.Asset, error) {
 	return c.AssetService.GetAsset(assetID)
 }
 
-// LocalEndpoint returns an endpoint spec for local filesystem
-func (c *ToolContext) LocalEndpoint() service.EndpointSpec {
-	return service.EndpointSpec{}
+// WorkspaceEndpoint returns an endpoint spec for the workspace's runtime environment
+// If workspace uses docker, it returns the container endpoint; otherwise local filesystem
+func (c *ToolContext) WorkspaceEndpoint() service.EndpointSpec {
+	if c.WorkspaceID == "" || c.WorkspaceGetter == nil {
+		return service.EndpointSpec{} // fallback to local
+	}
+
+	workspace, err := c.WorkspaceGetter.GetWorkspace(c.WorkspaceID)
+	if err != nil || workspace == nil || workspace.Runtime == nil {
+		return service.EndpointSpec{} // fallback to local
+	}
+
+	// Check if workspace uses docker runtime
+	switch workspace.Runtime.Type {
+	case models.RuntimeTypeLocal:
+		// Local runtime - use local filesystem
+		return service.EndpointSpec{}
+
+	case models.RuntimeTypeDockerLocal:
+		// Local docker - use container filesystem
+		containerID := ""
+		if workspace.Runtime.ContainerName != nil && *workspace.Runtime.ContainerName != "" {
+			containerID = *workspace.Runtime.ContainerName
+		} else if workspace.Runtime.ContainerID != nil && *workspace.Runtime.ContainerID != "" {
+			containerID = *workspace.Runtime.ContainerID
+		}
+		if containerID != "" {
+			return service.EndpointSpec{ContainerID: containerID}
+		}
+
+	case models.RuntimeTypeDockerRemote:
+		// Remote docker - use container filesystem via SSH
+		containerID := ""
+		if workspace.Runtime.ContainerName != nil && *workspace.Runtime.ContainerName != "" {
+			containerID = *workspace.Runtime.ContainerName
+		} else if workspace.Runtime.ContainerID != nil && *workspace.Runtime.ContainerID != "" {
+			containerID = *workspace.Runtime.ContainerID
+		}
+		if containerID != "" {
+			spec := service.EndpointSpec{ContainerID: containerID}
+			if workspace.Runtime.DockerAssetID != nil {
+				spec.AssetID = *workspace.Runtime.DockerAssetID
+			}
+			return spec
+		}
+	}
+
+	return service.EndpointSpec{} // fallback to local filesystem
 }
 
 // AssetEndpoint returns an endpoint spec for an asset

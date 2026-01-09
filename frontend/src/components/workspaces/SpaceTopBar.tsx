@@ -216,17 +216,20 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview
           <Chip
             key={room.id}
             label={room.name}
-            color={isActive ? "primary" : "default"}
-            variant={isActive ? "filled" : "outlined"}
+            variant="filled"
             onClick={() => selectRoom(room.id)}
             onContextMenu={(e) => handleContextMenu(e, room.id)}
             size="small"
             sx={{
               fontWeight: isActive ? 600 : 400,
               cursor: "pointer",
-              height: 26,
+              height: 24,
+              fontSize: "0.75rem",
+              bgcolor: isActive ? "primary.main" : "transparent",
+              color: isActive ? "primary.contrastText" : "text.primary",
+              border: "none",
               "&:hover": {
-                bgcolor: isActive ? undefined : "action.hover",
+                bgcolor: isActive ? "primary.dark" : "action.hover",
               },
             }}
           />
@@ -247,9 +250,16 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview
           <Chip
             size="small"
             label={status}
-            color={status === "error" ? "error" : "default"}
-            variant="outlined"
-            sx={{ height: 24, fontSize: "0.75rem", cursor: "pointer" }}
+            variant="filled"
+            sx={{
+              height: 22,
+              fontSize: "0.7rem",
+              cursor: "pointer",
+              bgcolor: status === "error" ? "error.main" : status === "running" ? "success.main" : "action.selected",
+              color: status === "error" || status === "running" ? "common.white" : "text.primary",
+              border: "none",
+              fontWeight: 500,
+            }}
             onClick={handleStatusClick}
           />
           <Popover

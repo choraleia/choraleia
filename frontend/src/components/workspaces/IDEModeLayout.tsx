@@ -144,7 +144,6 @@ const IDEModeLayout: React.FC = () => {
           display="flex"
           alignItems="center"
           borderBottom={(theme) => `1px solid ${theme.palette.divider}`}
-          bgcolor="background.paper"
           minHeight={36}
         >
           {tabs.length > 0 ? (

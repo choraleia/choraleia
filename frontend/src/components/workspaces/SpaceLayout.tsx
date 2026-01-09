@@ -109,11 +109,11 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview, explorerVis
       </Box>
 
       {/* Content area below top bar */}
-      <Box display="flex" flex={1} minHeight={0}>
+      <Box display="flex" flex={1} minHeight={0} width="100%">
         {/* WorkspaceExplorer only in IDE mode and when visible */}
         {workMode === "ide" && explorerVisible && <WorkspaceExplorer />}
         {/* Main content based on mode */}
-        <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+        <Box flex={1} display="flex" flexDirection="column" minHeight={0} minWidth={0}>
           {workMode === "chat" ? <ChatModeLayout /> : <IDEModeLayout />}
         </Box>
       </Box>
