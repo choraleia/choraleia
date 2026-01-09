@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from "react";
 import {
   Box,
-  Chip,
   IconButton,
   Tooltip,
   Menu,
@@ -21,7 +20,8 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import WorkspacesIcon from '@mui/icons-material/Workspaces';
+import LensBlurIcon from '@mui/icons-material/LensBlur';
 import { useWorkspaces } from "../../state/workspaces";
 
 // Detailed status response type
@@ -59,9 +59,10 @@ type WorkspaceStatusResponse = {
 interface RoomTopBarProps {
   onOpenManager: () => void;
   onBackToOverview?: () => void;
+  section?: "left" | "center" | "right";
 }
 
-const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview }) => {
+const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview, section }) => {
   const { workspaces, activeWorkspaceId, activeWorkspace, selectWorkspace, selectRoom, createRoom, deleteRoom, duplicateRoom, startWorkspace, stopWorkspace } = useWorkspaces();
 
   // Context menu state
@@ -163,6 +164,273 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview
   // Only show status for Docker runtimes
   const showStatus = activeWorkspace.runtime.type === "docker-local" || activeWorkspace.runtime.type === "docker-remote";
 
+  // Left section: Back button, Workspace switcher, Status
+  if (section === "left") {
+    return (
+      <>
+        {/* Back button + Workspace switcher group */}
+        <Box display="flex" alignItems="center" gap={0.5}>
+          {/* Back button */}
+          {onBackToOverview && (
+            <Tooltip title="Back to Workspaces">
+              <IconButton size="small" onClick={onBackToOverview}>
+                <WorkspacesIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+
+          {/* Workspace switcher */}
+          <Select
+            size="small"
+            value={activeWorkspaceId || ""}
+            onChange={(event) => selectWorkspace(event.target.value as string)}
+            variant="standard"
+            disableUnderline
+            sx={{
+              maxWidth: 180,
+              "& .MuiSelect-select": {
+                py: 0.25,
+                pr: 2,
+                fontSize: 13,
+              },
+            }}
+          >
+            {workspaces.map((workspace) => (
+              <MenuItem key={workspace.id} value={workspace.id} sx={{ fontSize: 13 }}>
+                {workspace.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </Box>
+
+        {/* Workspace status + action button group - only for Docker */}
+        {showStatus && (
+          <Box display="flex" alignItems="center" gap={0.5}>
+            <Typography
+              onClick={handleStatusClick}
+              sx={{
+                cursor: "pointer",
+                fontSize: 13,
+                color: status === "error" ? "error.main" : status === "running" ? "success.main" : "text.secondary",
+                "&:hover": {
+                  textDecoration: "underline",
+                },
+              }}
+            >
+              {status}
+            </Typography>
+            <Popover
+              open={Boolean(statusAnchor)}
+              anchorEl={statusAnchor}
+              onClose={handleStatusClose}
+              anchorOrigin={{
+                vertical: "bottom",
+                horizontal: "center",
+              }}
+              transformOrigin={{
+                vertical: "top",
+                horizontal: "center",
+              }}
+              slotProps={{
+                paper: {
+                  sx: { mt: 0.5 },
+                },
+              }}
+            >
+              <Box sx={{ p: 1.5, minWidth: 220, maxWidth: 360 }}>
+                {statusLoading && !detailedStatus ? (
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <CircularProgress size={14} />
+                    <Typography variant="caption">Loading...</Typography>
+                  </Box>
+                ) : (
+                  <>
+                    <Typography variant="caption" fontWeight={600} display="block" gutterBottom>
+                      Status: {status}
+                    </Typography>
+
+                    {detailedStatus?.runtime_detailed?.phase &&
+                     detailedStatus.runtime_detailed.phase !== "idle" && (
+                      <Typography variant="caption" display="block" color="text.secondary">
+                        Phase: {detailedStatus.runtime_detailed.phase}
+                      </Typography>
+                    )}
+
+                    {detailedStatus?.runtime_detailed?.message && (
+                      <Typography variant="caption" display="block" color="text.secondary">
+                        {detailedStatus.runtime_detailed.message}
+                      </Typography>
+                    )}
+
+                    {detailedStatus?.runtime_detailed?.progress !== undefined &&
+                     detailedStatus.runtime_detailed.progress > 0 &&
+                     detailedStatus.runtime_detailed.progress < 100 && (
+                      <Typography variant="caption" display="block" color="text.secondary">
+                        Progress: {detailedStatus.runtime_detailed.progress}%
+                      </Typography>
+                    )}
+
+                    {detailedStatus?.runtime_detailed?.error && (
+                      <Typography
+                        variant="caption"
+                        display="block"
+                        color="text.secondary"
+                        sx={{
+                          wordBreak: "break-word",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        Error: {detailedStatus.runtime_detailed.error}
+                      </Typography>
+                    )}
+
+                    {(detailedStatus?.runtime_detailed?.container_name || detailedStatus?.runtime?.container_id) && (
+                      <Typography variant="caption" display="block" color="text.secondary" sx={{ fontFamily: "monospace" }}>
+                        Container: {detailedStatus?.runtime_detailed?.container_name || detailedStatus?.runtime?.container_id?.slice(0, 12)}
+                      </Typography>
+                    )}
+
+                    {detailedStatus?.runtime?.uptime !== undefined && detailedStatus.runtime.uptime > 0 && (
+                      <Typography variant="caption" display="block" color="text.secondary">
+                        Uptime: {formatUptime(detailedStatus.runtime.uptime)}
+                      </Typography>
+                    )}
+
+                    {detailedStatus?.runtime_detailed?.resources && (
+                      <>
+                        <Divider sx={{ my: 0.5 }} />
+                        <Typography variant="caption" display="block" color="text.secondary">
+                          CPU: {detailedStatus.runtime_detailed.resources.cpu_percent.toFixed(1)}%
+                        </Typography>
+                        <Typography variant="caption" display="block" color="text.secondary">
+                          Memory: {formatBytes(detailedStatus.runtime_detailed.resources.memory_usage)} / {formatBytes(detailedStatus.runtime_detailed.resources.memory_limit)} ({detailedStatus.runtime_detailed.resources.memory_percent.toFixed(1)}%)
+                        </Typography>
+                      </>
+                    )}
+
+                    {detailedStatus?.runtime_detailed?.last_updated_at && (
+                      <Typography variant="caption" display="block" color="text.disabled" sx={{ mt: 0.5, fontSize: "0.65rem" }}>
+                        Updated: {new Date(detailedStatus.runtime_detailed.last_updated_at).toLocaleTimeString()}
+                      </Typography>
+                    )}
+
+                    {!detailedStatus?.runtime_detailed && !detailedStatus?.runtime && !statusLoading && (
+                      <Typography variant="caption" color="text.secondary">
+                        No detailed status available
+                      </Typography>
+                    )}
+                  </>
+                )}
+              </Box>
+            </Popover>
+            <Tooltip title={status === "running" ? "Stop Container" : "Start Container"}>
+              <IconButton
+                size="small"
+                onClick={handleStartStop}
+                disabled={isLoading || status === "starting" || status === "stopping"}
+              >
+                {isLoading || status === "starting" || status === "stopping" ? (
+                  <CircularProgress size={16} />
+                ) : status === "running" ? (
+                  <StopIcon fontSize="small" />
+                ) : (
+                  <PlayArrowIcon fontSize="small" />
+                )}
+              </IconButton>
+            </Tooltip>
+          </Box>
+        )}
+      </>
+    );
+  }
+
+  // Center section: Room tabs
+  if (section === "center") {
+    return (
+      <>
+        {/* Room tabs */}
+        {rooms.map((room) => {
+          const isActive = room.id === activeRoomId;
+          return (
+            <Box
+              key={room.id}
+              onClick={() => selectRoom(room.id)}
+              onContextMenu={(e) => handleContextMenu(e, room.id)}
+              sx={{
+                px: 1.5,
+                py: 0.5,
+                cursor: "pointer",
+                fontSize: "0.8rem",
+                fontWeight: isActive ? 600 : 400,
+                bgcolor: isActive ? "action.selected" : "transparent",
+                color: "text.primary",
+                borderRadius: 1,
+                "&:hover": {
+                  bgcolor: "action.hover",
+                },
+              }}
+            >
+              {room.name}
+            </Box>
+          );
+        })}
+
+        {/* Add room button */}
+        <Tooltip title="New Room">
+          <IconButton size="small" onClick={createRoom}>
+            <AddIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        {/* Context Menu */}
+        <Menu
+          anchorEl={menuAnchor}
+          open={Boolean(menuAnchor)}
+          onClose={handleMenuClose}
+          anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
+          transformOrigin={{ vertical: "top", horizontal: "left" }}
+        >
+          <MenuItem onClick={onOpenManager}>
+            <ListItemIcon>
+              <EditIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primaryTypographyProps={{ variant: "body2" }}>Rename</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={handleDuplicate}>
+            <ListItemIcon>
+              <ContentCopyIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText primaryTypographyProps={{ variant: "body2" }}>Duplicate</ListItemText>
+          </MenuItem>
+          <Divider />
+          <MenuItem
+            onClick={handleDelete}
+            disabled={rooms.length <= 1}
+          >
+            <ListItemIcon>
+              <DeleteIcon fontSize="small" color={rooms.length > 1 ? "error" : "disabled"} />
+            </ListItemIcon>
+            <ListItemText
+              primaryTypographyProps={{
+                variant: "body2",
+                color: rooms.length > 1 ? "error" : "text.disabled"
+              }}
+            >
+              Delete
+            </ListItemText>
+          </MenuItem>
+        </Menu>
+      </>
+    );
+  }
+
+  // Right section: empty now (status moved to left)
+  if (section === "right") {
+    return null;
+  }
+
+
+  // Default: render all (backward compatibility)
   return (
     <Box
       display="flex"
@@ -173,7 +441,7 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview
       {onBackToOverview && (
         <Tooltip title="Back to Workspaces">
           <IconButton size="small" onClick={onBackToOverview}>
-            <ArrowBackIcon fontSize="small" />
+            <WorkspacesIcon fontSize="small" />
           </IconButton>
         </Tooltip>
       )}
@@ -213,26 +481,26 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview
       {rooms.map((room) => {
         const isActive = room.id === activeRoomId;
         return (
-          <Chip
+          <Box
             key={room.id}
-            label={room.name}
-            variant="filled"
             onClick={() => selectRoom(room.id)}
             onContextMenu={(e) => handleContextMenu(e, room.id)}
-            size="small"
             sx={{
-              fontWeight: isActive ? 600 : 400,
+              px: 1.5,
+              py: 0.5,
               cursor: "pointer",
-              height: 24,
-              fontSize: "0.75rem",
-              bgcolor: isActive ? "primary.main" : "transparent",
-              color: isActive ? "primary.contrastText" : "text.primary",
-              border: "none",
+              fontSize: "0.8rem",
+              fontWeight: isActive ? 600 : 400,
+              bgcolor: isActive ? "action.selected" : "transparent",
+              color: "text.primary",
+              borderRadius: 1,
               "&:hover": {
-                bgcolor: isActive ? "primary.dark" : "action.hover",
+                bgcolor: "action.hover",
               },
             }}
-          />
+          >
+            {room.name}
+          </Box>
         );
       })}
 
@@ -247,21 +515,24 @@ const RoomTopBar: React.FC<RoomTopBarProps> = ({ onOpenManager, onBackToOverview
       {showStatus && (
         <>
           <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
-          <Chip
-            size="small"
-            label={status}
-            variant="filled"
-            sx={{
-              height: 22,
-              fontSize: "0.7rem",
-              cursor: "pointer",
-              bgcolor: status === "error" ? "error.main" : status === "running" ? "success.main" : "action.selected",
-              color: status === "error" || status === "running" ? "common.white" : "text.primary",
-              border: "none",
-              fontWeight: 500,
-            }}
+          <Box
             onClick={handleStatusClick}
-          />
+            sx={{
+              px: 1,
+              py: 0.25,
+              cursor: "pointer",
+              fontSize: "0.75rem",
+              fontWeight: 500,
+              bgcolor: status === "error" ? "error.light" : status === "running" ? "success.light" : "action.selected",
+              color: status === "error" ? "error.dark" : status === "running" ? "success.dark" : "text.primary",
+              borderRadius: 1,
+              "&:hover": {
+                bgcolor: "action.hover",
+              },
+            }}
+          >
+            {status}
+          </Box>
           <Popover
             open={Boolean(statusAnchor)}
             anchorEl={statusAnchor}

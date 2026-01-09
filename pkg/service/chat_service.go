@@ -698,11 +698,12 @@ func (s *ChatService) buildConversationHistory(conversationID string) ([]*schema
 // A single message with tool_call + tool_result parts produces: assistant (with tool_calls) + tool messages
 func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Message {
 	if msg.Parts == nil || len(msg.Parts) == 0 {
-		// Empty message - return minimal message
-		return []*schema.Message{{
-			Role: schema.RoleType(msg.Role),
-			Name: msg.Name,
-		}}
+		// Empty message - skip it entirely to avoid API errors
+		// (e.g., DeepSeek requires reasoning_content for all assistant messages)
+		s.logger.Debug("Skipping message with empty parts",
+			"messageID", msg.ID,
+			"role", msg.Role)
+		return []*schema.Message{}
 	}
 
 	// For user/system messages - simple text concatenation
@@ -858,48 +859,63 @@ func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string
 func (s *ChatService) formatAgentError(err error) string {
 	errStr := err.Error()
 
+	var msg string
 	// Check for common error patterns and provide friendly messages
 	switch {
 	case strings.Contains(errStr, "exceeds max iterations"):
-		return "⚠️ The assistant reached the maximum number of tool call iterations. The task may be too complex or require manual intervention. Please try breaking down your request into smaller steps."
+		msg = "The assistant reached the maximum number of tool call iterations. You can type \"continue\" to resume execution, or try breaking down your request into smaller steps."
 
 	case strings.Contains(errStr, "context canceled"):
-		return "⚠️ The request was cancelled."
+		msg = "The request was cancelled."
 
 	case strings.Contains(errStr, "context deadline exceeded"):
-		return "⚠️ The request timed out. Please try again or simplify your request."
+		msg = "The request timed out. Please try again or simplify your request."
 
 	case strings.Contains(errStr, "rate limit"):
-		return "⚠️ Rate limit exceeded. Please wait a moment and try again."
+		msg = "Rate limit exceeded. Please wait a moment and try again."
 
 	case strings.Contains(errStr, "insufficient_quota"):
-		return "⚠️ API quota exceeded. Please check your API key balance."
+		msg = "API quota exceeded. Please check your API key balance."
 
 	case strings.Contains(errStr, "invalid_api_key"):
-		return "⚠️ Invalid API key. Please check your API key configuration."
+		msg = "Invalid API key. Please check your API key configuration."
 
 	case strings.Contains(errStr, "model not found"):
-		return "⚠️ The selected model is not available. Please choose a different model."
+		msg = "The selected model is not available. Please choose a different model."
 
 	case strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "no such host"):
-		return "⚠️ Failed to connect to the AI service. Please check your network connection."
+		msg = "Failed to connect to the AI service. Please check your network connection."
 
 	case strings.Contains(errStr, "tool") && strings.Contains(errStr, "failed"):
 		// Extract tool name if possible
-		return "⚠️ A tool execution failed. " + extractToolError(errStr)
+		msg = "A tool execution failed: " + extractToolError(errStr)
 
 	default:
 		// For unknown errors, show a simplified version
-		return "⚠️ An error occurred: " + simplifyErrorMessage(errStr)
+		msg = "An error occurred: " + simplifyErrorMessage(errStr)
 	}
+
+	// Format as markdown blockquote for consistent rendering
+	return "> ⚠️ **Error**\n>\n> " + msg
 }
 
 // extractToolError extracts a more readable error from tool failures
 func extractToolError(errStr string) string {
+	// Remove node path information first
+	if idx := strings.Index(errStr, "\n------------------------"); idx != -1 {
+		errStr = errStr[:idx]
+	}
+
 	// Try to find the actual error message after common prefixes
 	if idx := strings.LastIndex(errStr, "err="); idx != -1 {
 		return errStr[idx+4:]
 	}
+
+	// Remove [NodeRunError] and other verbose prefixes
+	errStr = strings.ReplaceAll(errStr, "[NodeRunError] ", "")
+	errStr = strings.ReplaceAll(errStr, "[LocalFunc] ", "")
+	errStr = strings.ReplaceAll(errStr, "agent error: ", "")
+
 	return errStr
 }
 
@@ -1107,11 +1123,12 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 	// Create agent with tools
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:        "Workspace Assistant",
-		Description: "An AI assistant that helps with coding and development tasks in the workspace",
-		Instruction: systemPrompt,
-		Model:       chatModel,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: baseTools}},
+		Name:          "Workspace Assistant",
+		Description:   "An AI assistant that helps with coding and development tasks in the workspace",
+		Instruction:   systemPrompt,
+		Model:         chatModel,
+		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: baseTools}},
+		MaxIterations: 50,
 	})
 	if err != nil {
 		return assistantMsg, fmt.Errorf("failed to create agent: %w", err)

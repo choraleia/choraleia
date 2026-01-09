@@ -97,26 +97,29 @@ export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
             overflow: "hidden",
           }}
         >
-          {/* Chat messages area */}
-          <ThreadPrimitive.Viewport
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "16px",
-            }}
-          >
-            <ThreadPrimitive.Messages
-              components={{
-                UserMessage: UserMessage,
-                EditComposer: EditComposer,
-                AssistantMessage: AssistantMessage,
+          {/* Chat messages area - wrapped with padding so scrollbar aligns with input box */}
+          <Box sx={{ flex: 1, minHeight: 0, px: "10px" }}>
+            <ThreadPrimitive.Viewport
+              style={{
+                height: "100%",
+                overflowY: "auto",
               }}
-            />
+            >
+              <Box sx={{ py: 2 }}>
+                <ThreadPrimitive.Messages
+                  components={{
+                    UserMessage: UserMessage,
+                    EditComposer: EditComposer,
+                    AssistantMessage: AssistantMessage,
+                  }}
+                />
+              </Box>
 
-            <ThreadPrimitive.If empty={false}>
-              <Box sx={{ minHeight: 32, flexGrow: 1 }} />
-            </ThreadPrimitive.If>
-          </ThreadPrimitive.Viewport>
+              <ThreadPrimitive.If empty={false}>
+                <Box sx={{ minHeight: 0, flexGrow: 1 }} />
+              </ThreadPrimitive.If>
+            </ThreadPrimitive.Viewport>
+          </Box>
 
           {/* Bottom control bar */}
           <Box
@@ -135,11 +138,8 @@ export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
               </Box>
             )}
 
-            {/* Composer */}
-            <Composer disabled={isDisabled} />
-
-            {/* Bottom toolbar: Model selector + Agent mode + Send button */}
-            <BottomToolbar
+            {/* Composer with embedded toolbar */}
+            <ComposerWithToolbar
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}
               groupedModelOptions={groupedModelOptions}
@@ -155,8 +155,8 @@ export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
   );
 };
 
-// Bottom toolbar component
-const BottomToolbar: FC<{
+// Bottom toolbar component - now embedded in composer
+interface ComposerWithToolbarProps {
   selectedModel: string;
   setSelectedModel: (model: string) => void;
   groupedModelOptions: Record<string, ModelConfig[]>;
@@ -164,7 +164,9 @@ const BottomToolbar: FC<{
   setAgentMode: (mode: AgentMode) => void;
   isLoading: boolean;
   disabled: boolean;
-}> = ({
+}
+
+const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
   selectedModel,
   setSelectedModel,
   groupedModelOptions,
@@ -193,72 +195,189 @@ const BottomToolbar: FC<{
   });
 
   return (
-    <Box sx={{ px: 2, py: 1 }}>
-      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={2}>
-        <Stack direction="row" spacing={1.5} alignItems="center">
-          {/* Agent mode selector (first) */}
-          <FormControl size="small" disabled={isLoading || disabled} sx={{ minWidth: 100 }}>
-            <Select
-              value={agentMode}
-              onChange={(e) => setAgentMode(e.target.value as AgentMode)}
-              displayEmpty
-              sx={{ fontSize: 13 }}
-              renderValue={(value) => (
-                <Stack direction="row" alignItems="center" spacing={0.5}>
-                  {value === "tools" ? (
-                    <BuildIcon sx={{ fontSize: 16 }} />
-                  ) : (
-                    <SmartToyIcon sx={{ fontSize: 16 }} />
-                  )}
-                  <span>{value === "tools" ? "Tools" : "ReAct"}</span>
-                </Stack>
-              )}
-            >
-              <MenuItem value="tools">
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <BuildIcon sx={{ fontSize: 16 }} />
-                  <span>Tools</span>
-                </Stack>
-              </MenuItem>
-              <MenuItem value="react">
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <SmartToyIcon sx={{ fontSize: 16 }} />
-                  <span>ReAct</span>
-                </Stack>
-              </MenuItem>
-            </Select>
-          </FormControl>
-
-          {/* Model selector (second) */}
-          <FormControl size="small" disabled={isLoading || disabled} sx={{ minWidth: 150 }}>
-            <Select
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              displayEmpty
-              sx={{ fontSize: 13 }}
-              MenuProps={{
-                PaperProps: { sx: { maxHeight: 300 } },
+    <Box sx={{ px: "10px", py: 1.5 }}>
+      <ComposerPrimitive.Root>
+        <Paper
+          variant="outlined"
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            "&:focus-within": {
+              borderColor: "primary.main",
+            },
+          }}
+        >
+          {/* Input area */}
+          <Box
+            sx={{
+              overflow: "auto",
+              px: 1.5,
+              pt: 1.5,
+              pb: 0.5,
+            }}
+          >
+            <ComposerPrimitive.Input
+              placeholder="Write a message..."
+              disabled={disabled}
+              maxRows={5}
+              style={{
+                width: "100%",
+                border: "none",
+                outline: "none",
+                resize: "none",
+                background: "transparent",
+                fontSize: 14,
+                lineHeight: 1.5,
               }}
-              renderValue={(value) => value || "Select Model"}
-            >
-              {modelMenuItems.length === 0 && (
-                <MenuItem value="" disabled>
-                  No models available
-                </MenuItem>
-              )}
-              {modelMenuItems}
-            </Select>
-          </FormControl>
-        </Stack>
+            />
+          </Box>
 
-        {/* Send/Cancel button */}
-        <ComposerAction disabled={disabled} />
-      </Stack>
+          {/* Embedded toolbar */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              px: 1,
+              py: 0.5,
+              borderTop: 1,
+              borderColor: "divider",
+            }}
+          >
+            <Stack direction="row" spacing={0.5} alignItems="center">
+              {/* Agent mode selector */}
+              <Select
+                size="small"
+                value={agentMode}
+                onChange={(e) => setAgentMode(e.target.value as AgentMode)}
+                disabled={isLoading || disabled}
+                variant="standard"
+                disableUnderline
+                sx={{
+                  fontSize: 12,
+                  "& .MuiSelect-select": {
+                    py: 0.25,
+                    px: 0.5,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.5,
+                    fontSize: 12,
+                  },
+                }}
+                renderValue={(value) => (
+                  <Stack direction="row" alignItems="center" spacing={0.5}>
+                    {value === "tools" ? (
+                      <BuildIcon sx={{ fontSize: 14 }} />
+                    ) : (
+                      <SmartToyIcon sx={{ fontSize: 14 }} />
+                    )}
+                    <Typography sx={{ fontSize: 12 }}>{value === "tools" ? "Tools" : "ReAct"}</Typography>
+                  </Stack>
+                )}
+              >
+                <MenuItem value="tools" sx={{ fontSize: 12 }}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <BuildIcon sx={{ fontSize: 14 }} />
+                    <span>Tools</span>
+                  </Stack>
+                </MenuItem>
+                <MenuItem value="react" sx={{ fontSize: 12 }}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <SmartToyIcon sx={{ fontSize: 14 }} />
+                    <span>ReAct</span>
+                  </Stack>
+                </MenuItem>
+              </Select>
+
+              {/* Model selector */}
+              <Select
+                size="small"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={isLoading || disabled}
+                displayEmpty
+                variant="standard"
+                disableUnderline
+                sx={{
+                  fontSize: 12,
+                  minWidth: 80,
+                  maxWidth: 180,
+                  "& .MuiSelect-select": {
+                    py: 0.25,
+                    px: 0.5,
+                    fontSize: 12,
+                  },
+                }}
+                MenuProps={{
+                  PaperProps: { sx: { maxHeight: 300 } },
+                }}
+                renderValue={(value) => (
+                  <Typography sx={{ fontSize: 12 }} noWrap>
+                    {value || "Select Model"}
+                  </Typography>
+                )}
+              >
+                {modelMenuItems.length === 0 && (
+                  <MenuItem value="" disabled sx={{ fontSize: 12 }}>
+                    No models available
+                  </MenuItem>
+                )}
+                {modelMenuItems}
+              </Select>
+            </Stack>
+
+            {/* Send/Cancel button - smaller */}
+            <Box>
+              <ThreadPrimitive.If running={false}>
+                <ComposerPrimitive.Send asChild>
+                  <Tooltip title="Send">
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        disabled={disabled}
+                        sx={{
+                          p: 0.5,
+                          bgcolor: "primary.main",
+                          color: "primary.contrastText",
+                          "&:hover": { bgcolor: "primary.dark" },
+                          "&:disabled": { bgcolor: "action.disabledBackground" },
+                        }}
+                      >
+                        <SendIcon sx={{ fontSize: 14 }} />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </ComposerPrimitive.Send>
+              </ThreadPrimitive.If>
+              <ThreadPrimitive.If running>
+                <ComposerPrimitive.Cancel asChild>
+                  <Tooltip title="Cancel">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      disabled={disabled}
+                      sx={{
+                        p: 0.5,
+                        bgcolor: "error.main",
+                        color: "error.contrastText",
+                        "&:hover": { bgcolor: "error.dark" },
+                      }}
+                    >
+                      <StopIcon sx={{ fontSize: 14 }} />
+                    </IconButton>
+                  </Tooltip>
+                </ComposerPrimitive.Cancel>
+              </ThreadPrimitive.If>
+            </Box>
+          </Box>
+        </Paper>
+      </ComposerPrimitive.Root>
     </Box>
   );
 };
 
-// Composer component
+// Composer component - deprecated, kept for reference
 const Composer: FC<{ disabled?: boolean }> = ({ disabled }) => {
   return (
     <Box sx={{ px: 2, pt: 2 }}>
@@ -296,7 +415,7 @@ const Composer: FC<{ disabled?: boolean }> = ({ disabled }) => {
   );
 };
 
-// Composer action (send/cancel button)
+// Composer action (send/cancel button) - deprecated, kept for reference
 const ComposerAction: FC<{ disabled?: boolean }> = ({ disabled }) => {
   return (
     <>
@@ -341,6 +460,17 @@ const ComposerAction: FC<{ disabled?: boolean }> = ({ disabled }) => {
   );
 };
 
+// BottomToolbar - deprecated, merged into ComposerWithToolbar
+const BottomToolbar: FC<{
+  selectedModel: string;
+  setSelectedModel: (model: string) => void;
+  groupedModelOptions: Record<string, ModelConfig[]>;
+  agentMode: AgentMode;
+  setAgentMode: (mode: AgentMode) => void;
+  isLoading: boolean;
+  disabled: boolean;
+}> = () => null;
+
 // User message component
 const UserMessage: FC = () => {
   return (
@@ -349,12 +479,29 @@ const UserMessage: FC = () => {
         sx={{
           display: "flex",
           justifyContent: "flex-end",
+          width: "100%",
           mb: 2,
         }}
       >
-        <Box sx={{ maxWidth: "80%" }}>
+        <Box sx={{ maxWidth: "100%" }}>
+          {/* Message content */}
+          <Paper
+            elevation={0}
+            sx={{
+              p: 1.5,
+              bgcolor: "primary.main",
+              color: "primary.contrastText",
+              borderRadius: 2,
+              width: "fit-content",
+              maxWidth: "100%",
+              ml: "auto",
+            }}
+          >
+            <MessagePrimitive.Parts components={{ Text: UserMessageText }} />
+          </Paper>
+
           {/* Action bar */}
-          <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 0.5, opacity: 0.6, "&:hover": { opacity: 1 } }}>
+          <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, justifyContent: "flex-end", opacity: 0.6, "&:hover": { opacity: 1 } }}>
             <ActionBarPrimitive.Root>
               <ActionBarPrimitive.Edit asChild>
                 <Tooltip title="Edit">
@@ -364,21 +511,7 @@ const UserMessage: FC = () => {
                 </Tooltip>
               </ActionBarPrimitive.Edit>
             </ActionBarPrimitive.Root>
-          </Box>
-
-          {/* Message content */}
-          <Paper
-            elevation={0}
-            sx={{
-              p: 1.5,
-              bgcolor: "primary.main",
-              color: "primary.contrastText",
-              borderRadius: 2,
-              borderTopRightRadius: 4,
-            }}
-          >
-            <MessagePrimitive.Parts components={{ Text: UserMessageText }} />
-          </Paper>
+          </Stack>
 
           {/* Branch picker */}
           <BranchPicker />
@@ -433,18 +566,20 @@ const AssistantMessage: FC = () => {
         sx={{
           display: "flex",
           justifyContent: "flex-start",
+          width: "100%",
           mb: 2,
         }}
       >
-        <Box sx={{ maxWidth: "80%" }}>
+        <Box sx={{ maxWidth: "100%" }}>
           {/* Message content */}
           <Paper
             elevation={0}
             sx={{
               p: 1.5,
-              bgcolor: "action.hover",
+              bgcolor: (theme) => theme.palette.mode === "light" ? "#f5f5f5" : "rgba(255,255,255,0.08)",
               borderRadius: 2,
-              borderTopLeftRadius: 4,
+              width: "fit-content",
+              maxWidth: "100%",
             }}
           >
             <MessagePrimitive.Parts

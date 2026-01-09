@@ -16,6 +16,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CheckIcon from "@mui/icons-material/Check";
 import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import BuildIcon from "@mui/icons-material/Build";
 import { useTheme, alpha } from "@mui/material/styles";
 
 // Tool status type
@@ -100,35 +101,38 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
     return () => cancelAnimationFrame(id);
   }, [displayArgs, displayResult, isExpanded]);
 
-  // Status icon and color - use muted colors for UI elements, bright colors only for icons/status
+  // Status icon and color - unified with ReasoningContent style
   const getStatusConfig = () => {
-    // Use theme's default text/background colors for UI, only icons/chips get status colors
-    const neutralBgColor = alpha(theme.palette.text.primary, 0.03);
-    const neutralBorderColor = alpha(theme.palette.text.primary, 0.12);
+    const bgColor = theme.palette.mode === "light"
+      ? "#ececec"
+      : theme.palette.primary.dark + "30";
+    const headerBgColor = theme.palette.mode === "light"
+      ? "rgba(0,0,0,0.04)"
+      : "rgba(255,255,255,0.08)";
 
     switch (status) {
       case "running":
         return {
           icon: <CircularProgress size={14} thickness={4} sx={{ color: theme.palette.info.main }} />,
           iconColor: theme.palette.info.main,
-          borderColor: neutralBorderColor,
-          bgColor: neutralBgColor,
+          bgColor,
+          headerBgColor,
           label: "Running",
         };
       case "success":
         return {
           icon: <CheckCircleOutlineIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />,
           iconColor: theme.palette.success.main,
-          borderColor: neutralBorderColor,
-          bgColor: neutralBgColor,
+          bgColor,
+          headerBgColor,
           label: "Completed",
         };
       case "error":
         return {
           icon: <ErrorOutlineIcon sx={{ fontSize: 16, color: theme.palette.error.main }} />,
           iconColor: theme.palette.error.main,
-          borderColor: neutralBorderColor,
-          bgColor: neutralBgColor,
+          bgColor,
+          headerBgColor,
           label: "Error",
         };
     }
@@ -139,11 +143,11 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
   return (
     <Paper
       elevation={0}
-      variant="outlined"
       sx={{
         mt: 1,
         backgroundColor: statusConfig.bgColor,
-        borderColor: statusConfig.borderColor,
+        borderColor: theme.palette.mode === "light" ? "#f0f0f0" : theme.palette.divider,
+        border: "none",
         p: 0,
         overflow: "hidden",
         transition: "all 0.2s ease",
@@ -163,57 +167,72 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
           alignItems: "center",
           gap: 1,
           px: 1.5,
-          py: 0.75,
+          py: 1,
           textAlign: "left",
-          backgroundColor: "transparent",
+          backgroundColor: statusConfig.headerBgColor,
           border: "none",
           outline: "none",
           fontWeight: 500,
-          color: theme.palette.text.primary,
+          color: theme.palette.mode === "light"
+            ? theme.palette.primary.main
+            : theme.palette.primary.light,
           "&:hover": {
-            backgroundColor: alpha(theme.palette.text.primary, 0.05),
+            backgroundColor: theme.palette.mode === "light"
+              ? "rgba(0,0,0,0.07)"
+              : "rgba(255,255,255,0.12)",
           },
         }}
       >
-        {/* Status icon */}
-        <Tooltip title={statusConfig.label}>
-          <Box sx={{ display: "flex", alignItems: "center" }}>
-            {statusConfig.icon}
-          </Box>
-        </Tooltip>
+        {/* Wrench icon on left */}
+        <Box sx={{ display: "flex", alignItems: "center", color: "inherit" }}>
+          <BuildIcon sx={{ fontSize: 16 }} />
+        </Box>
 
         {/* Tool name */}
         <Typography
           component="span"
           variant="body2"
           sx={{
-            fontWeight: 600,
+            fontWeight: 500,
             color: "inherit",
-            fontFamily: "monospace",
-            fontSize: "0.8rem",
           }}
         >
           {toolName}
         </Typography>
 
+        {/* Status icon on right */}
+        <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 1 }}>
+          <Tooltip title={statusConfig.label}>
+            <Box sx={{ display: "flex", alignItems: "center" }}>
+              {statusConfig.icon}
+            </Box>
+          </Tooltip>
 
-        {/* Expand icon */}
-        <Box
-          sx={{
-            ml: "auto",
-            display: "flex",
-            alignItems: "center",
-            color: theme.palette.text.secondary,
-          }}
-        >
-          {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+          {/* Expand icon */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              color: "inherit",
+            }}
+          >
+            {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+          </Box>
         </Box>
       </Box>
 
       {/* Content */}
       <Collapse in={isExpanded} unmountOnExit timeout={150}>
-        <Divider sx={{ borderColor: statusConfig.borderColor }} />
-        <Box sx={{ px: 1.5, py: 1 }}>
+        <Divider sx={{ mb: 0 }} />
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1.5,
+            backgroundColor: theme.palette.mode === "dark"
+              ? theme.palette.primary.dark + "30"
+              : undefined,
+          }}
+        >
           <Box ref={scrollRef} sx={{ maxHeight: 400, overflowY: "auto" }}>
             {/* Arguments section */}
             <Box sx={{ mb: displayResult ? 1.5 : 0 }}>

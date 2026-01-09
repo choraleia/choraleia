@@ -330,33 +330,47 @@ const ChatPanel: React.FC<ChatPanelProps> = ({ compact = false }) => {
       <Box display="flex" flex={1} minHeight={0}>
         {/* Messages */}
         <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
-          <Box flex={1} overflow="auto" px={2} py={1.5}>
+          <Box
+            flex={1}
+            overflow="auto"
+            px={2}
+            py={1.5}
+            display="flex"
+            flexDirection="column"
+            justifyContent="flex-end"
+          >
             {activeSession?.messages.map((msg) => (
-              <Stack
+              <Box
                 key={msg.id}
-                alignSelf={msg.role === "user" ? "flex-end" : "flex-start"}
+                display="flex"
+                justifyContent={msg.role === "user" ? "flex-end" : "flex-start"}
+                width="100%"
                 sx={{ mb: 1.5 }}
               >
-                <Chip
-                  label={msg.role === "user" ? "You" : "AI Agent"}
-                  size="small"
-                  color={msg.role === "user" ? "default" : "primary"}
-                  sx={{ alignSelf: msg.role === "user" ? "flex-end" : "flex-start" }}
-                />
                 <Box
-                  mt={0.5}
-                  p={1.5}
-                  borderRadius={2}
+                  display="flex"
+                  flexDirection="column"
+                  alignItems={msg.role === "user" ? "flex-end" : "flex-start"}
                   maxWidth="85%"
-                  bgcolor={msg.role === "user" ? "background.paper" : "action.hover"}
-                  border={(theme) => `1px solid ${theme.palette.divider}`}
-                  alignSelf={msg.role === "user" ? "flex-end" : "flex-start"}
                 >
-                  <Typography variant="body2" whiteSpace="pre-wrap">
-                    {msg.content}
-                  </Typography>
+                  <Chip
+                    label={msg.role === "user" ? "You" : "AI Agent"}
+                    size="small"
+                    color={msg.role === "user" ? "default" : "primary"}
+                  />
+                  <Box
+                    mt={0.5}
+                    p={1.5}
+                    borderRadius={2}
+                    bgcolor={msg.role === "user" ? "background.paper" : "action.hover"}
+                    border={(theme) => `1px solid ${theme.palette.divider}`}
+                  >
+                    <Typography variant="body2" whiteSpace="pre-wrap">
+                      {msg.content}
+                    </Typography>
+                  </Box>
                 </Box>
-              </Stack>
+              </Box>
             ))}
           </Box>
 

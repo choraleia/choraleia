@@ -411,26 +411,19 @@ export default function WorkspaceChat({ workspaceId, previewComponent }: Workspa
     });
 
     const contentParts: any[] = [];
-    let currentTextPart: { type: "text"; text: string } | null = null;
-    let currentReasoningPart: { type: "reasoning"; text: string } | null = null;
-    let inToolCallBatch = false;
 
     for await (const chunk of stream) {
       if (abortControllerRef.current?.signal.aborted) break;
 
       for (const choice of chunk.choices) {
-        // New assistant round
-        if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls) {
-          currentTextPart = null;
-          currentReasoningPart = null;
-          inToolCallBatch = false;
+        // New assistant round marker - skip
+        if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls && !choice.delta.reasoning_content) {
           continue;
         }
 
-        // Tool results - find by tool_call_id
+        // Tool results - find tool-call part by tool_call_id and update result
         if (choice.delta.role === "tool" && choice.delta.tool_call_id) {
           const toolCallId = choice.delta.tool_call_id;
-          // Find the tool-call part with matching toolCallId
           const toolCallPart = contentParts.find(
             p => p.type === "tool-call" && p.toolCallId === toolCallId
           );
@@ -440,42 +433,48 @@ export default function WorkspaceChat({ workspaceId, previewComponent }: Workspa
           continue;
         }
 
-        // Reasoning
+        // Reasoning - append to last if also reasoning, otherwise create new
         if (choice.delta.reasoning_content) {
-          if (!currentReasoningPart) {
-            currentReasoningPart = { type: "reasoning", text: "" };
-            contentParts.push(currentReasoningPart);
+          const lastPart = contentParts[contentParts.length - 1];
+          if (lastPart && lastPart.type === "reasoning") {
+            lastPart.text += choice.delta.reasoning_content;
+          } else {
+            contentParts.push({ type: "reasoning", text: choice.delta.reasoning_content });
           }
-          currentReasoningPart.text += choice.delta.reasoning_content;
         }
 
-        // Content
+        // Content - append to last if also text, otherwise create new
         if (choice.delta.content && choice.delta.role !== "tool") {
-          if (inToolCallBatch) { currentTextPart = null; inToolCallBatch = false; }
-          if (!currentTextPart) {
-            currentTextPart = { type: "text", text: "" };
-            contentParts.push(currentTextPart);
+          const lastPart = contentParts[contentParts.length - 1];
+          if (lastPart && lastPart.type === "text") {
+            lastPart.text += choice.delta.content;
+          } else {
+            contentParts.push({ type: "text", text: choice.delta.content });
           }
-          currentTextPart.text += choice.delta.content;
         }
 
-        // Tool calls
+        // Tool calls - always append new tool-call parts
         if (choice.delta.tool_calls) {
-          if (!inToolCallBatch && currentTextPart) currentTextPart = null;
-          inToolCallBatch = true;
           for (const tc of choice.delta.tool_calls) {
             const toolCallId = tc.id || "";
-            // Find existing tool-call part by id, or create new one
-            let toolCallPart = contentParts.find(
-              p => p.type === "tool-call" && p.toolCallId === toolCallId
-            );
-            if (!toolCallPart && toolCallId) {
-              toolCallPart = { type: "tool-call", toolCallId, toolName: "", argsText: "" };
-              contentParts.push(toolCallPart);
-            }
-            if (toolCallPart) {
-              if (tc.function?.name) toolCallPart.toolName = tc.function.name;
-              if (tc.function?.arguments) toolCallPart.argsText += tc.function.arguments;
+            if (toolCallId) {
+              // Check if this tool call already exists (streaming updates)
+              let existingPart = contentParts.find(
+                p => p.type === "tool-call" && p.toolCallId === toolCallId
+              );
+              if (existingPart) {
+                // Update existing tool call (streaming arguments)
+                if (tc.function?.name) existingPart.toolName = tc.function.name;
+                if (tc.function?.arguments) existingPart.argsText += tc.function.arguments;
+              } else {
+                // New tool call - append
+                contentParts.push({
+                  type: "tool-call",
+                  toolCallId,
+                  toolName: tc.function?.name || "",
+                  argsText: tc.function?.arguments || "",
+                });
+              }
             }
           }
         }

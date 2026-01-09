@@ -67,45 +67,85 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview, explorerVis
         px={1}
         py={0.5}
         borderBottom={(theme) => `1px solid ${theme.palette.divider}`}
-        gap={1}
+        gap={2}
       >
-        <RoomTopBar
-          onOpenManager={openRoomManager}
-          onBackToOverview={onBackToOverview}
-        />
-        <Box flex={1} />
-        {/* Mode Switcher */}
-        <ToggleButtonGroup
-          value={workMode}
-          exclusive
-          onChange={handleModeChange}
-          size="small"
-          sx={{
-            "& .MuiToggleButton-root": {
-              px: 1.5,
-              py: 0.25,
-              textTransform: "none",
-              fontSize: 12,
-            },
-          }}
-        >
-          <ToggleButton value="ide">
-            <Tooltip title="IDE Mode - Traditional Development">
-              <Box display="flex" alignItems="center" gap={0.5}>
-                <CodeIcon sx={{ fontSize: 16 }} />
-                IDE
-              </Box>
-            </Tooltip>
-          </ToggleButton>
-          <ToggleButton value="chat">
-            <Tooltip title="AI Chat Mode - Work through conversation">
-              <Box display="flex" alignItems="center" gap={0.5}>
-                <ChatIcon sx={{ fontSize: 16 }} />
-                Chat
-              </Box>
-            </Tooltip>
-          </ToggleButton>
-        </ToggleButtonGroup>
+        {/* Left: Workspace selector and controls */}
+        <Box display="flex" alignItems="center" gap={1} flexShrink={0}>
+          <RoomTopBar
+            onOpenManager={openRoomManager}
+            onBackToOverview={onBackToOverview}
+            section="left"
+          />
+        </Box>
+
+        {/* Center: Room tabs - can expand */}
+        <Box display="flex" alignItems="center" justifyContent="center" flex={1} gap={0.5} overflow="hidden">
+          <RoomTopBar
+            onOpenManager={openRoomManager}
+            onBackToOverview={onBackToOverview}
+            section="center"
+          />
+        </Box>
+
+        {/* Right: Mode Switcher */}
+        <Box display="flex" alignItems="center" gap={1} flexShrink={0}>
+          <RoomTopBar
+            onOpenManager={openRoomManager}
+            onBackToOverview={onBackToOverview}
+            section="right"
+          />
+          <ToggleButtonGroup
+            value={workMode}
+            exclusive
+            onChange={handleModeChange}
+            size="small"
+            sx={{
+              "& .MuiToggleButton-root": {
+                px: 1.5,
+                py: 0.25,
+                textTransform: "none",
+                fontSize: 12,
+                border: "none",
+                bgcolor: "transparent",
+                "&.Mui-selected": {
+                  bgcolor: "action.selected",
+                  fontWeight: 600,
+                  "&:hover": {
+                    bgcolor: "action.selected",
+                  },
+                },
+                "&:hover": {
+                  bgcolor: "action.hover",
+                },
+              },
+              // First button: round left corners only
+              "& .MuiToggleButton-root:first-of-type": {
+                borderRadius: "4px 0 0 4px",
+              },
+              // Last button: round right corners only
+              "& .MuiToggleButton-root:last-of-type": {
+                borderRadius: "0 4px 4px 0",
+              },
+            }}
+          >
+            <ToggleButton value="ide">
+              <Tooltip title="IDE Mode - Traditional Development">
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <CodeIcon sx={{ fontSize: 16 }} />
+                  IDE
+                </Box>
+              </Tooltip>
+            </ToggleButton>
+            <ToggleButton value="chat">
+              <Tooltip title="AI Chat Mode - Work through conversation">
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <ChatIcon sx={{ fontSize: 16 }} />
+                  Chat
+                </Box>
+              </Tooltip>
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
       </Box>
 
       {/* Content area below top bar */}
