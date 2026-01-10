@@ -601,10 +601,29 @@ func (m *RuntimeManager) execLocal(ctx context.Context, cmd []string) (string, e
 
 // execInContainer executes a command in a container
 func (m *RuntimeManager) execInContainer(ctx context.Context, dockerAsset *models.Asset, containerID string, cmd []string) (string, error) {
-	// Join command parts and execute via shell to handle complex commands
-	cmdStr := strings.Join(cmd, " ")
+	// Build properly quoted command string
+	cmdStr := shellQuoteArgs(cmd)
 	args := []string{"exec", containerID, "/bin/sh", "-c", cmdStr}
 	return m.execDocker(ctx, dockerAsset, args...)
+}
+
+// shellQuoteArgs quotes command arguments for safe shell execution.
+// Arguments containing special characters are wrapped in single quotes.
+func shellQuoteArgs(cmd []string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+
+	quoted := make([]string, len(cmd))
+	for i, arg := range cmd {
+		// Only quote arguments that contain special characters
+		if strings.ContainsAny(arg, " \t\n'\"\\$`!;|&()<>{}[]?*~#") {
+			quoted[i] = shellQuote(arg)
+		} else {
+			quoted[i] = arg
+		}
+	}
+	return strings.Join(quoted, " ")
 }
 
 // execDocker executes a docker command either locally or via SSH

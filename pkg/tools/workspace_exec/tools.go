@@ -44,12 +44,23 @@ type ExecCommandInput struct {
 func NewExecCommandTool(tc *tools.ToolContext) tool.InvokableTool {
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_exec_command",
-		Desc: "Execute a shell command in the workspace runtime environment (local, docker container, or remote docker). The command runs in the workspace's configured runtime.",
+		Desc: "Execute a single command with arguments in the workspace runtime environment. This runs the command directly WITHOUT shell interpretation - shell operators like pipes (|), redirects (>, <), command chaining (&&, ||, ;) will NOT work. For shell pipelines or complex commands, use workspace_exec_script instead.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"command": {Type: schema.String, Required: true, Desc: "Command to execute (e.g., 'ls', 'cat', 'grep')"},
-			"args":    {Type: schema.Array, Required: false, Desc: "Command arguments as array", ElemInfo: &schema.ParameterInfo{Type: schema.String}},
+			"command": {Type: schema.String, Required: true, Desc: "Command to execute (e.g., 'ls', 'cat', 'grep'). Must be a single command without shell operators."},
+			"args":    {Type: schema.Array, Required: false, Desc: "Command arguments as array. Do NOT include shell operators like |, >, <, &&, etc.", ElemInfo: &schema.ParameterInfo{Type: schema.String}},
 		}),
 	}, func(ctx context.Context, input *ExecCommandInput) (string, error) {
+		// Check for shell operators in args - these won't work with direct execution
+		shellOperators := []string{"|", "||", "&&", ";", ">", ">>", "<", "<<", "&", "`", "$("}
+		for _, arg := range input.Args {
+			for _, op := range shellOperators {
+				if arg == op {
+					// Return error as result so AI can see it and use workspace_exec_script instead
+					return fmt.Sprintf("Error: shell operator '%s' detected in args. This tool executes commands directly without shell interpretation. For shell pipelines or complex commands with operators, use workspace_exec_script instead. Example: {\"script\": \"%s %s\"}", op, input.Command, strings.Join(input.Args, " ")), nil
+				}
+			}
+		}
+
 		// Build command array
 		cmd := []string{input.Command}
 		cmd = append(cmd, input.Args...)
@@ -57,7 +68,8 @@ func NewExecCommandTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Execute in workspace runtime
 		output, err := tc.ExecInWorkspace(ctx, cmd)
 		if err != nil {
-			return "", fmt.Errorf("failed to execute command: %w", err)
+			// Return error as result so AI can see it and handle accordingly
+			return fmt.Sprintf("Error: %v", err), nil
 		}
 
 		var sb strings.Builder
@@ -94,7 +106,8 @@ func NewExecScriptTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		output, err := tc.ExecInWorkspace(ctx, cmd)
 		if err != nil {
-			return "", fmt.Errorf("failed to execute script: %w", err)
+			// Return error as result so AI can see it and handle accordingly
+			return fmt.Sprintf("Error: %v", err), nil
 		}
 
 		var sb strings.Builder

@@ -121,8 +121,8 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
         };
       case "success":
         return {
-          icon: <CheckCircleOutlineIcon sx={{ fontSize: 16, color: theme.palette.success.main }} />,
-          iconColor: theme.palette.success.main,
+          icon: <CheckCircleOutlineIcon sx={{ fontSize: 16, color: theme.palette.info.main }} />,
+          iconColor: theme.palette.info.main,
           bgColor,
           headerBgColor,
           label: "Completed",
