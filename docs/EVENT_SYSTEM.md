@@ -41,6 +41,21 @@ Each event is a separate Go type:
 | `task.created` | Task created |
 | `task.progress` | Task progress updated |
 | `task.completed` | Task completed |
+| `browser.stateChanged` | Browser instance state changed |
+| `browser.screenshot` | Browser screenshot available |
+
+## Browser WebSocket
+
+For real-time browser updates, use the dedicated browser WebSocket:
+
+```
+GET /api/browser/ws?conversation_id=xxx
+```
+
+Message types:
+- `browser_list` - List of active browsers
+- `screenshot` - Screenshot data (base64)
+- `state_change` - Browser state changed
 
 ## Backend Usage
 

@@ -39,6 +39,10 @@ const (
 	BrowserWindowHeight = 720
 	// BrowserNetworkName is the Docker network for browser containers
 	BrowserNetworkName = "choraleia-browser-net"
+	// DefaultActionTimeout is the timeout for browser actions like click, input, etc.
+	DefaultActionTimeout = 5 * time.Second
+	// DefaultNavigationTimeout is the timeout for page navigation (longer due to network latency)
+	DefaultNavigationTimeout = 30 * time.Second
 )
 
 // BrowserStatus represents the current state of a browser instance
@@ -1368,11 +1372,18 @@ func (s *BrowserService) Navigate(ctx context.Context, browserID, targetURL stri
 		s.notifyStateChange(browserID, instance)
 	}()
 
-	err = chromedp.Run(instance.ctx,
+	// Create timeout context for navigation
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultNavigationTimeout)
+	defer cancel()
+
+	err = chromedp.Run(actionCtx,
 		chromedp.Navigate(targetURL),
 		chromedp.WaitReady("body"),
 	)
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("navigation timed out after %v: failed to load '%s'", DefaultNavigationTimeout, targetURL)
+		}
 		return fmt.Errorf("navigation failed: %w", err)
 	}
 
@@ -1421,11 +1432,18 @@ func (s *BrowserService) Click(ctx context.Context, browserID, selector string) 
 		})
 	}()
 
-	err = chromedp.Run(instance.ctx,
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	err = chromedp.Run(actionCtx,
 		chromedp.WaitVisible(selector),
 		chromedp.Click(selector),
 	)
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("click timed out after %v: element '%s' not found or not visible", DefaultActionTimeout, selector)
+		}
 		return fmt.Errorf("click failed: %w", err)
 	}
 
@@ -1458,6 +1476,10 @@ func (s *BrowserService) InputText(ctx context.Context, browserID, selector, tex
 		})
 	}()
 
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
 	actions := []chromedp.Action{
 		chromedp.WaitVisible(selector),
 	}
@@ -1467,8 +1489,11 @@ func (s *BrowserService) InputText(ctx context.Context, browserID, selector, tex
 	}
 	actions = append(actions, chromedp.SendKeys(selector, text))
 
-	err = chromedp.Run(instance.ctx, actions...)
+	err = chromedp.Run(actionCtx, actions...)
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("input timed out after %v: element '%s' not found or not visible", DefaultActionTimeout, selector)
+		}
 		return fmt.Errorf("input failed: %w", err)
 	}
 
@@ -1506,9 +1531,16 @@ func (s *BrowserService) Scroll(ctx context.Context, browserID string, direction
 		scrollY = -amount
 	}
 
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
 	script := fmt.Sprintf("window.scrollBy(0, %d)", scrollY)
-	err = chromedp.Run(instance.ctx, chromedp.Evaluate(script, nil))
+	err = chromedp.Run(actionCtx, chromedp.Evaluate(script, nil))
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("scroll timed out after %v", DefaultActionTimeout)
+		}
 		return fmt.Errorf("scroll failed: %w", err)
 	}
 
@@ -1537,8 +1569,15 @@ func (s *BrowserService) Screenshot(ctx context.Context, browserID string, fullP
 		action = chromedp.CaptureScreenshot(&buf)
 	}
 
-	err = chromedp.Run(instance.ctx, action)
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	err = chromedp.Run(actionCtx, action)
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("screenshot timed out after %v", DefaultActionTimeout)
+		}
 		return nil, fmt.Errorf("screenshot failed: %w", err)
 	}
 
@@ -1595,11 +1634,18 @@ func (s *BrowserService) ExtractContent(ctx context.Context, browserID string, s
 		action = chromedp.Text(selector, &content)
 	}
 
-	err = chromedp.Run(instance.ctx,
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	err = chromedp.Run(actionCtx,
 		chromedp.WaitReady(selector),
 		action,
 	)
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("extract timed out after %v: element '%s' not found", DefaultActionTimeout, selector)
+		}
 		return "", fmt.Errorf("extract failed: %w", err)
 	}
 
@@ -1679,14 +1725,21 @@ func (s *BrowserService) OpenTab(ctx context.Context, browserID string, targetUR
 	// Create a new tab (new chromedp context on the same allocator)
 	tabCtx, tabCancel := chromedp.NewContext(instance.allocCtx)
 
+	// Create timeout context for navigation
+	actionCtx, cancel := context.WithTimeout(tabCtx, DefaultNavigationTimeout)
+	defer cancel()
+
 	// Set viewport and navigate
-	err = chromedp.Run(tabCtx,
+	err = chromedp.Run(actionCtx,
 		chromedp.EmulateViewport(int64(BrowserWindowWidth), int64(BrowserWindowHeight)),
 		chromedp.Navigate(targetURL),
 		chromedp.WaitReady("body"),
 	)
 	if err != nil {
 		tabCancel()
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("open tab timed out after %v: failed to load '%s'", DefaultNavigationTimeout, targetURL)
+		}
 		return fmt.Errorf("open tab failed: %w", err)
 	}
 
@@ -1880,9 +1933,16 @@ func (s *BrowserService) GetScrollInfo(ctx context.Context, browserID string) (*
 		})()
 	`
 
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
 	var result map[string]interface{}
-	err = chromedp.Run(instance.ctx, chromedp.Evaluate(script, &result))
+	err = chromedp.Run(actionCtx, chromedp.Evaluate(script, &result))
 	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("get scroll info timed out after %v", DefaultActionTimeout)
+		}
 		return nil, fmt.Errorf("failed to get scroll info: %w", err)
 	}
 

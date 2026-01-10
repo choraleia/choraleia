@@ -6,6 +6,7 @@ toolchain go1.24.4
 
 require (
 	github.com/aymanbagabas/go-pty v0.2.2
+	github.com/chromedp/chromedp v0.14.2
 	github.com/cloudwego/eino v0.7.11
 	github.com/cloudwego/eino-ext/components/model/ark v0.1.27
 	github.com/cloudwego/eino-ext/components/model/claude v0.1.12
@@ -67,7 +68,6 @@ require (
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327 // indirect
-	github.com/chromedp/chromedp v0.14.2 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/cloudflare/circl v1.6.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
