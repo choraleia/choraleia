@@ -2,9 +2,13 @@ package fs
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 )
+
+// ErrNotSupported indicates the operation is not supported by this filesystem.
+var ErrNotSupported = errors.New("operation not supported")
 
 // EndpointType identifies a filesystem implementation.
 type EndpointType string
@@ -82,4 +86,19 @@ type TarStreamer interface {
 	// UntarToDirectory extracts a tar stream to a directory.
 	// Files in the tar are extracted relative to the target directory.
 	UntarToDirectory(ctx context.Context, dirPath string) (io.WriteCloser, error)
+}
+
+// Copier is an optional interface for filesystems that support
+// efficient copy operations within the same filesystem.
+type Copier interface {
+	// Copy copies a file or directory from src to dst.
+	Copy(ctx context.Context, src, dst string) error
+}
+
+// Toucher is an optional interface for filesystems that support
+// touch operation (create empty file or update mtime).
+type Toucher interface {
+	// Touch creates an empty file if it doesn't exist,
+	// or updates the modification time if it does.
+	Touch(ctx context.Context, path string) error
 }

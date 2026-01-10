@@ -45,25 +45,6 @@ interface QuickCommandsPanelProps {
   activeTabKey: string;
 }
 
-const STORAGE_KEY = "quickCommands.v1";
-
-function loadCommands(): QuickCommand[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const arr = JSON.parse(raw);
-    if (Array.isArray(arr)) return arr;
-    return [];
-  } catch {
-    return [];
-  }
-}
-function saveCommands(cmds: QuickCommand[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(cmds));
-  } catch {}
-}
-
 // simple variable substitution {{DATE}} {{TIME}}
 function renderTemplate(text: string): string {
   const now = new Date();
@@ -77,10 +58,8 @@ function renderTemplate(text: string): string {
 const QuickCommandsPanel: React.FC<QuickCommandsPanelProps> = ({
   activeTabKey,
 }) => {
-  // local state synchronized with backend
-  const [commands, setCommands] = useState<QuickCommand[]>(() =>
-    loadCommands(),
-  );
+  // State synchronized with backend
+  const [commands, setCommands] = useState<QuickCommand[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
   const [search, setSearch] = useState("");
@@ -108,7 +87,6 @@ const QuickCommandsPanel: React.FC<QuickCommandsPanelProps> = ({
           updatedAt: Date.parse(c.updatedAt || new Date().toISOString()),
         }));
         setCommands(mapped);
-        saveCommands(mapped);
       } catch (e: any) {
         setError(e.message || String(e));
       } finally {
@@ -117,9 +95,6 @@ const QuickCommandsPanel: React.FC<QuickCommandsPanelProps> = ({
     })();
   }, []);
 
-  useEffect(() => {
-    saveCommands(commands);
-  }, [commands]);
 
   const resetForm = () => {
     setFormName("");

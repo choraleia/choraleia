@@ -1,4 +1,4 @@
-import React, { FC, useState } from "react";
+import React, { FC } from "react";
 import {
   ThreadListItemPrimitive,
   ThreadListPrimitive,
@@ -9,79 +9,47 @@ import {
   Box,
   Typography,
   IconButton,
-  Menu,
   List,
   ListItem,
   ListItemButton,
   Skeleton as MUISkeleton,
+  Divider,
 } from "@mui/material";
 
 export const ThreadList: FC = () => {
-  // Get current conversation title
-  const currentThreadTitle = useAssistantState(({ threads }) => {
-    const mainId = threads.mainThreadId;
-    const thread = threads.threadItems?.find(
-      (item) => item.id === mainId && item.id !== "DEFAULT_THREAD_ID",
-    );
-    return thread ? thread.title : "New Conversation";
-  });
-  const isLoading = useAssistantState(({ threads }) => threads.isLoading);
+  const isLoading = useAssistantState(
+    ({ threads }) => threads.isLoading,
+  );
   const threadItems = useAssistantState(
     ({ threads }) => threads.threadItems || [],
   );
 
-  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
-  const menuOpen = Boolean(menuAnchor);
-
-  const handleOpenMenu = (e: React.MouseEvent<HTMLElement>) =>
-    setMenuAnchor(e.currentTarget);
-  const handleCloseMenu = () => setMenuAnchor(null);
-  const handleSelectThread = () => handleCloseMenu();
-
   return (
     <Box
-      component="header"
       sx={{
-        px: 1.5,
-        py: 1,
-        borderBottom: "1px solid",
-        borderColor: "divider",
         display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        flexShrink: 0,
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
       }}
     >
-      <Typography
-        variant="subtitle2"
-        noWrap
-        sx={{ userSelect: "none", fontWeight: 500 }}
+      {/* Header */}
+      <Box
+        sx={{
+          px: 1.5,
+          py: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          flexShrink: 0,
+        }}
       >
-        {currentThreadTitle}
-      </Typography>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        {/* Conversation history button */}
-        <IconButton
-          size="small"
-          onClick={handleOpenMenu}
-          aria-label="Conversation History"
-          title="Conversation History"
+        <Typography
+          variant="subtitle2"
+          sx={{ fontWeight: 600, color: "text.secondary" }}
         >
-          {/* Simple clock/history icon using current DeleteIcon path fallback if needed */}
-          <svg
-            width={18}
-            height={18}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <circle cx="12" cy="12" r="9" />
-            <polyline points="12 7 12 12 16 14" />
-          </svg>
-        </IconButton>
+          Conversations
+        </Typography>
         {/* New conversation button */}
         <ThreadListPrimitive.New asChild>
           <IconButton
@@ -93,43 +61,31 @@ export const ThreadList: FC = () => {
           </IconButton>
         </ThreadListPrimitive.New>
       </Box>
-      {/* Dropdown menu for conversation history */}
-      <Menu
-        anchorEl={menuAnchor}
-        open={menuOpen}
-        onClose={handleCloseMenu}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-        transformOrigin={{ vertical: "top", horizontal: "right" }}
-        slotProps={{
-          paper: {
-            sx: { width: 300, maxHeight: 320, overflowY: "auto", p: 0 },
-          },
-        }}
-      >
-        <Box sx={{ width: "100%" }}>
-          {isLoading ? (
-            <Box sx={{ p: 1 }}>
-              <ThreadListSkeleton />
-            </Box>
-          ) : threadItems.length === 0 ? (
-            <Box sx={{ px: 2, py: 1.5 }}>
-              <Typography variant="body2" color="text.secondary">
-                No conversation history
-              </Typography>
-            </Box>
-          ) : (
-            <List dense disablePadding sx={{ py: 0 }}>
-              <ThreadListPrimitive.Items
-                components={{
-                  ThreadListItem: (props) => (
-                    <ThreadListItem {...props} onSelect={handleSelectThread} />
-                  ),
-                }}
-              />
-            </List>
-          )}
-        </Box>
-      </Menu>
+
+      <Divider />
+
+      {/* Conversation list */}
+      <Box sx={{ flex: 1, overflowY: "auto" }}>
+        {isLoading ? (
+          <Box sx={{ p: 1 }}>
+            <ThreadListSkeleton />
+          </Box>
+        ) : threadItems.length === 0 ? (
+          <Box sx={{ px: 2, py: 3, textAlign: "center" }}>
+            <Typography variant="body2" color="text.secondary">
+              No conversations yet
+            </Typography>
+          </Box>
+        ) : (
+          <List dense disablePadding sx={{ py: 0.5 }}>
+            <ThreadListPrimitive.Items
+              components={{
+                ThreadListItem: ThreadListItem,
+              }}
+            />
+          </List>
+        )}
+      </Box>
     </Box>
   );
 };
@@ -153,10 +109,7 @@ const ThreadListSkeleton: FC = () => (
   </Box>
 );
 
-const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({
-  id,
-  onSelect,
-}) => {
+const ThreadListItem: FC<{ id?: string }> = ({ id }) => {
   const mainThreadId = useAssistantState(({ threads }) => threads.mainThreadId);
   const isActive = id === mainThreadId;
   return (
@@ -165,7 +118,6 @@ const ThreadListItem: FC<{ id?: string; onSelect?: () => void }> = ({
         <ThreadListItemPrimitive.Trigger asChild>
           <ListItemButton
             selected={isActive}
-            onClick={onSelect}
             sx={{
               py: 0.75,
               px: 1.5,

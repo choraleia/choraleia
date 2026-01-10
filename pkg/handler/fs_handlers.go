@@ -116,6 +116,20 @@ func (h *FSHandler) Mkdir(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok"})
 }
 
+func (h *FSHandler) Touch(c *gin.Context) {
+	spec := parseEndpointSpec(c)
+	p := c.Query("path")
+	if strings.TrimSpace(p) == "" {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
+		return
+	}
+	if err := h.svc.Touch(c.Request.Context(), spec, p); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok"})
+}
+
 func (h *FSHandler) Remove(c *gin.Context) {
 	spec := parseEndpointSpec(c)
 	p := c.Query("path")
@@ -139,6 +153,59 @@ func (h *FSHandler) Rename(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Rename(c.Request.Context(), spec, from, to); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok"})
+}
+
+func (h *FSHandler) Read(c *gin.Context) {
+	spec := parseEndpointSpec(c)
+	p := c.Query("path")
+	if strings.TrimSpace(p) == "" {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
+		return
+	}
+	content, err := h.svc.ReadFile(c.Request.Context(), spec, p)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok", Data: gin.H{"content": content}})
+}
+
+type WriteRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+func (h *FSHandler) Write(c *gin.Context) {
+	spec := parseEndpointSpec(c)
+	var req WriteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.Path) == "" {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "path is required"})
+		return
+	}
+	if err := h.svc.WriteFile(c.Request.Context(), spec, req.Path, req.Content); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, models.Response{Code: 0, Message: "ok"})
+}
+
+func (h *FSHandler) Copy(c *gin.Context) {
+	spec := parseEndpointSpec(c)
+	from := c.Query("from")
+	to := c.Query("to")
+	if strings.TrimSpace(from) == "" || strings.TrimSpace(to) == "" {
+		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: "from and to are required"})
+		return
+	}
+	if err := h.svc.Copy(c.Request.Context(), spec, from, to); err != nil {
 		c.JSON(http.StatusBadRequest, models.Response{Code: 400, Message: err.Error()})
 		return
 	}
