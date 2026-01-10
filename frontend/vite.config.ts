@@ -96,6 +96,13 @@ export default defineConfig(() => {
           changeOrigin: true,
         },
 
+        // Browser preview WebSocket (must be before /api).
+        '/api/browser/ws': {
+          target: backendTarget,
+          ws: true,
+          changeOrigin: true,
+        },
+
         // REST API
         '/api': {
           target: backendTarget,

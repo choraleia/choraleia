@@ -376,6 +376,7 @@ func (s *Server) SetupRoutes() {
 				string(tools.CategoryAsset),
 				string(tools.CategoryDatabase),
 				string(tools.CategoryTransfer),
+				string(tools.CategoryBrowser),
 			},
 		})
 	})
@@ -387,12 +388,32 @@ func (s *Server) SetupRoutes() {
 		slog.Error("Failed to migrate chat tables", "error", err)
 	}
 
+	// Initialize browser service for browser automation tools
+	browserService := service.NewBrowserService()
+	browserService.SetSSHPool(fsRegistry.SSHPool())
+	browserService.SetAssetService(assetService)
+	// Set database for browser instance persistence
+	if err := browserService.SetDB(chatStoreService.DB()); err != nil {
+		slog.Error("Failed to set browser service DB", "error", err)
+	}
+
+	// Set browser service on chat service for context injection
+	chatService.SetBrowserService(browserService)
+
 	// Initialize tool context and loader for workspace tools
 	toolCtx := tools.NewToolContext(fsService, assetService)
 	// Configure workspace services for command execution in workspace runtime
 	toolCtx.WithWorkspaceServices(workspaceService.GetRuntimeManager(), workspaceService)
+	// Configure browser service for browser automation
+	toolCtx.WithBrowserService(browserService)
 	toolLoader := tools.NewToolLoaderAdapter(toolCtx)
 	chatService.SetToolLoader(toolLoader)
+
+	// Browser API routes for preview
+	browserHandler := handler.NewBrowserHandler(browserService)
+	browserHandler.RegisterRoutes(apiGroup)
+	// Set up browser state change notifications
+	browserService.SetOnStateChange(browserHandler.BrowserStateHandler())
 
 	chatHandler := handler.NewChatHandler(chatService)
 	v1Group := apiGroup.Group("/v1")

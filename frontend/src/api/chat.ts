@@ -428,3 +428,14 @@ export async function cancelStream(conversationId: string): Promise<void> {
     throw new Error(`Failed to cancel stream: ${res.statusText}`);
   }
 }
+
+/**
+ * Get the streaming status of a conversation
+ */
+export async function getStreamStatus(conversationId: string): Promise<{ conversation_id: string; is_streaming: boolean }> {
+  const res = await fetch(`${baseUrl}/api/v1/chat/status/${encodeURIComponent(conversationId)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to get stream status: ${res.statusText}`);
+  }
+  return res.json();
+}

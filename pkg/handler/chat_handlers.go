@@ -44,6 +44,7 @@ func (h *ChatHandler) RegisterRoutes(r *gin.RouterGroup) {
 
 	// Stream management
 	r.POST("/chat/cancel", h.CancelStream)
+	r.GET("/chat/status/:conversation_id", h.GetStreamStatus)
 }
 
 // ChatCompletions handles OpenAI-compatible chat completions
@@ -281,6 +282,22 @@ func (h *ChatHandler) CancelStream(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"cancelled": true})
+}
+
+// GetStreamStatus checks if a conversation has an active stream
+// GET /api/v1/chat/status/:conversation_id
+func (h *ChatHandler) GetStreamStatus(c *gin.Context) {
+	conversationID := c.Param("conversation_id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "conversation_id is required"})
+		return
+	}
+
+	isStreaming := h.chatService.IsStreaming(conversationID)
+	c.JSON(http.StatusOK, gin.H{
+		"conversation_id": conversationID,
+		"is_streaming":    isStreaming,
+	})
 }
 
 // SSEWriter wraps gin.ResponseWriter for proper SSE streaming

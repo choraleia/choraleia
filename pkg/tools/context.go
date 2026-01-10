@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/service"
@@ -19,6 +20,35 @@ type WorkspaceGetter interface {
 	GetWorkspace(id string) (*models.Workspace, error)
 }
 
+// BrowserInstance represents a browser instance (mirrors service.BrowserInstance for interface)
+type BrowserInstance struct {
+	ID             string
+	ConversationID string
+	Status         string
+	CurrentURL     string
+	CurrentTitle   string
+}
+
+// BrowserServiceInterface defines the browser service operations needed by tools
+type BrowserServiceInterface interface {
+	StartBrowser(ctx context.Context, conversationID string) (*service.BrowserInstance, error)
+	GetBrowser(browserID string) (*service.BrowserInstance, error)
+	ListBrowsers(conversationID string) []*service.BrowserInstance
+	CloseBrowser(browserID string) error
+	Navigate(ctx context.Context, browserID, url string) error
+	Click(ctx context.Context, browserID, selector string) error
+	InputText(ctx context.Context, browserID, selector, text string, clear bool) error
+	Scroll(ctx context.Context, browserID string, direction string, amount int) error
+	Screenshot(ctx context.Context, browserID string, fullPage bool) ([]byte, error)
+	ExtractContent(ctx context.Context, browserID string, selector string, contentType string) (string, error)
+	Wait(ctx context.Context, browserID string, selector string, timeout time.Duration) error
+	WebSearch(ctx context.Context, browserID string, query string, engine string) error
+	OpenTab(ctx context.Context, browserID string, url string) error
+	SwitchTab(ctx context.Context, browserID string, tabIndex int) error
+	CloseTab(ctx context.Context, browserID string, tabIndex int) error
+	GetScrollInfo(ctx context.Context, browserID string) (*service.ScrollInfo, error)
+}
+
 // ToolContext provides services and context needed by tools
 type ToolContext struct {
 	// Services
@@ -26,9 +56,13 @@ type ToolContext struct {
 	AssetService      *service.AssetService
 	WorkspaceExecutor WorkspaceExecutor
 	WorkspaceGetter   WorkspaceGetter
+	BrowserService    BrowserServiceInterface
 
 	// Workspace context (if tool is running in workspace scope)
 	WorkspaceID string
+
+	// Conversation context (for browser tools)
+	ConversationID string
 }
 
 // NewToolContext creates a new tool context
@@ -53,7 +87,28 @@ func (c *ToolContext) WithWorkspace(workspaceID string) *ToolContext {
 		AssetService:      c.AssetService,
 		WorkspaceExecutor: c.WorkspaceExecutor,
 		WorkspaceGetter:   c.WorkspaceGetter,
+		BrowserService:    c.BrowserService,
 		WorkspaceID:       workspaceID,
+		ConversationID:    c.ConversationID,
+	}
+}
+
+// WithBrowserService sets the browser service
+func (c *ToolContext) WithBrowserService(browserSvc BrowserServiceInterface) *ToolContext {
+	c.BrowserService = browserSvc
+	return c
+}
+
+// WithConversation returns a new context with conversation ID set
+func (c *ToolContext) WithConversation(conversationID string) *ToolContext {
+	return &ToolContext{
+		FSService:         c.FSService,
+		AssetService:      c.AssetService,
+		WorkspaceExecutor: c.WorkspaceExecutor,
+		WorkspaceGetter:   c.WorkspaceGetter,
+		BrowserService:    c.BrowserService,
+		WorkspaceID:       c.WorkspaceID,
+		ConversationID:    conversationID,
 	}
 }
 

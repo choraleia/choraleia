@@ -25,6 +25,7 @@ import {
   deleteConversation,
   chatCompletionStream,
   cancelStream,
+  getStreamStatus,
   Message,
   MessagePart,
 } from "../../api/chat";
@@ -33,6 +34,7 @@ import { getApiUrl } from "../../api/base";
 interface WorkspaceChatProps {
   workspaceId: string;
   previewComponent?: React.ReactNode;
+  onConversationChange?: (conversationId: string) => void;
 }
 
 // Extended thread data
@@ -142,7 +144,7 @@ function storedMessagesToUIMessages(apiMessages: Message[]): UIMessage[] {
   return result;
 }
 
-export default function WorkspaceChat({ workspaceId, previewComponent }: WorkspaceChatProps) {
+export default function WorkspaceChat({ workspaceId, previewComponent, onConversationChange }: WorkspaceChatProps) {
   // State
   const [threads, setThreads] = useState<ThreadData[]>([]);
   const [currentThreadId, setCurrentThreadId] = useState<string>("");
@@ -339,7 +341,15 @@ export default function WorkspaceChat({ workspaceId, previewComponent }: Workspa
   const loadMessages = useCallback(async (conversationId: string) => {
     setIsThreadLoading(true);
     try {
-      const response = await getMessages(conversationId);
+      // Fetch messages and stream status in parallel
+      const [response, statusResponse] = await Promise.all([
+        getMessages(conversationId),
+        getStreamStatus(conversationId).catch(() => ({ is_streaming: false })),
+      ]);
+
+      // Update running state from backend
+      setIsRunning(statusResponse.is_streaming);
+
       // Convert all messages including branches
       const msgs = response.messages;
       const uiMsgs = storedMessagesToUIMessages(msgs);
@@ -389,6 +399,13 @@ export default function WorkspaceChat({ workspaceId, previewComponent }: Workspa
     loadModels();
     loadThreads();
   }, [loadModels, loadThreads]);
+
+  // Notify parent when conversation changes
+  useEffect(() => {
+    if (onConversationChange) {
+      onConversationChange(currentThreadId);
+    }
+  }, [currentThreadId, onConversationChange]);
 
   // Shared streaming handler - used by onNew, onEdit, onReload
   const streamChat = useCallback(async (
@@ -711,6 +728,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent }: Workspa
         setCurrentThreadId(conv.id);
         setAllMessages([]);
         setCurrentHeadId(null);
+        setIsRunning(false); // New thread has no active stream
         await loadThreads();
       } catch (error) {
         console.error("Failed to create conversation:", error);

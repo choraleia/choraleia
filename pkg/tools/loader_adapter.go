@@ -30,10 +30,12 @@ func NewToolLoaderAdapter(ctx *ToolContext) *ToolLoaderAdapter {
 func (a *ToolLoaderAdapter) LoadWorkspaceTools(
 	ctx context.Context,
 	workspaceID string,
+	conversationID string,
 	toolConfigs []models.WorkspaceTool,
 ) ([]tool.InvokableTool, error) {
 	a.logger.Info("LoadWorkspaceTools called",
 		"workspaceID", workspaceID,
+		"conversationID", conversationID,
 		"toolConfigsCount", len(toolConfigs))
 
 	if len(toolConfigs) == 0 {
@@ -59,7 +61,7 @@ func (a *ToolLoaderAdapter) LoadWorkspaceTools(
 		switch cfg.Type {
 		case models.ToolTypeBuiltin:
 			// Load built-in tools
-			builtinTools, err := a.loadBuiltinTools(ctx, workspaceID, cfg)
+			builtinTools, err := a.loadBuiltinTools(ctx, workspaceID, conversationID, cfg)
 			if err != nil {
 				a.logger.Warn("Failed to load builtin tool",
 					"toolName", cfg.Name,
@@ -99,10 +101,12 @@ func (a *ToolLoaderAdapter) LoadWorkspaceTools(
 func (a *ToolLoaderAdapter) loadBuiltinTools(
 	ctx context.Context,
 	workspaceID string,
+	conversationID string,
 	cfg models.WorkspaceTool,
 ) ([]tool.InvokableTool, error) {
 	a.logger.Debug("loadBuiltinTools called",
 		"workspaceID", workspaceID,
+		"conversationID", conversationID,
 		"toolName", cfg.Name,
 		"config", cfg.Config)
 
@@ -138,7 +142,7 @@ func (a *ToolLoaderAdapter) loadBuiltinTools(
 		if len(toolIDs) > 0 {
 			a.logger.Debug("Loading builtin tools from tool_ids", "toolIDs", toolIDs)
 			safeOnly := getBoolConfig(configToSearch, "safe_only", false)
-			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, toolIDs, safeOnly)
+			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, toolIDs, safeOnly)
 		}
 	}
 
@@ -148,7 +152,7 @@ func (a *ToolLoaderAdapter) loadBuiltinTools(
 		if ok && toolID != "" {
 			a.logger.Debug("Loading single builtin tool from toolId", "toolID", toolID)
 			safeOnly := getBoolConfig(configToSearch, "safe_only", false)
-			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, []string{toolID}, safeOnly)
+			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, []string{toolID}, safeOnly)
 		}
 	}
 
@@ -158,7 +162,7 @@ func (a *ToolLoaderAdapter) loadBuiltinTools(
 		if ok && toolID != "" {
 			a.logger.Debug("Loading single builtin tool from tool_id", "toolID", toolID)
 			safeOnly := getBoolConfig(configToSearch, "safe_only", false)
-			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, []string{toolID}, safeOnly)
+			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, []string{toolID}, safeOnly)
 		}
 	}
 

@@ -33,7 +33,7 @@ var (
 
 // ToolLoader interface for loading tools (implemented by tools package)
 type ToolLoader interface {
-	LoadWorkspaceTools(ctx context.Context, workspaceID string, toolConfigs []models.WorkspaceTool) ([]tool.InvokableTool, error)
+	LoadWorkspaceTools(ctx context.Context, workspaceID string, conversationID string, toolConfigs []models.WorkspaceTool) ([]tool.InvokableTool, error)
 }
 
 // ChatService handles workspace chat operations
@@ -42,6 +42,7 @@ type ChatService struct {
 	modelService     *ModelService
 	workspaceService *WorkspaceService
 	toolLoader       ToolLoader
+	browserService   *BrowserService
 	logger           *slog.Logger
 
 	// Active streams management for graceful handling
@@ -80,6 +81,11 @@ func NewChatService(db *gorm.DB, modelService *ModelService, workspaceService *W
 // SetToolLoader sets the tool loader (to avoid import cycle)
 func (s *ChatService) SetToolLoader(loader ToolLoader) {
 	s.toolLoader = loader
+}
+
+// SetBrowserService sets the browser service for context injection
+func (s *ChatService) SetBrowserService(browserService *BrowserService) {
+	s.browserService = browserService
 }
 
 // AutoMigrate creates database tables
@@ -289,7 +295,7 @@ func (s *ChatService) Chat(ctx context.Context, req *models.ChatCompletionReques
 	}
 
 	// Load workspace tools
-	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID)
+	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID, conv.ID)
 	if err != nil {
 		s.logger.Warn("Failed to load workspace tools", "error", err)
 	}
@@ -640,6 +646,12 @@ func (s *ChatService) CancelStream(conversationID string) error {
 	return nil
 }
 
+// IsStreaming checks if a conversation has an active stream
+func (s *ChatService) IsStreaming(conversationID string) bool {
+	_, ok := s.activeStreams.Load(conversationID)
+	return ok
+}
+
 // ========== Internal helpers ==========
 
 func (s *ChatService) getOrCreateConversation(req *models.ChatCompletionRequest) (*models.Conversation, error) {
@@ -817,8 +829,8 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 	return result
 }
 
-func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string) ([]tool.InvokableTool, error) {
-	s.logger.Info("loadWorkspaceTools called", "workspaceID", workspaceID, "hasToolLoader", s.toolLoader != nil)
+func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string, conversationID string) ([]tool.InvokableTool, error) {
+	s.logger.Info("loadWorkspaceTools called", "workspaceID", workspaceID, "conversationID", conversationID, "hasToolLoader", s.toolLoader != nil)
 
 	if workspaceID == "" {
 		s.logger.Warn("workspaceID is empty, skipping tool loading")
@@ -845,7 +857,7 @@ func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string
 		return nil, nil
 	}
 
-	tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, workspace.Tools)
+	tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, conversationID, workspace.Tools)
 	if err != nil {
 		s.logger.Error("toolLoader.LoadWorkspaceTools failed", "error", err)
 		return nil, err
@@ -956,8 +968,8 @@ func (s *ChatService) getChatModel(ctx context.Context, modelID string) (model.T
 }
 
 // getSystemPrompt returns the system prompt for the workspace
-func (s *ChatService) getSystemPrompt(workspaceID string) string {
-	return `You are a helpful AI assistant working in a development workspace.
+func (s *ChatService) getSystemPrompt(workspaceID string, conversationID string) string {
+	basePrompt := `You are a helpful AI assistant working in a development workspace.
 
 LANGUAGE RULE (CRITICAL):
 - Always respond in the SAME language the user uses
@@ -970,14 +982,57 @@ Your capabilities include:
 3. Read and write files
 4. Analyze code and provide suggestions
 5. Help with debugging and troubleshooting
+6. Browser automation for web tasks
 
 When using tools:
 - Use appropriate tools to help complete user requests
 - For file operations, use the file tools
 - For command execution, use the exec tools
+- For browser operations, use browser tools with the correct browser_id
 - Always verify results before reporting success
 
 Be professional, helpful, and concise in your responses.`
+
+	// Add browser context if there are active browsers
+	browserContext := s.getBrowserContext(conversationID)
+	if browserContext != "" {
+		basePrompt += "\n\n" + browserContext
+	}
+
+	return basePrompt
+}
+
+// getBrowserContext returns the current browser status for the conversation
+func (s *ChatService) getBrowserContext(conversationID string) string {
+	if s.browserService == nil || conversationID == "" {
+		return ""
+	}
+
+	browsers := s.browserService.ListBrowsers(conversationID)
+	if len(browsers) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("=== ACTIVE BROWSER INSTANCES ===\n")
+	sb.WriteString("IMPORTANT: Use these browser_id values for browser operations. Do NOT use old or cached browser_id values.\n\n")
+
+	for i, b := range browsers {
+		sb.WriteString(fmt.Sprintf("Browser %d:\n", i+1))
+		sb.WriteString(fmt.Sprintf("  browser_id: %s\n", b.ID))
+		sb.WriteString(fmt.Sprintf("  status: %s\n", b.Status))
+		if b.CurrentURL != "" {
+			sb.WriteString(fmt.Sprintf("  current_url: %s\n", b.CurrentURL))
+		}
+		if b.CurrentTitle != "" {
+			sb.WriteString(fmt.Sprintf("  current_title: %s\n", b.CurrentTitle))
+		}
+		if b.ErrorMessage != "" {
+			sb.WriteString(fmt.Sprintf("  error: %s\n", b.ErrorMessage))
+		}
+	}
+
+	return sb.String()
 }
 
 func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*schema.Message, workspaceTools []tool.InvokableTool, assistantMsg *models.Message) (*models.ChatCompletionResponse, error) {
@@ -1082,7 +1137,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		"modelID", req.Model)
 
 	// Load workspace tools
-	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID)
+	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID, conv.ID)
 	if err != nil {
 		s.logger.Warn("Failed to load workspace tools", "error", err)
 	}
@@ -1119,7 +1174,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	}
 
 	// Get system prompt
-	systemPrompt := s.getSystemPrompt(req.WorkspaceID)
+	systemPrompt := s.getSystemPrompt(req.WorkspaceID, conv.ID)
 
 	// Create agent with tools
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{

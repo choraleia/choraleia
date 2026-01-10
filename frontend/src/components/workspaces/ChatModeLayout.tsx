@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import {
   Box,
   IconButton,
@@ -17,6 +17,8 @@ import { useWorkspaces, EditorPane } from "../../state/workspaces";
 import TerminalComponent from "../assets/Terminal";
 import Editor from "@monaco-editor/react";
 import WorkspaceChat from "./WorkspaceChat";
+import BrowserPreview from "./BrowserPreview";
+import { listBrowsers, BrowserInstance } from "../../api/browser";
 
 // Preview tab item interface
 interface PreviewTab {
@@ -33,6 +35,9 @@ interface PreviewTab {
 
 const ChatModeLayout: React.FC = () => {
   const { activeWorkspace, activeRoom, openChatTerminal, closeChatPane, setChatActivePane, updateEditorContent } = useWorkspaces();
+
+  // Track current conversation ID for browser preview
+  const [currentConversationId, setCurrentConversationId] = useState<string>("");
 
   // Get preview tabs from chatPanes (terminals and editors) - chat mode specific
   const previewTabs: PreviewTab[] = React.useMemo(() => {
@@ -117,6 +122,7 @@ const ChatModeLayout: React.FC = () => {
       {activeWorkspace && (
         <WorkspaceChat
           workspaceId={activeWorkspace.id}
+          onConversationChange={setCurrentConversationId}
           previewComponent={
             <PreviewPanel
               previewTabs={previewTabs}
@@ -129,6 +135,7 @@ const ChatModeLayout: React.FC = () => {
               getTabIcon={getTabIcon}
               getLanguage={getLanguage}
               updateEditorContent={updateEditorContent}
+              conversationId={currentConversationId}
             />
           }
         />
@@ -149,6 +156,7 @@ interface PreviewPanelProps {
   getTabIcon: (type: PreviewTab["type"]) => React.ReactNode;
   getLanguage: (filePath?: string) => string | undefined;
   updateEditorContent: (id: string, content: string) => void;
+  conversationId: string;
 }
 
 const PreviewPanel: React.FC<PreviewPanelProps> = ({
@@ -162,7 +170,36 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
   getTabIcon,
   getLanguage,
   updateEditorContent,
+  conversationId,
 }) => {
+  // Track active browsers for this conversation
+  const [browsers, setBrowsers] = useState<BrowserInstance[]>([]);
+
+  // Poll for browsers when conversation changes
+  useEffect(() => {
+    if (!conversationId) {
+      setBrowsers([]);
+      return;
+    }
+
+    // Initial fetch
+    listBrowsers(conversationId)
+      .then((data) => setBrowsers(data || []))
+      .catch(() => setBrowsers([]));
+
+    // Poll every 3 seconds for browser changes
+    const interval = setInterval(() => {
+      listBrowsers(conversationId)
+        .then((data) => setBrowsers(data || []))
+        .catch(() => {});
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [conversationId]);
+
+  // Check if we have active browsers (not closed)
+  const hasActiveBrowsers = browsers.some(b => b.status !== "closed");
+
   return (
     <Box display="flex" flexDirection="column" height="100%" minWidth={0}>
       {/* Preview Tabs */}
@@ -224,7 +261,7 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
       {/* Preview Content */}
       <Box flex={1} display="flex" flexDirection="column" minHeight={0} position="relative">
-        {previewTabs.length === 0 ? (
+        {previewTabs.length === 0 && !hasActiveBrowsers ? (
           <Box
             flex={1}
             display="flex"
@@ -237,63 +274,84 @@ const PreviewPanel: React.FC<PreviewPanelProps> = ({
               No preview tabs open
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              AI will open terminals and files here as needed
+              AI will open terminals, files, and browsers here as needed
             </Typography>
           </Box>
         ) : (
-          <>
-            {/* Render all terminal tabs but hide inactive ones */}
-            {previewTabs
-              .filter((tab) => tab.type === "terminal")
-              .map((tab) => (
-                <Box
-                  key={tab.id}
-                  flex={1}
-                  display={activePreviewTabId === tab.id ? "flex" : "none"}
-                  flexDirection="column"
-                  minHeight={0}
-                >
-                  {activeWorkspace && (
-                    <TerminalComponent
-                      hostInfo={{ ip: "localhost", port: 0, name: tab.title }}
-                      tabKey={tab.terminalKey!}
-                      assetId={
-                        activeWorkspace.runtime.type === "local"
-                          ? "local"
-                          : activeWorkspace.runtime.dockerAssetId || "local"
-                      }
-                      containerId={
-                        activeWorkspace.runtime.type !== "local"
-                          ? (activeWorkspace.runtime.containerName ||
-                             activeWorkspace.runtime.containerId ||
-                             (activeWorkspace.runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined))
-                          : undefined
-                      }
-                      isActive={activePreviewTabId === tab.id}
-                    />
-                  )}
-                </Box>
-              ))}
-
-            {/* Render active editor tab */}
-            {activeTab?.type === "editor" && (
-              <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
-                <Editor
-                  height="100%"
-                  language={getLanguage(activeTab.filePath)}
-                  value={activeTab.content}
-                  onChange={(value) => updateEditorContent(activeTab.id, value ?? "")}
-                  options={{
-                    minimap: { enabled: false },
-                    fontSize: 13,
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                    automaticLayout: true,
-                  }}
-                />
+          <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+            {/* Browser Preview - shows at top when browsers are active */}
+            {hasActiveBrowsers && conversationId && (
+              <Box
+                sx={{
+                  flex: previewTabs.length === 0 ? 1 : "0 0 auto",
+                  maxHeight: previewTabs.length > 0 ? "50%" : "100%",
+                  minHeight: 200,
+                  borderBottom: previewTabs.length > 0 ? 1 : 0,
+                  borderColor: "divider",
+                  overflow: "hidden",
+                }}
+              >
+                <BrowserPreview conversationId={conversationId} />
               </Box>
             )}
-          </>
+
+            {/* Terminals and editors */}
+            {previewTabs.length > 0 && (
+              <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+                {/* Render all terminal tabs but hide inactive ones */}
+                {previewTabs
+                  .filter((tab) => tab.type === "terminal")
+                  .map((tab) => (
+                    <Box
+                      key={tab.id}
+                      flex={1}
+                      display={activePreviewTabId === tab.id ? "flex" : "none"}
+                      flexDirection="column"
+                      minHeight={0}
+                    >
+                      {activeWorkspace && (
+                        <TerminalComponent
+                          hostInfo={{ ip: "localhost", port: 0, name: tab.title }}
+                          tabKey={tab.terminalKey!}
+                          assetId={
+                            activeWorkspace.runtime.type === "local"
+                              ? "local"
+                              : activeWorkspace.runtime.dockerAssetId || "local"
+                          }
+                          containerId={
+                            activeWorkspace.runtime.type !== "local"
+                              ? (activeWorkspace.runtime.containerName ||
+                                 activeWorkspace.runtime.containerId ||
+                                 (activeWorkspace.runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined))
+                              : undefined
+                          }
+                          isActive={activePreviewTabId === tab.id}
+                        />
+                      )}
+                    </Box>
+                  ))}
+
+                {/* Render active editor tab */}
+                {activeTab?.type === "editor" && (
+                  <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
+                    <Editor
+                      height="100%"
+                      language={getLanguage(activeTab.filePath)}
+                      value={activeTab.content}
+                      onChange={(value) => updateEditorContent(activeTab.id, value ?? "")}
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 13,
+                        scrollBeyondLastLine: false,
+                        wordWrap: "on",
+                        automaticLayout: true,
+                      }}
+                    />
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
         )}
       </Box>
     </Box>

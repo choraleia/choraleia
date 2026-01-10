@@ -169,11 +169,12 @@ func (s *BuiltinToolsService) ValidateToolID(id string) bool {
 func (s *BuiltinToolsService) CreateToolsForWorkspace(
 	ctx context.Context,
 	workspaceID string,
+	conversationID string,
 	enabledToolIDs []string,
 	safeOnly bool,
 ) ([]tool.InvokableTool, error) {
-	// Create workspace-scoped context
-	toolCtx := s.ctx.WithWorkspace(workspaceID)
+	// Create workspace-scoped context with conversation ID
+	toolCtx := s.ctx.WithWorkspace(workspaceID).WithConversation(conversationID)
 
 	// Get tool definitions to filter
 	var defs []ToolDefinition

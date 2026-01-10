@@ -2662,6 +2662,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                           { id: "asset", label: "Remote Asset Tools", desc: "File operations & commands on remote servers" },
                           { id: "database", label: "Database Tools", desc: "MySQL, PostgreSQL, Redis operations" },
                           { id: "transfer", label: "Transfer Tools", desc: "File transfer between workspace and assets" },
+                          { id: "browser", label: "Browser Tools", desc: "Browser automation & web scraping" },
                         ].map(({ id: category, label, desc }) => {
                           const categoryTools = builtinTools.filter((t) => t.category === category);
                           if (categoryTools.length === 0) return null;
