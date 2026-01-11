@@ -3,6 +3,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -110,80 +111,72 @@ func (a *ToolLoaderAdapter) loadBuiltinTools(
 		"toolName", cfg.Name,
 		"config", cfg.Config)
 
-	// Get the config map to search in
-	// Frontend sends: { builtin: { toolId: "xxx" } } - nested format
-	// or directly: { toolId: "xxx" } - flat format
-	configToSearch := cfg.Config
-
-	// Check for nested "builtin" key first
-	if builtinRaw, ok := cfg.Config["builtin"]; ok {
-		if builtinConfig, ok := builtinRaw.(map[string]interface{}); ok {
-			a.logger.Debug("Found nested builtin config", "builtinConfig", builtinConfig)
-			configToSearch = models.JSONMap(builtinConfig)
-		}
+	// Parse config into BuiltinConfig struct
+	builtinCfg, err := a.parseBuiltinConfig(cfg.Config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse builtin config: %w", err)
 	}
 
-	// First try "tool_ids" (array)
-	if toolIDsRaw, ok := configToSearch["tool_ids"]; ok {
-		var toolIDs []string
-		switch v := toolIDsRaw.(type) {
-		case []interface{}:
-			for _, id := range v {
-				if idStr, ok := id.(string); ok {
-					toolIDs = append(toolIDs, idStr)
-				}
-			}
-		case []string:
-			toolIDs = v
-		default:
-			a.logger.Warn("tool_ids has unexpected type",
-				"type", fmt.Sprintf("%T", toolIDsRaw))
-		}
-		if len(toolIDs) > 0 {
-			a.logger.Debug("Loading builtin tools from tool_ids", "toolIDs", toolIDs)
-			safeOnly := getBoolConfig(configToSearch, "safe_only", false)
-			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, toolIDs, safeOnly)
-		}
+	// Build tool options
+	options := &ToolOptions{
+		SafeMode: builtinCfg.SafeMode,
+	}
+	if builtinCfg.Options != nil {
+		options.VisionModelID = builtinCfg.Options.VisionModelID
 	}
 
-	// Then try "toolId" (frontend format - single tool)
-	if toolIDRaw, ok := configToSearch["toolId"]; ok {
-		toolID, ok := toolIDRaw.(string)
-		if ok && toolID != "" {
-			a.logger.Debug("Loading single builtin tool from toolId", "toolID", toolID)
-			safeOnly := getBoolConfig(configToSearch, "safe_only", false)
-			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, []string{toolID}, safeOnly)
-		}
+	// Collect tool IDs
+	var toolIDs []string
+	if len(builtinCfg.ToolIDs) > 0 {
+		toolIDs = builtinCfg.ToolIDs
+	} else if builtinCfg.ToolID != "" {
+		toolIDs = []string{builtinCfg.ToolID}
 	}
 
-	// Legacy: try "tool_id" (snake_case)
-	if toolIDRaw, ok := configToSearch["tool_id"]; ok {
-		toolID, ok := toolIDRaw.(string)
-		if ok && toolID != "" {
-			a.logger.Debug("Loading single builtin tool from tool_id", "toolID", toolID)
-			safeOnly := getBoolConfig(configToSearch, "safe_only", false)
-			return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, []string{toolID}, safeOnly)
-		}
+	if len(toolIDs) == 0 {
+		return nil, fmt.Errorf("builtin tool config missing toolId or tool_ids")
 	}
 
-	a.logger.Warn("Builtin tool config missing toolId, tool_id, or tool_ids",
-		"toolName", cfg.Name,
-		"configKeys", getMapKeys(cfg.Config),
-		"searchedConfigKeys", getMapKeys(configToSearch))
-	return nil, fmt.Errorf("builtin tool config missing toolId, tool_id, or tool_ids")
+	a.logger.Debug("Loading builtin tools",
+		"toolIDs", toolIDs,
+		"visionModelID", options.VisionModelID,
+		"safeMode", options.SafeMode)
+
+	return a.builtinService.CreateToolsForWorkspace(ctx, workspaceID, conversationID, toolIDs, options)
 }
 
-// getBoolConfig safely gets a bool value from config map
-func getBoolConfig(config models.JSONMap, key string, defaultVal bool) bool {
-	if v, ok := config[key]; ok {
-		if b, ok := v.(bool); ok {
-			return b
+// parseBuiltinConfig parses the config map into BuiltinConfig struct
+func (a *ToolLoaderAdapter) parseBuiltinConfig(config models.JSONMap) (*models.BuiltinConfig, error) {
+	// Check for nested "builtin" key first (frontend format)
+	configToUse := config
+	if builtinRaw, ok := config["builtin"]; ok {
+		if builtinMap, ok := builtinRaw.(map[string]interface{}); ok {
+			configToUse = models.JSONMap(builtinMap)
 		}
 	}
-	return defaultVal
+
+	// Convert to JSON and unmarshal to struct
+	jsonBytes, err := json.Marshal(configToUse)
+	if err != nil {
+		return nil, err
+	}
+
+	var builtinCfg models.BuiltinConfig
+	if err := json.Unmarshal(jsonBytes, &builtinCfg); err != nil {
+		return nil, err
+	}
+
+	// Handle frontend's "toolId" (camelCase) vs backend's "tool_id" (snake_case)
+	if builtinCfg.ToolID == "" {
+		if toolID, ok := configToUse["toolId"].(string); ok {
+			builtinCfg.ToolID = toolID
+		}
+	}
+
+	return &builtinCfg, nil
 }
 
-// Helper function to get map keys
+// Helper function to get map keys (for debug logging)
 func getMapKeys(m models.JSONMap) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

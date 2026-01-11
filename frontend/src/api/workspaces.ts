@@ -46,6 +46,7 @@ export interface Room {
   description?: string;
   layout?: Record<string, unknown>;
   active_pane_id?: string;
+  current_conversation_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -259,7 +260,7 @@ export async function createRoom(workspaceId: string, name: string, description?
 export async function updateRoom(
   workspaceId: string,
   roomId: string,
-  data: { name?: string; description?: string; layout?: Record<string, unknown> }
+  data: { name?: string; description?: string; layout?: Record<string, unknown>; current_conversation_id?: string }
 ): Promise<Room> {
   const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/rooms/${roomId}`, {
     method: "PUT",

@@ -35,17 +35,53 @@ func NewModelService() *ModelService {
 }
 
 // GetModelList fetch model list
+// Supports optional query parameters:
+// - domain: filter by domain (e.g., "vision", "multimodal", "language")
+// - task_types: filter by task type (e.g., "image_understanding", "chat")
 func (m *ModelService) GetModelList(c *gin.Context) {
 	modelsList, err := models.LoadModels()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to read model list"})
 		return
 	}
+
+	// Get filter parameters
+	domainFilter := c.Query("domain")
+	taskTypesFilter := c.Query("task_types")
+
+	var filteredModels []*models.ModelConfig
 	for _, mm := range modelsList {
 		mm.Normalize()
 		mm.ApiKey = utils.MaskSensitiveString(mm.ApiKey)
+
+		// Apply domain filter
+		if domainFilter != "" {
+			if mm.Domain != domainFilter {
+				// Also check if it's a multimodal model when filtering for vision
+				if !(domainFilter == models.DomainVision && mm.Domain == models.DomainMultimodal) {
+					continue
+				}
+			}
+		}
+
+		// Apply task_types filter
+		if taskTypesFilter != "" {
+			hasTaskType := false
+			for _, t := range mm.TaskTypes {
+				if t == taskTypesFilter {
+					hasTaskType = true
+					break
+				}
+			}
+			if !hasTaskType {
+				continue
+			}
+		}
+
+		filteredModels = append(filteredModels, mm)
 	}
-	c.JSON(http.StatusOK, gin.H{"code": 200, "data": modelsList})
+
+	c.JSON(http.StatusOK, gin.H{"code": 200, "data": filteredModels})
 }
 
 // AddModel add a new model

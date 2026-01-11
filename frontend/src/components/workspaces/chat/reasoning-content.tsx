@@ -3,8 +3,8 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   BrainIcon,
-} from "./assistant-icons.tsx";
-import { cn } from "./lib/utils.ts";
+} from "./icons";
+import { cn } from "./utils";
 import Paper from "@mui/material/Paper";
 import Box from "@mui/material/Box";
 import Collapse from "@mui/material/Collapse";
@@ -66,10 +66,10 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({
         mt: 1,
         backgroundColor:
           theme.palette.mode === "light"
-            ? "#f9f9f9"
-            : theme.palette.primary.dark + "20",
+            ? "#ececec"
+            : theme.palette.primary.dark + "30",
         borderColor:
-          theme.palette.mode === "light" ? "#f0f0f0" : theme.palette.divider,
+          theme.palette.mode === "light" ? "#e0e0e0" : theme.palette.divider,
         p: 0,
         overflow: "hidden",
       }}
@@ -92,8 +92,8 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({
           textAlign: "left",
           backgroundColor:
             theme.palette.mode === "light"
-              ? "rgba(0,0,0,0.03)"
-              : "rgba(255,255,255,0.06)",
+              ? "rgba(0,0,0,0.04)"
+              : "rgba(255,255,255,0.08)",
           border: "none",
           outline: "none",
           fontWeight: 500,
@@ -104,8 +104,8 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({
           "&:hover": {
             backgroundColor:
               theme.palette.mode === "light"
-                ? "rgba(0,0,0,0.05)"
-                : "rgba(255,255,255,0.10)",
+                ? "rgba(0,0,0,0.07)"
+                : "rgba(255,255,255,0.12)",
           },
         }}
       >
@@ -161,3 +161,4 @@ export const ReasoningContent: FC<ReasoningContentProps> = ({
     </Paper>
   );
 };
+

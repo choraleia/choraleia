@@ -69,9 +69,10 @@ func (s *RoomService) List(ctx context.Context, workspaceID string) ([]models.Ro
 
 // UpdateRoomRequest represents a request to update a room
 type UpdateRoomRequest struct {
-	Name        *string         `json:"name,omitempty"`
-	Description *string         `json:"description,omitempty"`
-	Layout      *models.JSONMap `json:"layout,omitempty"`
+	Name                  *string         `json:"name,omitempty"`
+	Description           *string         `json:"description,omitempty"`
+	Layout                *models.JSONMap `json:"layout,omitempty"`
+	CurrentConversationID *string         `json:"current_conversation_id,omitempty"`
 }
 
 // Update updates a room
@@ -92,6 +93,9 @@ func (s *RoomService) Update(ctx context.Context, workspaceID, roomID string, re
 	}
 	if req.Layout != nil {
 		updates["layout"] = *req.Layout
+	}
+	if req.CurrentConversationID != nil {
+		updates["current_conversation_id"] = *req.CurrentConversationID
 	}
 
 	if err := s.ws.DB().Model(room).Updates(updates).Error; err != nil {

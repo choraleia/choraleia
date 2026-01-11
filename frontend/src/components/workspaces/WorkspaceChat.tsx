@@ -10,13 +10,14 @@ import {
   ExportedMessageRepository,
   ThreadMessageLike,
 } from "@assistant-ui/react";
-import { Box, CircularProgress, IconButton, Tooltip } from "@mui/material";
+import { Box, CircularProgress, IconButton, Tooltip, Typography } from "@mui/material";
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
-import PreviewIcon from "@mui/icons-material/Preview";
+import AddIcon from "@mui/icons-material/Add";
 import { v4 as uuidv4 } from "uuid";
 import { WorkspaceChatThread, ModelConfig, AgentMode } from "./WorkspaceChatThread";
-import { ThreadList } from "../ai-assitant/thread-list";
-import "../ai-assitant/globals.css";
+import { ThreadList } from "./chat/thread-list";
+import "./chat/globals.css";
+import { useWorkspaces } from "../../state/workspaces";
 import {
   createConversation,
   listConversations,
@@ -25,15 +26,16 @@ import {
   deleteConversation,
   chatCompletionStream,
   cancelStream,
-  getStreamStatus,
+  getStreamState,
+  continueStream,
   Message,
   MessagePart,
+  ChatCompletionChunk,
 } from "../../api/chat";
 import { getApiUrl } from "../../api/base";
 
 interface WorkspaceChatProps {
   workspaceId: string;
-  previewComponent?: React.ReactNode;
   onConversationChange?: (conversationId: string) => void;
 }
 
@@ -144,21 +146,32 @@ function storedMessagesToUIMessages(apiMessages: Message[]): UIMessage[] {
   return result;
 }
 
-export default function WorkspaceChat({ workspaceId, previewComponent, onConversationChange }: WorkspaceChatProps) {
+export default function WorkspaceChat({ workspaceId, onConversationChange }: WorkspaceChatProps) {
+  // Get room state for persisting conversation ID
+  const { activeRoom, setCurrentConversationId: persistConversationId } = useWorkspaces();
+
   // State
   const [threads, setThreads] = useState<ThreadData[]>([]);
-  const [currentThreadId, setCurrentThreadId] = useState<string>("");
+  // Initialize from room's persisted conversation ID
+  const [currentThreadId, setCurrentThreadIdLocal] = useState<string>(activeRoom?.currentConversationId || "");
   const [allMessages, setAllMessages] = useState<UIMessage[]>([]);
   const [currentHeadId, setCurrentHeadId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isThreadLoading, setIsThreadLoading] = useState(false);
+  // Initialize isNewChat based on whether we have a persisted conversation
+  const [isNewChat, setIsNewChat] = useState(!activeRoom?.currentConversationId);
+
+  // Wrapper to persist conversation ID to room state
+  const setCurrentThreadId = useCallback((id: string) => {
+    setCurrentThreadIdLocal(id);
+    currentThreadIdRef.current = id;
+    persistConversationId(id);
+  }, [persistConversationId]);
 
   // Panel visibility and width state
-  const [showThreadList, setShowThreadList] = useState(true);
-  const [showPreview, setShowPreview] = useState(true);
+  const [showThreadList, setShowThreadList] = useState(false); // Default: hide thread list
   const [threadListWidth, setThreadListWidth] = useState(220);
-  const [previewWidth, setPreviewWidth] = useState(500);
 
   // Model state
   const [selectedModel, setSelectedModel] = useState<string>("");
@@ -170,6 +183,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
   // Refs
   const abortControllerRef = useRef<AbortController | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const currentThreadIdRef = useRef<string>(activeRoom?.currentConversationId || "");
 
   // Resize handlers
   const handleThreadListResize = useCallback((e: React.MouseEvent) => {
@@ -196,29 +210,6 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
     document.body.style.userSelect = "none";
   }, [threadListWidth]);
 
-  const handlePreviewResize = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = previewWidth;
-
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const delta = startX - moveEvent.clientX;
-      const newWidth = Math.max(200, startWidth + delta);
-      setPreviewWidth(newWidth);
-    };
-
-    const onMouseUp = () => {
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }, [previewWidth]);
 
   // Compute effective headId - auto-detect if not explicitly set
   const effectiveHeadId = useMemo(() => {
@@ -318,8 +309,9 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
   }, [selectedModel]);
 
   // Load conversations list
-  const loadThreads = useCallback(async () => {
-    setIsLoading(true);
+  // silent: if true, don't set isLoading state (used after creating new conversation)
+  const loadThreads = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const response = await listConversations(workspaceId);
       const threadList: ThreadData[] = response.conversations.map((conv) => ({
@@ -333,72 +325,208 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
     } catch (error) {
       console.error("Failed to load threads:", error);
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
   }, [workspaceId]);
 
-  // Load messages for a conversation
+  // Process streaming chunks and update UI - same logic as streamChat
+  const processStreamChunks = useCallback(async (
+    messageId: string,
+    stream: AsyncIterable<ChatCompletionChunk>
+  ) => {
+    const contentParts: any[] = [];
+
+    try {
+      for await (const chunk of stream) {
+        if (abortControllerRef.current?.signal.aborted) break;
+
+        for (const choice of chunk.choices) {
+          // New assistant round marker - skip
+          if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls && !choice.delta.reasoning_content) {
+            continue;
+          }
+
+          // Tool results - find tool-call part by tool_call_id and update result
+          if (choice.delta.role === "tool" && choice.delta.tool_call_id) {
+            const toolCallId = choice.delta.tool_call_id;
+            const toolCallPart = contentParts.find(
+              p => p.type === "tool-call" && p.toolCallId === toolCallId
+            );
+            if (toolCallPart) {
+              toolCallPart.result = choice.delta.content || "";
+            }
+            continue;
+          }
+
+          // Reasoning - append to last if also reasoning, otherwise create new
+          if (choice.delta.reasoning_content) {
+            const lastPart = contentParts[contentParts.length - 1];
+            if (lastPart && lastPart.type === "reasoning") {
+              lastPart.text += choice.delta.reasoning_content;
+            } else {
+              contentParts.push({ type: "reasoning", text: choice.delta.reasoning_content });
+            }
+          }
+
+          // Content - append to last if also text, otherwise create new
+          if (choice.delta.content && choice.delta.role !== "tool") {
+            const lastPart = contentParts[contentParts.length - 1];
+            if (lastPart && lastPart.type === "text") {
+              lastPart.text += choice.delta.content;
+            } else {
+              contentParts.push({ type: "text", text: choice.delta.content });
+            }
+          }
+
+          // Tool calls - always append new tool-call parts
+          if (choice.delta.tool_calls) {
+            for (const tc of choice.delta.tool_calls) {
+              const toolCallId = tc.id || "";
+              if (toolCallId) {
+                // Check if this tool call already exists (streaming updates)
+                let existingPart = contentParts.find(
+                  p => p.type === "tool-call" && p.toolCallId === toolCallId
+                );
+                if (existingPart) {
+                  // Update existing tool call (streaming arguments)
+                  if (tc.function?.name) existingPart.toolName = tc.function.name;
+                  if (tc.function?.arguments) existingPart.argsText += tc.function.arguments;
+                } else {
+                  // New tool call - append
+                  contentParts.push({
+                    type: "tool-call",
+                    toolCallId,
+                    toolName: tc.function?.name || "",
+                    argsText: tc.function?.arguments || "",
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        // Update UI
+        const newContent = contentParts.filter(p =>
+          (p.type === "text" && p.text.length > 0) ||
+          (p.type === "reasoning" && p.text.length > 0) ||
+          (p.type === "tool-call" && p.toolName.length > 0)
+        );
+        if (newContent.length === 0) newContent.push({ type: "text", text: "" });
+
+        setAllMessages((prev) =>
+          prev.map((msg) => msg.id === messageId ? { ...msg, content: [...newContent] } : msg)
+        );
+      }
+
+      // Mark complete
+      setAllMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId
+            ? { ...msg, status: "complete" as const }
+            : msg
+        )
+      );
+    } catch (error) {
+      console.error("Error processing stream chunks:", error);
+    } finally {
+      setIsRunning(false);
+    }
+  }, []);
+
+  // Load messages for a conversation - tries to resume from stream if active, otherwise loads from history
   const loadMessages = useCallback(async (conversationId: string) => {
     setIsThreadLoading(true);
     try {
-      // Fetch messages and stream status in parallel
-      const [response, statusResponse] = await Promise.all([
-        getMessages(conversationId),
-        getStreamStatus(conversationId).catch(() => ({ is_streaming: false })),
-      ]);
+      // First, check if there's an active stream for this conversation
+      const streamState = await getStreamState(conversationId).catch(() => ({
+        is_streaming: false,
+        conversation_id: conversationId,
+        last_event_id: 0,
+        message_id: undefined,
+      }));
 
-      // Update running state from backend
-      setIsRunning(statusResponse.is_streaming);
+      if (streamState.is_streaming) {
+        // There's an active stream - load history first, then resume streaming
+        console.log("[loadMessages] Active stream detected, resuming...");
+        setIsRunning(true);
 
-      // Convert all messages including branches
-      const msgs = response.messages;
-      const uiMsgs = storedMessagesToUIMessages(msgs);
+        // Load existing messages from history
+        const response = await getMessages(conversationId);
+        const msgs = response.messages;
+        const uiMsgs = storedMessagesToUIMessages(msgs);
+        setAllMessages(uiMsgs);
+        setCurrentHeadId(null);
 
-      // Debug: log message tree structure
-      console.log("[loadMessages] Raw messages from API:", msgs.map(m => ({
-        id: m.id,
-        role: m.role,
-        parent_id: m.parent_id,
-        parts: m.parts?.length,
-      })));
-      console.log("[loadMessages] Converted UIMessages:", uiMsgs.map(m => ({
-        id: m.id,
-        role: m.role,
-        parentId: m.parentId,
-        content: m.content[0]?.text?.substring(0, 50),
-      })));
+        // Resume streaming - use message_id from state or the last assistant message
+        const messageId = streamState.message_id || uiMsgs.filter(m => m.role === "assistant").pop()?.id || uuidv4();
+        const stream = continueStream(conversationId);
+        processStreamChunks(messageId, stream);
+      } else {
+        // No active stream - just load from history
+        const response = await getMessages(conversationId);
+        setIsRunning(false);
 
-      // Debug: analyze siblings at each level
-      const siblingGroups = new Map<string | null, UIMessage[]>();
-      for (const msg of uiMsgs) {
-        const key = msg.parentId;
-        if (!siblingGroups.has(key)) siblingGroups.set(key, []);
-        siblingGroups.get(key)!.push(msg);
+        const msgs = response.messages;
+        const uiMsgs = storedMessagesToUIMessages(msgs);
+
+        // Debug logging
+        console.log("[loadMessages] Raw messages from API:", msgs.map(m => ({
+          id: m.id,
+          role: m.role,
+          parent_id: m.parent_id,
+          parts: m.parts?.length,
+        })));
+
+        setAllMessages(uiMsgs);
+        setCurrentHeadId(null);
       }
-      console.log("[loadMessages] Sibling groups:");
-      siblingGroups.forEach((siblings, parentId) => {
-        if (siblings.length > 1) {
-          console.log(`  Parent ${parentId}: ${siblings.length} siblings:`, siblings.map(s => `${s.role}:${s.id.substring(0,8)}`));
-        }
-      });
-
-      setAllMessages(uiMsgs);
-      // Reset head to auto-detect the latest branch
-      setCurrentHeadId(null);
     } catch (error) {
       console.error("Failed to load messages:", error);
       setAllMessages([]);
       setCurrentHeadId(null);
+      setIsRunning(false);
     } finally {
       setIsThreadLoading(false);
     }
-  }, []);
+  }, [processStreamChunks]);
 
-  // Initial load
+  // Initial load - only run once on mount
   useEffect(() => {
     loadModels();
     loadThreads();
-  }, [loadModels, loadThreads]);
+    // If there's a persisted conversation ID, load its messages
+    if (activeRoom?.currentConversationId) {
+      loadMessages(activeRoom.currentConversationId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId]);
+
+  // Respond to room switching - load the room's conversation or reset to new chat
+  useEffect(() => {
+    if (!activeRoom) return;
+
+    const roomConversationId = activeRoom.currentConversationId || "";
+
+    // Only update if the conversation ID actually changed (use ref to avoid stale closure)
+    if (roomConversationId !== currentThreadIdRef.current) {
+      // Reset running state immediately when switching rooms
+      setIsRunning(false);
+
+      setCurrentThreadIdLocal(roomConversationId);
+      currentThreadIdRef.current = roomConversationId;
+
+      if (roomConversationId) {
+        // Load the room's saved conversation (this will also fetch stream status from backend)
+        setIsNewChat(false);
+        loadMessages(roomConversationId);
+      } else {
+        // Reset to new chat state
+        setAllMessages([]);
+        setCurrentHeadId(null);
+        setIsNewChat(true);
+      }
+    }
+  }, [activeRoom?.id, activeRoom?.currentConversationId, loadMessages]);
 
   // Notify parent when conversation changes
   useEffect(() => {
@@ -530,7 +658,9 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
     if (!textContent.trim()) return;
 
     let threadId = currentThreadId;
-    if (!threadId) {
+
+    // Only create conversation when sending the first message (isNewChat is true)
+    if (isNewChat || !threadId) {
       try {
         const conv = await createConversation({
           workspace_id: workspaceId,
@@ -539,7 +669,9 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
         });
         threadId = conv.id;
         setCurrentThreadId(threadId);
-        await loadThreads();
+        setIsNewChat(false);
+        // Load threads silently (don't trigger loading state)
+        await loadThreads(true);
       } catch (error) {
         console.error("Failed to create conversation:", error);
         return;
@@ -576,7 +708,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
       await streamChat(threadId, assistantMessageId, {
         messages: [{ role: "user", content: textContent }],
       });
-      await loadMessages(threadId);
+      // Messages are already updated during streaming, no need to reload
     } catch (error) {
       console.error("Streaming error:", error);
       setAllMessages((prev) =>
@@ -590,7 +722,8 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
       setIsRunning(false);
       abortControllerRef.current = null;
     }
-  }, [currentThreadId, workspaceId, selectedModel, loadThreads, loadMessages, streamChat, currentBranchPath]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentThreadId, workspaceId, selectedModel, streamChat, currentBranchPath, isNewChat]);
 
   // Cancel handler
   const onCancel = useCallback(async () => {
@@ -643,7 +776,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
         action: "regenerate",
         source_id: sourceId,
       });
-      await loadMessages(currentThreadId);
+      // Messages are already updated during streaming, no need to reload
     } catch (error) {
       console.error("Reload error:", error);
       setAllMessages((prev) => prev.map((msg) => msg.id === assistantMessageId ? { ...msg, content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : "Unknown error"}` }], status: "error" as const } : msg));
@@ -651,7 +784,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
       setIsRunning(false);
       abortControllerRef.current = null;
     }
-  }, [currentThreadId, allMessages, loadMessages, streamChat]);
+  }, [currentThreadId, allMessages, streamChat]);
 
   // Edit handler - user edits a previous message, creating a new branch
   const onEdit = useCallback(async (message: AppendMessage) => {
@@ -696,7 +829,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
         action: "edit",
         source_id: message.sourceId,
       });
-      await loadMessages(currentThreadId);
+      // Messages are already updated during streaming, no need to reload
     } catch (error) {
       console.error("Edit error:", error);
       setAllMessages((prev) => prev.map((msg) => msg.id === assistantMessageId ? { ...msg, content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : "Unknown error"}` }], status: "error" as const } : msg));
@@ -704,7 +837,7 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
       setIsRunning(false);
       abortControllerRef.current = null;
     }
-  }, [currentThreadId, allMessages, loadMessages, streamChat]);
+  }, [currentThreadId, allMessages, streamChat]);
 
 
   // Thread list adapter
@@ -719,29 +852,23 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
       })),
     isLoading,
     onSwitchToNewThread: async () => {
-      try {
-        const conv = await createConversation({
-          workspace_id: workspaceId,
-          title: "New Chat",
-          model_id: selectedModel,
-        });
-        setCurrentThreadId(conv.id);
-        setAllMessages([]);
-        setCurrentHeadId(null);
-        setIsRunning(false); // New thread has no active stream
-        await loadThreads();
-      } catch (error) {
-        console.error("Failed to create conversation:", error);
-      }
+      // Just reset state for new chat, don't create conversation yet
+      setCurrentThreadId("");
+      setAllMessages([]);
+      setCurrentHeadId(null);
+      setIsRunning(false);
+      setIsNewChat(true);
     },
     onSwitchToThread: async (threadId: string) => {
       setCurrentThreadId(threadId);
+      setIsNewChat(false); // Switching to existing thread
+      setShowThreadList(false); // Auto close thread list after selection
       await loadMessages(threadId);
     },
     onRename: async (threadId: string, newTitle: string) => {
       try {
         await updateConversation(threadId, { title: newTitle });
-        await loadThreads();
+        await loadThreads(true);
       } catch (error) {
         console.error("Failed to rename thread:", error);
       }
@@ -749,12 +876,15 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
     onDelete: async (threadId: string) => {
       try {
         await deleteConversation(threadId);
-        if (currentThreadId === threadId) {
+        const isCurrentThread = currentThreadId === threadId;
+        // Load threads first (silently), then update local state
+        await loadThreads(true);
+        if (isCurrentThread) {
           setCurrentThreadId("");
           setAllMessages([]);
           setCurrentHeadId(null);
+          setIsNewChat(true);
         }
-        await loadThreads();
       } catch (error) {
         console.error("Failed to delete thread:", error);
       }
@@ -844,46 +974,72 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
             position: "relative",
           }}
         >
-          {/* Floating toggle buttons */}
-          <Tooltip title={showThreadList ? "Hide conversations" : "Show conversations"}>
-            <IconButton
-              size="small"
-              onClick={() => setShowThreadList(!showThreadList)}
-              color={showThreadList ? "primary" : "default"}
-              sx={{
-                position: "absolute",
-                top: 8,
-                left: 8,
-                zIndex: 10,
-                bgcolor: "background.paper",
-                boxShadow: 1,
-                "&:hover": { bgcolor: "action.hover" },
-              }}
-            >
-              <FormatListBulletedIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          {/* Top toolbar - replaces floating buttons */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              height: 37,
+              minHeight: 37,
+              maxHeight: 37,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              bgcolor: "background.paper",
+              flexShrink: 0,
+              boxSizing: "border-box",
+            }}
+          >
+            {/* Left side: Thread list toggle + New chat */}
+            <Box display="flex" alignItems="center" gap={0.5} sx={{ minWidth: 72 }}>
+              <Tooltip title={showThreadList ? "Hide conversations" : "Show conversations"}>
+                <IconButton
+                  size="small"
+                  onClick={() => setShowThreadList(!showThreadList)}
+                  color={showThreadList ? "primary" : "default"}
+                >
+                  <FormatListBulletedIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title={isNewChat ? "Already in new chat" : "New conversation"}>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={isNewChat}
+                    onClick={() => {
+                      // Just reset state for new chat, don't create conversation yet
+                      setCurrentThreadId("");
+                      setAllMessages([]);
+                      setCurrentHeadId(null);
+                      setIsRunning(false);
+                      setIsNewChat(true);
+                    }}
+                  >
+                    <AddIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
 
-          {previewComponent && (
-            <Tooltip title={showPreview ? "Hide preview" : "Show preview"}>
-              <IconButton
-                size="small"
-                onClick={() => setShowPreview(!showPreview)}
-                color={showPreview ? "primary" : "default"}
+            {/* Center: Current thread title */}
+            <Box flex={1} display="flex" justifyContent="center" overflow="hidden" px={1}>
+              <Typography
+                variant="body2"
+                noWrap
                 sx={{
-                  position: "absolute",
-                  top: 8,
-                  right: 8,
-                  zIndex: 10,
-                  bgcolor: "background.paper",
-                  boxShadow: 1,
-                  "&:hover": { bgcolor: "action.hover" },
+                  color: "text.secondary",
+                  fontWeight: 500,
+                  maxWidth: "100%",
                 }}
               >
-                <PreviewIcon fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          )}
+                {threads.find(t => t.id === currentThreadId)?.title || "New Chat"}
+              </Typography>
+            </Box>
+
+            {/* Right side placeholder for symmetry */}
+            <Box sx={{ minWidth: 72 }} />
+          </Box>
 
           {/* Chat content */}
           <Box flex={1} display="flex" flexDirection="column" overflow="hidden">
@@ -903,41 +1059,6 @@ export default function WorkspaceChat({ workspaceId, previewComponent, onConvers
             )}
           </Box>
         </Box>
-
-        {/* Preview component on the right side */}
-        {previewComponent && showPreview && (
-          <>
-            {/* Resizer for preview */}
-            <Box
-              onMouseDown={handlePreviewResize}
-              sx={{
-                width: 5,
-                cursor: "col-resize",
-                flexShrink: 0,
-                borderRight: "1px solid",
-                borderColor: "divider",
-                "&:hover": {
-                  borderColor: "primary.main",
-                  borderRightWidth: 2,
-                },
-              }}
-            />
-            <Box
-              sx={{
-                width: previewWidth,
-                minWidth: previewWidth,
-                maxWidth: previewWidth,
-                flexShrink: 0,
-                flexGrow: 0,
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
-              }}
-            >
-              {previewComponent}
-            </Box>
-          </>
-        )}
       </Box>
     </AssistantRuntimeProvider>
   );

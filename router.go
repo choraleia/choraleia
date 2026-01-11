@@ -399,6 +399,8 @@ func (s *Server) SetupRoutes() {
 
 	// Set browser service on chat service for context injection
 	chatService.SetBrowserService(browserService)
+	// Set asset service on chat service for asset info in system prompt
+	chatService.SetAssetService(assetService)
 
 	// Initialize tool context and loader for workspace tools
 	toolCtx := tools.NewToolContext(fsService, assetService)
@@ -406,6 +408,8 @@ func (s *Server) SetupRoutes() {
 	toolCtx.WithWorkspaceServices(workspaceService.GetRuntimeManager(), workspaceService)
 	// Configure browser service for browser automation
 	toolCtx.WithBrowserService(browserService)
+	// Configure model service for vision analysis in browser tools
+	toolCtx.WithModelService(modelService)
 	toolLoader := tools.NewToolLoaderAdapter(toolCtx)
 	chatService.SetToolLoader(toolLoader)
 

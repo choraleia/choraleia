@@ -110,14 +110,15 @@ func (WorkspaceRuntime) TableName() string {
 
 // Room represents a room/sub-workspace within a workspace
 type Room struct {
-	ID           string    `json:"id" gorm:"primaryKey;size:36"`
-	WorkspaceID  string    `json:"workspace_id" gorm:"index;size:36;not null"`
-	Name         string    `json:"name" gorm:"size:100;not null"`
-	Description  *string   `json:"description,omitempty" gorm:"size:500"`
-	Layout       JSONMap   `json:"layout,omitempty" gorm:"type:json"`
-	ActivePaneID *string   `json:"active_pane_id,omitempty" gorm:"size:36"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                    string    `json:"id" gorm:"primaryKey;size:36"`
+	WorkspaceID           string    `json:"workspace_id" gorm:"index;size:36;not null"`
+	Name                  string    `json:"name" gorm:"size:100;not null"`
+	Description           *string   `json:"description,omitempty" gorm:"size:500"`
+	Layout                JSONMap   `json:"layout,omitempty" gorm:"type:json"`
+	ActivePaneID          *string   `json:"active_pane_id,omitempty" gorm:"size:36"`
+	CurrentConversationID *string   `json:"current_conversation_id,omitempty" gorm:"size:36"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
 }
 
 // TableName returns the table name for Room

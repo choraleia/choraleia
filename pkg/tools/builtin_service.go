@@ -163,18 +163,29 @@ func (s *BuiltinToolsService) ValidateToolID(id string) bool {
 	return IsRegistered(ToolID(id))
 }
 
+// ToolOptions contains optional configuration for tool creation
+type ToolOptions struct {
+	SafeMode      bool   // Only include non-dangerous tools
+	VisionModelID string // Model ID for vision analysis (only for browser_get_visual_state)
+}
+
 // CreateToolsForWorkspace creates invokable tools for a workspace
 // enabledToolIDs: list of tool IDs to enable (nil means all tools)
-// safeOnly: only include non-dangerous tools
+// options: additional options for tool creation
 func (s *BuiltinToolsService) CreateToolsForWorkspace(
 	ctx context.Context,
 	workspaceID string,
 	conversationID string,
 	enabledToolIDs []string,
-	safeOnly bool,
+	options *ToolOptions,
 ) ([]tool.InvokableTool, error) {
 	// Create workspace-scoped context with conversation ID
 	toolCtx := s.ctx.WithWorkspace(workspaceID).WithConversation(conversationID)
+
+	// Apply options to context
+	if options != nil && options.VisionModelID != "" {
+		toolCtx = toolCtx.WithVisionModel(options.VisionModelID)
+	}
 
 	// Get tool definitions to filter
 	var defs []ToolDefinition
@@ -202,9 +213,10 @@ func (s *BuiltinToolsService) CreateToolsForWorkspace(
 	}
 
 	// Filter and create tools
+	safeMode := options != nil && options.SafeMode
 	var tools []tool.InvokableTool
 	for _, def := range defs {
-		if safeOnly && def.Dangerous {
+		if safeMode && def.Dangerous {
 			continue
 		}
 

@@ -36,6 +36,8 @@ type BrowserServiceInterface interface {
 	ListBrowsers(conversationID string) []*service.BrowserInstance
 	CloseBrowser(browserID string) error
 	Navigate(ctx context.Context, browserID, url string) error
+	GoBack(ctx context.Context, browserID string) error
+	GoForward(ctx context.Context, browserID string) error
 	Click(ctx context.Context, browserID, selector string) error
 	InputText(ctx context.Context, browserID, selector, text string, clear bool) error
 	Scroll(ctx context.Context, browserID string, direction string, amount int) error
@@ -47,6 +49,12 @@ type BrowserServiceInterface interface {
 	SwitchTab(ctx context.Context, browserID string, tabIndex int) error
 	CloseTab(ctx context.Context, browserID string, tabIndex int) error
 	GetScrollInfo(ctx context.Context, browserID string) (*service.ScrollInfo, error)
+	// Vision-based methods
+	GetVisualState(ctx context.Context, browserID string) (*service.VisualState, error)
+	ClickAtCoordinates(ctx context.Context, browserID string, x, y int) error
+	ClickByLabel(ctx context.Context, browserID string, label string) error
+	TypeText(ctx context.Context, browserID string, text string, clear bool) error
+	PressKey(ctx context.Context, browserID string, key string) error
 }
 
 // ToolContext provides services and context needed by tools
@@ -57,12 +65,16 @@ type ToolContext struct {
 	WorkspaceExecutor WorkspaceExecutor
 	WorkspaceGetter   WorkspaceGetter
 	BrowserService    BrowserServiceInterface
+	ModelService      *service.ModelService
 
 	// Workspace context (if tool is running in workspace scope)
 	WorkspaceID string
 
 	// Conversation context (for browser tools)
 	ConversationID string
+
+	// Vision model ID for browser visual analysis
+	VisionModelID string
 }
 
 // NewToolContext creates a new tool context
@@ -88,8 +100,10 @@ func (c *ToolContext) WithWorkspace(workspaceID string) *ToolContext {
 		WorkspaceExecutor: c.WorkspaceExecutor,
 		WorkspaceGetter:   c.WorkspaceGetter,
 		BrowserService:    c.BrowserService,
+		ModelService:      c.ModelService,
 		WorkspaceID:       workspaceID,
 		ConversationID:    c.ConversationID,
+		VisionModelID:     c.VisionModelID,
 	}
 }
 
@@ -107,8 +121,31 @@ func (c *ToolContext) WithConversation(conversationID string) *ToolContext {
 		WorkspaceExecutor: c.WorkspaceExecutor,
 		WorkspaceGetter:   c.WorkspaceGetter,
 		BrowserService:    c.BrowserService,
+		ModelService:      c.ModelService,
 		WorkspaceID:       c.WorkspaceID,
 		ConversationID:    conversationID,
+		VisionModelID:     c.VisionModelID,
+	}
+}
+
+// WithModelService sets the model service
+func (c *ToolContext) WithModelService(modelSvc *service.ModelService) *ToolContext {
+	c.ModelService = modelSvc
+	return c
+}
+
+// WithVisionModel returns a new context with vision model ID set
+func (c *ToolContext) WithVisionModel(visionModelID string) *ToolContext {
+	return &ToolContext{
+		FSService:         c.FSService,
+		AssetService:      c.AssetService,
+		WorkspaceExecutor: c.WorkspaceExecutor,
+		WorkspaceGetter:   c.WorkspaceGetter,
+		BrowserService:    c.BrowserService,
+		ModelService:      c.ModelService,
+		WorkspaceID:       c.WorkspaceID,
+		ConversationID:    c.ConversationID,
+		VisionModelID:     visionModelID,
 	}
 }
 

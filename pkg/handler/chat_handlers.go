@@ -45,6 +45,8 @@ func (h *ChatHandler) RegisterRoutes(r *gin.RouterGroup) {
 	// Stream management
 	r.POST("/chat/cancel", h.CancelStream)
 	r.GET("/chat/status/:conversation_id", h.GetStreamStatus)
+	r.GET("/chat/state/:conversation_id", h.GetStreamState)
+	r.GET("/chat/completions/continue/:conversation_id", h.ContinueStream)
 }
 
 // ChatCompletions handles OpenAI-compatible chat completions
@@ -298,6 +300,102 @@ func (h *ChatHandler) GetStreamStatus(c *gin.Context) {
 		"conversation_id": conversationID,
 		"is_streaming":    isStreaming,
 	})
+}
+
+// GetStreamState returns the current streaming state with buffer content for reconnection
+// GET /api/v1/chat/state/:conversation_id
+func (h *ChatHandler) GetStreamState(c *gin.Context) {
+	conversationID := c.Param("conversation_id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "conversation_id is required"})
+		return
+	}
+
+	state := h.chatService.GetStreamState(conversationID)
+	c.JSON(http.StatusOK, state)
+}
+
+// ContinueStream allows reconnecting to an active stream
+// GET /api/v1/chat/completions/continue/:conversation_id
+// This endpoint:
+// 1. First replays all buffered chunks from history
+// 2. Then subscribes to receive new chunks until the stream completes
+func (h *ChatHandler) ContinueStream(c *gin.Context) {
+	conversationID := c.Param("conversation_id")
+	if conversationID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "conversation_id is required"})
+		return
+	}
+
+	// Get current stream state
+	state := h.chatService.GetStreamState(conversationID)
+	if !state.IsStreaming {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no active stream for this conversation"})
+		return
+	}
+
+	// Get buffered history events (all chunks since the beginning)
+	historyEvents := h.chatService.GetStreamEvents(conversationID, 0)
+
+	// Subscribe to receive new chunks
+	chunks, unsubscribe := h.chatService.SubscribeToStream(conversationID)
+	if chunks == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "stream ended or not found"})
+		return
+	}
+	defer unsubscribe()
+
+	// Get done channel
+	done := h.chatService.GetStreamDoneChannel(conversationID)
+
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+
+	w := c.Writer
+
+	// First, replay all buffered history chunks
+	for _, event := range historyEvents {
+		if chunk, ok := event.Data.(*models.ChatCompletionChunk); ok {
+			data, err := json.Marshal(chunk)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			w.Flush()
+		}
+	}
+
+	// Now stream new chunks as they arrive
+	for {
+		select {
+		case chunk, ok := <-chunks:
+			if !ok {
+				// Channel closed, stream ended
+				fmt.Fprintf(w, "data: [DONE]\n\n")
+				w.Flush()
+				return
+			}
+			data, err := json.Marshal(chunk)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			w.Flush()
+
+		case <-done:
+			// Stream completed
+			fmt.Fprintf(w, "data: [DONE]\n\n")
+			w.Flush()
+			return
+
+		case <-c.Request.Context().Done():
+			// Client disconnected
+			return
+		}
+	}
 }
 
 // SSEWriter wraps gin.ResponseWriter for proper SSE streaming

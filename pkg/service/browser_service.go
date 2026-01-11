@@ -15,7 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 	"gorm.io/gorm"
@@ -128,6 +130,34 @@ type ScrollInfo struct {
 	PercentY      int  `json:"percent_y"`       // Vertical scroll percentage (0-100)
 }
 
+// ElementInfo represents an interactive element on the page (for vision-based automation)
+type ElementInfo struct {
+	Label       string `json:"label"`                 // Label shown on the element (e.g., "1", "2", "A", "B")
+	Tag         string `json:"tag"`                   // HTML tag name (e.g., "button", "input", "a")
+	Type        string `json:"type"`                  // Element type (e.g., "text", "submit", "checkbox")
+	Text        string `json:"text"`                  // Visible text content
+	Placeholder string `json:"placeholder,omitempty"` // Placeholder text for inputs
+	Href        string `json:"href,omitempty"`        // Link URL for anchors
+	X           int    `json:"x"`                     // X coordinate (center)
+	Y           int    `json:"y"`                     // Y coordinate (center)
+	Width       int    `json:"width"`                 // Element width
+	Height      int    `json:"height"`                // Element height
+	Visible     bool   `json:"visible"`               // Whether element is visible in viewport
+}
+
+// VisualState represents the visual state of the page for AI
+type VisualState struct {
+	Screenshot   []byte        `json:"screenshot"`  // Base64 encoded screenshot
+	Elements     []ElementInfo `json:"elements"`    // Interactive elements with labels
+	URL          string        `json:"url"`         // Current page URL
+	Title        string        `json:"title"`       // Current page title
+	ScrollInfo   *ScrollInfo   `json:"scroll_info"` // Scroll state
+	ViewportSize struct {
+		Width  int `json:"width"`
+		Height int `json:"height"`
+	} `json:"viewport_size"`
+}
+
 // BrowserService manages browser instances running in Docker containers
 type BrowserService struct {
 	db          *gorm.DB
@@ -199,7 +229,7 @@ func (s *BrowserService) cleanupStaleInstances() {
 		return
 	}
 
-	s.logger.Info("Found non-closed browser instances on startup", "count", len(records))
+	s.logger.Debug("Found non-closed browser instances on startup", "count", len(records))
 
 	var reconnectedCount int
 
@@ -207,14 +237,14 @@ func (s *BrowserService) cleanupStaleInstances() {
 		// Try to reconnect to browser
 		if s.tryReconnectBrowser(&record) {
 			reconnectedCount++
-			s.logger.Info("Reconnected to browser", "browserID", record.ID)
+			s.logger.Debug("Reconnected to browser", "browserID", record.ID)
 		} else {
 			// Failed to reconnect - will be cleaned up by periodic cleanupIdleBrowsers
 			s.logger.Debug("Failed to reconnect browser, will be cleaned up later", "browserID", record.ID)
 		}
 	}
 
-	s.logger.Info("Startup browser reconnection completed", "reconnected", reconnectedCount, "total", len(records))
+	s.logger.Debug("Startup browser reconnection completed", "reconnected", reconnectedCount, "total", len(records))
 }
 
 // tryStopContainer attempts to stop a container based on the record
@@ -479,7 +509,7 @@ func (s *BrowserService) cleanupOrphanedContainers() {
 		return
 	}
 
-	s.logger.Info("Cleaning up orphaned browser containers", "count", len(containerIDs))
+	s.logger.Debug("Cleaning up orphaned browser containers", "count", len(containerIDs))
 
 	for _, containerID := range containerIDs {
 		exec.CommandContext(ctx, "docker", "rm", "-f", containerID).Run()
@@ -673,7 +703,7 @@ func (s *BrowserService) ensureDockerNetwork(ctx context.Context, execFn func(ct
 		return fmt.Errorf("failed to create docker network: %w", err)
 	}
 
-	s.logger.Info("Created browser network", "network", BrowserNetworkName)
+	s.logger.Debug("Created browser network", "network", BrowserNetworkName)
 	return nil
 }
 
@@ -705,7 +735,7 @@ func (s *BrowserService) startLocalBrowser(ctx context.Context, instance *Browse
 	}
 
 	instance.ContainerID = strings.TrimSpace(output)
-	s.logger.Info("Browser container started", "browserID", instance.ID, "containerID", instance.ContainerID[:12])
+	s.logger.Debug("Browser container started", "browserID", instance.ID, "containerID", instance.ContainerID[:12])
 
 	// Get container IP
 	ip, err := s.getContainerIP(ctx, instance.ContainerID, execFn)
@@ -734,7 +764,7 @@ func (s *BrowserService) startLocalBrowser(ctx context.Context, instance *Browse
 	instance.mu.Unlock()
 
 	s.notifyStateChange(instance.ID, instance)
-	s.logger.Info("Browser ready", "browserID", instance.ID, "containerIP", ip)
+	s.logger.Debug("Browser ready", "browserID", instance.ID, "containerIP", ip)
 
 	return nil
 }
@@ -795,7 +825,7 @@ func (s *BrowserService) startRemoteSSHBrowser(ctx context.Context, instance *Br
 	}
 
 	instance.ContainerID = strings.TrimSpace(string(output))
-	s.logger.Info("Remote browser container started", "browserID", instance.ID, "containerID", instance.ContainerID[:12])
+	s.logger.Debug("Remote browser container started", "browserID", instance.ID, "containerID", instance.ContainerID[:12])
 
 	// Get container IP on remote
 	ip, err := s.getContainerIP(ctx, instance.ContainerID, execFn)
@@ -835,7 +865,7 @@ func (s *BrowserService) startRemoteSSHBrowser(ctx context.Context, instance *Br
 	instance.mu.Unlock()
 
 	s.notifyStateChange(instance.ID, instance)
-	s.logger.Info("Remote browser ready", "browserID", instance.ID, "containerIP", ip, "tunnelPort", localPort)
+	s.logger.Debug("Remote browser ready", "browserID", instance.ID, "containerIP", ip, "tunnelPort", localPort)
 
 	return nil
 }
@@ -946,6 +976,9 @@ func (s *BrowserService) doConnectChromedp(instance *BrowserInstance, wsURL stri
 		return err
 	}
 
+	// Inject anti-detection scripts to avoid being blocked
+	s.injectAntiDetection(ctx)
+
 	// Initialize tabs with context
 	instance.Tabs = []BrowserTab{
 		{ID: "tab-0", URL: "about:blank", Title: "New Tab", ctx: ctx, cancel: cancel},
@@ -977,6 +1010,9 @@ func (s *BrowserService) doReconnectChromedp(instance *BrowserInstance, wsURL st
 		allocCancel()
 		return err
 	}
+
+	// Inject anti-detection scripts
+	s.injectAntiDetection(ctx)
 
 	// Get current page URL and title
 	var currentURL, currentTitle string
@@ -1061,7 +1097,7 @@ func (s *BrowserService) createSSHTunnel(client *ssh.Client, remoteHost string, 
 		listener: listener,
 	}
 
-	s.logger.Info("SSH tunnel created", "localPort", localPort, "remoteHost", remoteHost, "remotePort", remotePort)
+	s.logger.Debug("SSH tunnel created", "localPort", localPort, "remoteHost", remoteHost, "remotePort", remotePort)
 	return localPort, closer, nil
 }
 
@@ -1080,7 +1116,7 @@ func (s *BrowserService) stopContainerLocal(containerID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	s.logger.Info("Stopping local browser container", "containerID", containerID)
+	s.logger.Debug("Stopping local browser container", "containerID", containerID)
 
 	exec.CommandContext(ctx, "docker", "stop", containerID).Run()
 	exec.CommandContext(ctx, "docker", "rm", "-f", containerID).Run()
@@ -1088,7 +1124,7 @@ func (s *BrowserService) stopContainerLocal(containerID string) {
 
 // stopContainerRemote stops a remote container via SSH
 func (s *BrowserService) stopContainerRemote(containerID string, client *ssh.Client) {
-	s.logger.Info("Stopping remote browser container", "containerID", containerID)
+	s.logger.Debug("Stopping remote browser container", "containerID", containerID)
 
 	session, err := client.NewSession()
 	if err != nil {
@@ -1208,7 +1244,7 @@ func (s *BrowserService) CloseBrowser(browserID string) error {
 	})
 
 	s.notifyStateChange(browserID, instance)
-	s.logger.Info("Browser closed", "browserID", browserID, "runtimeType", instance.RuntimeType)
+	s.logger.Debug("Browser closed", "browserID", browserID, "runtimeType", instance.RuntimeType)
 
 	return nil
 }
@@ -1286,7 +1322,7 @@ func (s *BrowserService) cleanupIdleBrowsers() {
 
 		if status != BrowserStatusClosed && idle > s.idleTimeout {
 			toClose = append(toClose, browserIDs[i])
-			s.logger.Info("Browser idle timeout", "browserID", browserIDs[i], "idle", idle)
+			s.logger.Debug("Browser idle timeout", "browserID", browserIDs[i], "idle", idle)
 		}
 	}
 
@@ -1312,7 +1348,7 @@ func (s *BrowserService) cleanupIdleBrowsers() {
 			// Check if timed out
 			idle := now.Sub(record.LastActivityAt)
 			if idle > s.idleTimeout {
-				s.logger.Info("Marking orphaned browser record as closed", "browserID", record.ID, "idle", idle)
+				s.logger.Debug("Marking orphaned browser record as closed", "browserID", record.ID, "idle", idle)
 
 				// Mark as closed in database
 				s.db.Model(&models.BrowserInstanceRecord{}).Where("id = ?", record.ID).Updates(map[string]interface{}{
@@ -1341,6 +1377,103 @@ func (s *BrowserService) Close() {
 	for _, id := range browserIDs {
 		s.CloseBrowser(id)
 	}
+}
+
+// injectAntiDetection injects JavaScript to hide automation fingerprints
+// This helps avoid being blocked by websites that detect headless browsers
+func (s *BrowserService) injectAntiDetection(ctx context.Context) {
+	script := `
+		(function() {
+			// Override navigator.webdriver
+			Object.defineProperty(navigator, 'webdriver', {
+				get: () => undefined,
+				configurable: true
+			});
+
+			// Override navigator.plugins to look like a real browser
+			Object.defineProperty(navigator, 'plugins', {
+				get: () => {
+					const plugins = [
+						{name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+						{name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+						{name: 'Native Client', filename: 'internal-nacl-plugin'}
+					];
+					plugins.item = (i) => plugins[i];
+					plugins.namedItem = (name) => plugins.find(p => p.name === name);
+					plugins.refresh = () => {};
+					return plugins;
+				},
+				configurable: true
+			});
+
+			// Override navigator.languages
+			Object.defineProperty(navigator, 'languages', {
+				get: () => ['en-US', 'en', 'zh-CN', 'zh'],
+				configurable: true
+			});
+
+			// Override permissions query
+			const originalQuery = window.navigator.permissions.query;
+			window.navigator.permissions.query = (parameters) => (
+				parameters.name === 'notifications' ?
+					Promise.resolve({ state: Notification.permission }) :
+					originalQuery(parameters)
+			);
+
+			// Override chrome runtime to appear as regular Chrome
+			window.chrome = {
+				runtime: {
+					connect: () => {},
+					sendMessage: () => {},
+					onMessage: { addListener: () => {} }
+				},
+				loadTimes: () => {},
+				csi: () => {},
+				app: {}
+			};
+
+			// Hide automation-related properties
+			delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+			delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+			delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+			// Override Function.prototype.toString to hide modifications
+			const originalToString = Function.prototype.toString;
+			Function.prototype.toString = function() {
+				if (this === window.navigator.permissions.query) {
+					return 'function query() { [native code] }';
+				}
+				return originalToString.call(this);
+			};
+
+			// Add realistic screen properties
+			Object.defineProperty(screen, 'availWidth', { get: () => screen.width, configurable: true });
+			Object.defineProperty(screen, 'availHeight', { get: () => screen.height - 40, configurable: true });
+
+			// Spoof WebGL vendor and renderer
+			const getParameter = WebGLRenderingContext.prototype.getParameter;
+			WebGLRenderingContext.prototype.getParameter = function(parameter) {
+				if (parameter === 37445) return 'Intel Inc.';
+				if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+				return getParameter.call(this, parameter);
+			};
+
+			// Override console.debug to prevent detection scripts from logging
+			const originalDebug = console.debug;
+			console.debug = function(...args) {
+				if (args[0] && typeof args[0] === 'string' && args[0].includes('automation')) {
+					return;
+				}
+				return originalDebug.apply(this, args);
+			};
+		})();
+	`
+
+	// Use ActionFunc to inject the script
+	chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, _, err := runtime.Evaluate(script).Do(ctx)
+		return err
+	}))
 }
 
 // ---- Browser Actions ----
@@ -1387,6 +1520,9 @@ func (s *BrowserService) Navigate(ctx context.Context, browserID, targetURL stri
 		return fmt.Errorf("navigation failed: %w", err)
 	}
 
+	// Re-inject anti-detection scripts after navigation
+	s.injectAntiDetection(instance.ctx)
+
 	// Update current URL and title
 	var title string
 	chromedp.Run(instance.ctx, chromedp.Title(&title))
@@ -1403,6 +1539,118 @@ func (s *BrowserService) Navigate(ctx context.Context, browserID, targetURL stri
 	// Save updated state to database
 	s.saveInstanceToDB(instance)
 
+	return nil
+}
+
+// GoBack navigates back in browser history
+func (s *BrowserService) GoBack(ctx context.Context, browserID string) error {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return fmt.Errorf("browser not ready, status: %s", instance.Status)
+	}
+	instance.Status = BrowserStatusBusy
+	instance.mu.Unlock()
+
+	defer func() {
+		now := time.Now()
+		instance.mu.Lock()
+		instance.Status = BrowserStatusReady
+		instance.LastActivityAt = now
+		instance.mu.Unlock()
+		s.updateInstanceInDB(browserID, map[string]interface{}{
+			"last_activity_at": now,
+		})
+		s.notifyStateChange(browserID, instance)
+	}()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultNavigationTimeout)
+	defer cancel()
+
+	err = chromedp.Run(actionCtx, chromedp.NavigateBack())
+	if err != nil {
+		return fmt.Errorf("go back failed: %w", err)
+	}
+
+	// Wait for page to load
+	chromedp.Run(actionCtx, chromedp.WaitReady("body"))
+
+	// Update current URL and title
+	var currentURL, title string
+	chromedp.Run(instance.ctx, chromedp.Location(&currentURL), chromedp.Title(&title))
+
+	instance.mu.Lock()
+	instance.CurrentURL = currentURL
+	instance.CurrentTitle = title
+	if len(instance.Tabs) > instance.ActiveTab {
+		instance.Tabs[instance.ActiveTab].URL = currentURL
+		instance.Tabs[instance.ActiveTab].Title = title
+	}
+	instance.mu.Unlock()
+
+	s.saveInstanceToDB(instance)
+	return nil
+}
+
+// GoForward navigates forward in browser history
+func (s *BrowserService) GoForward(ctx context.Context, browserID string) error {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return fmt.Errorf("browser not ready, status: %s", instance.Status)
+	}
+	instance.Status = BrowserStatusBusy
+	instance.mu.Unlock()
+
+	defer func() {
+		now := time.Now()
+		instance.mu.Lock()
+		instance.Status = BrowserStatusReady
+		instance.LastActivityAt = now
+		instance.mu.Unlock()
+		s.updateInstanceInDB(browserID, map[string]interface{}{
+			"last_activity_at": now,
+		})
+		s.notifyStateChange(browserID, instance)
+	}()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultNavigationTimeout)
+	defer cancel()
+
+	err = chromedp.Run(actionCtx, chromedp.NavigateForward())
+	if err != nil {
+		return fmt.Errorf("go forward failed: %w", err)
+	}
+
+	// Wait for page to load
+	chromedp.Run(actionCtx, chromedp.WaitReady("body"))
+
+	// Update current URL and title
+	var currentURL, title string
+	chromedp.Run(instance.ctx, chromedp.Location(&currentURL), chromedp.Title(&title))
+
+	instance.mu.Lock()
+	instance.CurrentURL = currentURL
+	instance.CurrentTitle = title
+	if len(instance.Tabs) > instance.ActiveTab {
+		instance.Tabs[instance.ActiveTab].URL = currentURL
+		instance.Tabs[instance.ActiveTab].Title = title
+	}
+	instance.mu.Unlock()
+
+	s.saveInstanceToDB(instance)
 	return nil
 }
 
@@ -1500,7 +1748,7 @@ func (s *BrowserService) InputText(ctx context.Context, browserID, selector, tex
 	return nil
 }
 
-// Scroll scrolls the page
+// Scroll scrolls the page in any direction
 func (s *BrowserService) Scroll(ctx context.Context, browserID string, direction string, amount int) error {
 	instance, err := s.GetBrowser(browserID)
 	if err != nil {
@@ -1526,16 +1774,26 @@ func (s *BrowserService) Scroll(ctx context.Context, browserID string, direction
 		})
 	}()
 
-	scrollY := amount
-	if direction == "up" {
+	// Calculate scroll deltas based on direction
+	var scrollX, scrollY int
+	switch direction {
+	case "down":
+		scrollY = amount
+	case "up":
 		scrollY = -amount
+	case "right":
+		scrollX = amount
+	case "left":
+		scrollX = -amount
+	default:
+		return fmt.Errorf("invalid scroll direction: %s (must be up, down, left, or right)", direction)
 	}
 
 	// Create timeout context
 	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
 	defer cancel()
 
-	script := fmt.Sprintf("window.scrollBy(0, %d)", scrollY)
+	script := fmt.Sprintf("window.scrollBy(%d, %d)", scrollX, scrollY)
 	err = chromedp.Run(actionCtx, chromedp.Evaluate(script, nil))
 	if err != nil {
 		if actionCtx.Err() == context.DeadlineExceeded {
@@ -1771,7 +2029,7 @@ func (s *BrowserService) OpenTab(ctx context.Context, browserID string, targetUR
 	// Save updated state to database
 	s.saveInstanceToDB(instance)
 
-	s.logger.Info("Opened new tab", "browserID", browserID, "tabID", newTabID, "url", targetURL)
+	s.logger.Debug("Opened new tab", "browserID", browserID, "tabID", newTabID, "url", targetURL)
 	return nil
 }
 
@@ -1808,7 +2066,7 @@ func (s *BrowserService) SwitchTab(ctx context.Context, browserID string, tabInd
 	// Save to database
 	s.saveInstanceToDB(instance)
 
-	s.logger.Info("Switched tab", "browserID", browserID, "tabIndex", tabIndex)
+	s.logger.Debug("Switched tab", "browserID", browserID, "tabIndex", tabIndex)
 	return nil
 }
 
@@ -1865,7 +2123,7 @@ func (s *BrowserService) CloseTab(ctx context.Context, browserID string, tabInde
 	// Save to database
 	s.saveInstanceToDB(instance)
 
-	s.logger.Info("Closed tab", "browserID", browserID, "tabIndex", tabIndex)
+	s.logger.Debug("Closed tab", "browserID", browserID, "tabIndex", tabIndex)
 	return nil
 }
 
@@ -1973,4 +2231,528 @@ func (s *BrowserService) GetScrollInfo(ctx context.Context, browserID string) (*
 	})
 
 	return info, nil
+}
+
+// GetVisualState returns the current visual state of the page with labeled interactive elements
+func (s *BrowserService) GetVisualState(ctx context.Context, browserID string) (*VisualState, error) {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return nil, err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return nil, fmt.Errorf("browser not ready")
+	}
+	instance.mu.Unlock()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	// JavaScript to find and label interactive elements
+	script := `
+		(function() {
+			// Remove any existing labels
+			document.querySelectorAll('.choraleia-element-label').forEach(el => el.remove());
+			
+			// Find interactive elements
+			const selectors = [
+				'a[href]',
+				'button',
+				'input:not([type="hidden"])',
+				'select',
+				'textarea',
+				'[role="button"]',
+				'[role="link"]',
+				'[role="menuitem"]',
+				'[role="tab"]',
+				'[onclick]',
+				'[tabindex]:not([tabindex="-1"])'
+			];
+			
+			const elements = [];
+			const seen = new Set();
+			let labelIndex = 1;
+			
+			selectors.forEach(selector => {
+				document.querySelectorAll(selector).forEach(el => {
+					if (seen.has(el)) return;
+					seen.add(el);
+					
+					const rect = el.getBoundingClientRect();
+					// Skip invisible or off-screen elements
+					if (rect.width === 0 || rect.height === 0) return;
+					if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+					if (rect.right < 0 || rect.left > window.innerWidth) return;
+					
+					const style = window.getComputedStyle(el);
+					if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
+					
+					const label = String(labelIndex++);
+					
+					// Create visual label overlay
+					const labelEl = document.createElement('div');
+					labelEl.className = 'choraleia-element-label';
+					labelEl.textContent = label;
+					labelEl.style.cssText = 'position:fixed;z-index:999999;background:#ff0000;color:#fff;' +
+						'font-size:12px;font-weight:bold;padding:2px 6px;border-radius:3px;' +
+						'pointer-events:none;font-family:Arial,sans-serif;line-height:1;' +
+						'left:' + Math.max(0, rect.left) + 'px;top:' + Math.max(0, rect.top - 20) + 'px;';
+					document.body.appendChild(labelEl);
+					
+					elements.push({
+						label: label,
+						tag: el.tagName.toLowerCase(),
+						type: el.type || '',
+						text: (el.textContent || el.value || '').trim().substring(0, 100),
+						placeholder: el.placeholder || '',
+						href: el.href || '',
+						x: Math.round(rect.left + rect.width / 2),
+						y: Math.round(rect.top + rect.height / 2),
+						width: Math.round(rect.width),
+						height: Math.round(rect.height),
+						visible: true
+					});
+				});
+			});
+			
+			return elements;
+		})()
+	`
+
+	var elements []map[string]interface{}
+	err = chromedp.Run(actionCtx, chromedp.Evaluate(script, &elements))
+	if err != nil {
+		return nil, fmt.Errorf("failed to label elements: %w", err)
+	}
+
+	// Take screenshot with labels
+	var screenshot []byte
+	err = chromedp.Run(actionCtx, chromedp.CaptureScreenshot(&screenshot))
+	if err != nil {
+		return nil, fmt.Errorf("failed to take screenshot: %w", err)
+	}
+
+	// Remove labels after screenshot
+	chromedp.Run(instance.ctx, chromedp.Evaluate(`document.querySelectorAll('.choraleia-element-label').forEach(el => el.remove())`, nil))
+
+	// Get page info
+	var url, title string
+	chromedp.Run(instance.ctx, chromedp.Location(&url), chromedp.Title(&title))
+
+	// Get scroll info
+	scrollInfo, _ := s.GetScrollInfo(ctx, browserID)
+
+	// Convert elements
+	elementInfos := make([]ElementInfo, 0, len(elements))
+	for _, el := range elements {
+		elementInfos = append(elementInfos, ElementInfo{
+			Label:       el["label"].(string),
+			Tag:         el["tag"].(string),
+			Type:        el["type"].(string),
+			Text:        el["text"].(string),
+			Placeholder: el["placeholder"].(string),
+			Href:        el["href"].(string),
+			X:           int(el["x"].(float64)),
+			Y:           int(el["y"].(float64)),
+			Width:       int(el["width"].(float64)),
+			Height:      int(el["height"].(float64)),
+			Visible:     el["visible"].(bool),
+		})
+	}
+
+	state := &VisualState{
+		Screenshot: screenshot,
+		Elements:   elementInfos,
+		URL:        url,
+		Title:      title,
+		ScrollInfo: scrollInfo,
+		ViewportSize: struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		}{
+			Width:  BrowserWindowWidth,
+			Height: BrowserWindowHeight,
+		},
+	}
+
+	now := time.Now()
+	instance.mu.Lock()
+	instance.LastActivityAt = now
+	instance.mu.Unlock()
+	s.updateInstanceInDB(browserID, map[string]interface{}{
+		"last_activity_at": now,
+	})
+
+	return state, nil
+}
+
+// ClickAtCoordinates clicks at specific x, y coordinates on the page
+func (s *BrowserService) ClickAtCoordinates(ctx context.Context, browserID string, x, y int) error {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return fmt.Errorf("browser not ready")
+	}
+	instance.Status = BrowserStatusBusy
+	instance.mu.Unlock()
+
+	defer func() {
+		now := time.Now()
+		instance.mu.Lock()
+		instance.Status = BrowserStatusReady
+		instance.LastActivityAt = now
+		instance.mu.Unlock()
+		s.updateInstanceInDB(browserID, map[string]interface{}{
+			"last_activity_at": now,
+		})
+	}()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	// Use chromedp mouse click at coordinates
+	err = chromedp.Run(actionCtx,
+		chromedp.MouseClickXY(float64(x), float64(y)),
+	)
+	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("click at coordinates timed out after %v", DefaultActionTimeout)
+		}
+		return fmt.Errorf("click at coordinates failed: %w", err)
+	}
+
+	return nil
+}
+
+// ClickByLabel clicks an element by its label from GetVisualState
+func (s *BrowserService) ClickByLabel(ctx context.Context, browserID string, label string) error {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return fmt.Errorf("browser not ready")
+	}
+	instance.Status = BrowserStatusBusy
+	instance.mu.Unlock()
+
+	defer func() {
+		now := time.Now()
+		instance.mu.Lock()
+		instance.Status = BrowserStatusReady
+		instance.LastActivityAt = now
+		instance.mu.Unlock()
+		s.updateInstanceInDB(browserID, map[string]interface{}{
+			"last_activity_at": now,
+		})
+	}()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	// JavaScript to find element by label, scroll into view, and perform click
+	// Uses multiple click strategies for reliability
+	script := fmt.Sprintf(`
+		(async function() {
+			const selectors = [
+				'a[href]',
+				'button',
+				'input:not([type="hidden"])',
+				'select',
+				'textarea',
+				'[role="button"]',
+				'[role="link"]',
+				'[role="menuitem"]',
+				'[role="tab"]',
+				'[onclick]',
+				'[tabindex]:not([tabindex="-1"])'
+			];
+			
+			const seen = new Set();
+			let labelIndex = 1;
+			const targetLabel = '%s';
+			let targetEl = null;
+			
+			// Find the target element
+			outer: for (let i = 0; i < selectors.length; i++) {
+				const selector = selectors[i];
+				const elements = document.querySelectorAll(selector);
+				for (let j = 0; j < elements.length; j++) {
+					const el = elements[j];
+					if (seen.has(el)) continue;
+					seen.add(el);
+					
+					const rect = el.getBoundingClientRect();
+					if (rect.width === 0 || rect.height === 0) continue;
+					if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+					if (rect.right < 0 || rect.left > window.innerWidth) continue;
+					
+					const style = window.getComputedStyle(el);
+					if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+					
+					if (String(labelIndex) === targetLabel) {
+						targetEl = el;
+						break outer;
+					}
+					labelIndex++;
+				}
+			}
+			
+			if (!targetEl) {
+				return { found: false, totalElements: labelIndex - 1 };
+			}
+			
+			// Scroll element into view and wait for scroll to complete
+			targetEl.scrollIntoView({block: 'center', inline: 'center', behavior: 'instant'});
+			await new Promise(r => setTimeout(r, 100)); // Wait for scroll
+			
+			// Get final coordinates
+			const rect = targetEl.getBoundingClientRect();
+			const x = Math.round(rect.left + rect.width / 2);
+			const y = Math.round(rect.top + rect.height / 2);
+			
+			// Try multiple click strategies
+			let clicked = false;
+			
+			// Strategy 1: Focus and click
+			try {
+				targetEl.focus();
+				targetEl.click();
+				clicked = true;
+			} catch (e) {}
+			
+			// Strategy 2: Dispatch mouse events (more realistic)
+			if (!clicked || targetEl.tagName === 'A') {
+				try {
+					const mouseOpts = {bubbles: true, cancelable: true, view: window, clientX: x, clientY: y};
+					targetEl.dispatchEvent(new MouseEvent('mousedown', mouseOpts));
+					targetEl.dispatchEvent(new MouseEvent('mouseup', mouseOpts));
+					targetEl.dispatchEvent(new MouseEvent('click', mouseOpts));
+					clicked = true;
+				} catch (e) {}
+			}
+			
+			// Strategy 3: For links, try to navigate directly
+			if (targetEl.tagName === 'A' && targetEl.href) {
+				// Will be handled by chromedp click below
+			}
+			
+			return {
+				found: true,
+				clicked: clicked,
+				tag: targetEl.tagName.toLowerCase(),
+				type: targetEl.type || '',
+				text: (targetEl.textContent || targetEl.value || '').trim().substring(0, 50),
+				href: targetEl.href || '',
+				x: x,
+				y: y
+			};
+		})()
+	`, label)
+
+	var result map[string]interface{}
+	err = chromedp.Run(actionCtx, chromedp.Evaluate(script, &result, func(ep *runtime.EvaluateParams) *runtime.EvaluateParams {
+		return ep.WithAwaitPromise(true)
+	}))
+	if err != nil {
+		return fmt.Errorf("failed to find/click element: %w", err)
+	}
+
+	if found, ok := result["found"].(bool); !ok || !found {
+		totalElements := 0
+		if te, ok := result["totalElements"].(float64); ok {
+			totalElements = int(te)
+		}
+		return fmt.Errorf("element with label '%s' not found (page has %d interactive elements)", label, totalElements)
+	}
+
+	x := result["x"].(float64)
+	y := result["y"].(float64)
+	tag := ""
+	if t, ok := result["tag"].(string); ok {
+		tag = t
+	}
+	href := ""
+	if h, ok := result["href"].(string); ok {
+		href = h
+	}
+
+	// For links with href, navigate directly since JS click often doesn't trigger navigation
+	if tag == "a" && href != "" && !strings.HasPrefix(href, "javascript:") {
+		s.logger.Debug("ClickByLabel: navigating to link directly",
+			"label", label,
+			"href", href)
+
+		err = chromedp.Run(actionCtx, chromedp.Navigate(href))
+		if err != nil {
+			// If navigation fails, fall back to mouse click
+			s.logger.Debug("Navigation failed, trying mouse click", "error", err)
+			chromedp.Run(actionCtx, chromedp.MouseClickXY(x, y))
+		}
+	} else {
+		// For buttons, inputs, and other elements, use mouse click
+		time.Sleep(50 * time.Millisecond)
+		chromedp.Run(actionCtx, chromedp.MouseClickXY(x, y))
+	}
+
+	// Log what was clicked for debugging
+	s.logger.Debug("ClickByLabel success",
+		"label", label,
+		"tag", tag,
+		"text", result["text"],
+		"href", href,
+		"x", x,
+		"y", y)
+
+	return nil
+}
+
+// TypeText types text at the current cursor position (for vision-based input)
+// If clear is true, it will select all existing text first (Ctrl+A) so new text replaces it
+func (s *BrowserService) TypeText(ctx context.Context, browserID string, text string, clear bool) error {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return fmt.Errorf("browser not ready")
+	}
+	instance.Status = BrowserStatusBusy
+	instance.mu.Unlock()
+
+	defer func() {
+		now := time.Now()
+		instance.mu.Lock()
+		instance.Status = BrowserStatusReady
+		instance.LastActivityAt = now
+		instance.mu.Unlock()
+		s.updateInstanceInDB(browserID, map[string]interface{}{
+			"last_activity_at": now,
+		})
+	}()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	// If clear is true, select all existing text first (Ctrl+A)
+	if clear {
+		// Use JavaScript to select all text in the focused element
+		selectAllScript := `
+			(function() {
+				const el = document.activeElement;
+				if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+					el.select();
+				} else if (el && el.isContentEditable) {
+					document.execCommand('selectAll', false, null);
+				}
+			})()
+		`
+		if err := chromedp.Run(actionCtx, chromedp.Evaluate(selectAllScript, nil)); err != nil {
+			s.logger.Debug("Failed to select all", "error", err)
+		}
+	}
+
+	// Type text using keyboard input
+	err = chromedp.Run(actionCtx, chromedp.KeyEvent(text))
+	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("type text timed out after %v", DefaultActionTimeout)
+		}
+		return fmt.Errorf("type text failed: %w", err)
+	}
+
+	return nil
+}
+
+// PressKey presses a special key (Enter, Tab, Escape, etc.)
+func (s *BrowserService) PressKey(ctx context.Context, browserID string, key string) error {
+	instance, err := s.GetBrowser(browserID)
+	if err != nil {
+		return err
+	}
+
+	instance.mu.Lock()
+	if instance.Status != BrowserStatusReady {
+		instance.mu.Unlock()
+		return fmt.Errorf("browser not ready")
+	}
+	instance.Status = BrowserStatusBusy
+	instance.mu.Unlock()
+
+	defer func() {
+		now := time.Now()
+		instance.mu.Lock()
+		instance.Status = BrowserStatusReady
+		instance.LastActivityAt = now
+		instance.mu.Unlock()
+		s.updateInstanceInDB(browserID, map[string]interface{}{
+			"last_activity_at": now,
+		})
+	}()
+
+	// Create timeout context
+	actionCtx, cancel := context.WithTimeout(instance.ctx, DefaultActionTimeout)
+	defer cancel()
+
+	// Map common key names to chromedp key strings
+	var keyStr string
+	switch strings.ToLower(key) {
+	case "enter", "return":
+		keyStr = kb.Enter
+	case "tab":
+		keyStr = kb.Tab
+	case "escape", "esc":
+		keyStr = kb.Escape
+	case "backspace":
+		keyStr = kb.Backspace
+	case "delete":
+		keyStr = kb.Delete
+	case "up", "arrowup":
+		keyStr = kb.ArrowUp
+	case "down", "arrowdown":
+		keyStr = kb.ArrowDown
+	case "left", "arrowleft":
+		keyStr = kb.ArrowLeft
+	case "right", "arrowright":
+		keyStr = kb.ArrowRight
+	case "home":
+		keyStr = kb.Home
+	case "end":
+		keyStr = kb.End
+	case "pageup":
+		keyStr = kb.PageUp
+	case "pagedown":
+		keyStr = kb.PageDown
+	case "space":
+		keyStr = " "
+	default:
+		return fmt.Errorf("unknown key: %s", key)
+	}
+
+	err = chromedp.Run(actionCtx, chromedp.KeyEvent(keyStr))
+	if err != nil {
+		if actionCtx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("press key timed out after %v", DefaultActionTimeout)
+		}
+		return fmt.Errorf("press key failed: %w", err)
+	}
+
+	return nil
 }

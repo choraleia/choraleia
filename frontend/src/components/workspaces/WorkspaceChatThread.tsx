@@ -30,9 +30,9 @@ import KeyboardArrowLeftIcon from "@mui/icons-material/KeyboardArrowLeft";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import BuildIcon from "@mui/icons-material/Build";
-import { MarkdownText } from "../ai-assitant/markdown-text";
-import { ReasoningContent } from "../ai-assitant/reasoning-content";
-import { ToolFallback } from "../ai-assitant/tool-fallback";
+import { MarkdownText } from "./chat/markdown-text";
+import { ReasoningContent } from "./chat/reasoning-content";
+import { ToolFallback } from "./chat/tool-fallback";
 
 // Model config type
 export interface ModelConfig {

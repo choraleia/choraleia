@@ -136,7 +136,7 @@ func (s *TerminalService) RunTerminal(c *gin.Context) {
 	}
 
 	req := c.Request
-	s.logger.Info("WebSocket connection request",
+	s.logger.Debug("WebSocket connection request",
 		"assetId", assetID,
 		"method", req.Method,
 		"path", req.URL.Path,
@@ -177,7 +177,7 @@ func (s *TerminalService) RunTerminal(c *gin.Context) {
 		}
 	}()
 
-	s.logger.Info("WebSocket connection established", "assetId", assetID)
+	s.logger.Debug("WebSocket connection established", "assetId", assetID)
 
 	// Configure connection parameters
 	conn.SetReadLimit(32768)
@@ -275,7 +275,7 @@ func (s *TerminalService) RunDockerTerminal(c *gin.Context) {
 		return
 	}
 
-	s.logger.Info("Docker terminal WebSocket request",
+	s.logger.Debug("Docker terminal WebSocket request",
 		"assetId", assetID,
 		"containerId", containerID,
 	)
