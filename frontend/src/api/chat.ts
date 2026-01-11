@@ -439,3 +439,70 @@ export async function getStreamStatus(conversationId: string): Promise<{ convers
   }
   return res.json();
 }
+
+// StreamState represents the current state of a streaming session
+export interface StreamState {
+  is_streaming: boolean;
+  conversation_id: string;
+  message_id?: string;
+  last_event_id: number;
+  started_at?: string;
+}
+
+/**
+ * Get the streaming state of a conversation
+ */
+export async function getStreamState(conversationId: string): Promise<StreamState> {
+  const res = await fetch(`${baseUrl}/api/v1/chat/state/${encodeURIComponent(conversationId)}`);
+  if (!res.ok) {
+    throw new Error(`Failed to get stream state: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/**
+ * Continue/reconnect to an active stream
+ * This will first replay all buffered chunks, then stream new chunks until completion
+ */
+export function continueStream(conversationId: string): AsyncIterable<ChatCompletionChunk> {
+  return {
+    async *[Symbol.asyncIterator]() {
+      const res = await fetch(`${baseUrl}/api/v1/chat/completions/continue/${encodeURIComponent(conversationId)}`);
+      if (!res.ok) {
+        throw new Error(`Failed to continue stream: ${res.statusText}`);
+      }
+      if (!res.body) {
+        throw new Error("No response body");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+
+          const data = trimmed.slice(6);
+          if (data === "[DONE]") return;
+
+          try {
+            const chunk = JSON.parse(data) as ChatCompletionChunk;
+            yield chunk;
+          } catch {
+            // Skip invalid JSON
+          }
+        }
+      }
+    },
+  };
+}
+

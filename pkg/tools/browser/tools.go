@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
 	"github.com/cloudwego/eino/schema"
@@ -57,6 +58,24 @@ func init() {
 	}, NewBrowserGoToURLTool)
 
 	tools.Register(tools.ToolDefinition{
+		ID:          "browser_back",
+		Name:        "Go Back",
+		Description: "Navigate back to the previous page in browser history",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserBackTool)
+
+	tools.Register(tools.ToolDefinition{
+		ID:          "browser_forward",
+		Name:        "Go Forward",
+		Description: "Navigate forward to the next page in browser history",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserForwardTool)
+
+	tools.Register(tools.ToolDefinition{
 		ID:          "browser_web_search",
 		Name:        "Web Search",
 		Description: "Perform a web search using Google, Bing, or DuckDuckGo",
@@ -85,22 +104,13 @@ func init() {
 	}, NewBrowserInputTextTool)
 
 	tools.Register(tools.ToolDefinition{
-		ID:          "browser_scroll_down",
-		Name:        "Scroll Down",
-		Description: "Scroll the page down",
+		ID:          "browser_scroll",
+		Name:        "Scroll Page",
+		Description: "Scroll the page in any direction (up, down, left, right)",
 		Category:    tools.CategoryBrowser,
 		Scope:       tools.ScopeBoth,
 		Dangerous:   false,
-	}, NewBrowserScrollDownTool)
-
-	tools.Register(tools.ToolDefinition{
-		ID:          "browser_scroll_up",
-		Name:        "Scroll Up",
-		Description: "Scroll the page up",
-		Category:    tools.CategoryBrowser,
-		Scope:       tools.ScopeBoth,
-		Dangerous:   false,
-	}, NewBrowserScrollUpTool)
+	}, NewBrowserScrollTool)
 
 	tools.Register(tools.ToolDefinition{
 		ID:          "browser_get_scroll_info",
@@ -176,6 +186,52 @@ func init() {
 		Scope:       tools.ScopeBoth,
 		Dangerous:   false,
 	}, NewBrowserListTabsTool)
+
+	// Vision-based tools (for visual automation)
+	tools.Register(tools.ToolDefinition{
+		ID:          "browser_get_visual_state",
+		Name:        "Get Visual State",
+		Description: "Get a screenshot with labeled interactive elements. Returns a screenshot image with numbered labels on clickable elements, plus a list of all elements with their labels, types, and text. Use this to 'see' the page and interact by label number.",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserGetVisualStateTool)
+
+	tools.Register(tools.ToolDefinition{
+		ID:          "browser_click_at",
+		Name:        "Click At Coordinates",
+		Description: "Click at specific x, y coordinates on the page. Use when you know exact pixel coordinates.",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserClickAtTool)
+
+	tools.Register(tools.ToolDefinition{
+		ID:          "browser_click_label",
+		Name:        "Click By Label",
+		Description: "Click an element by its label number from browser_get_visual_state. First call browser_get_visual_state, then use the label number to click the desired element.",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserClickLabelTool)
+
+	tools.Register(tools.ToolDefinition{
+		ID:          "browser_type",
+		Name:        "Type Text",
+		Description: "Type text at the current cursor position. First click on an input field using browser_click_label or browser_click_at, then use this to type text.",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserTypeTool)
+
+	tools.Register(tools.ToolDefinition{
+		ID:          "browser_press_key",
+		Name:        "Press Key",
+		Description: "Press a special key like Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, or Space.",
+		Category:    tools.CategoryBrowser,
+		Scope:       tools.ScopeBoth,
+		Dangerous:   false,
+	}, NewBrowserPressKeyTool)
 }
 
 // ---- Browser Start Tool ----
@@ -306,6 +362,72 @@ func NewBrowserGoToURLTool(tc *tools.ToolContext) tool.InvokableTool {
 	})
 }
 
+// ---- Browser Back Tool ----
+
+type BrowserBackInput struct {
+	BrowserID string `json:"browser_id"`
+}
+
+func NewBrowserBackTool(tc *tools.ToolContext) tool.InvokableTool {
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_back",
+		Desc: "Navigate back to the previous page in browser history. Equivalent to clicking the browser's back button.",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+		}),
+	}, func(ctx context.Context, input *BrowserBackInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		if err := tc.BrowserService.GoBack(ctx, input.BrowserID); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		instance, _ := tc.BrowserService.GetBrowser(input.BrowserID)
+		url, title := "", ""
+		if instance != nil {
+			url = instance.CurrentURL
+			title = instance.CurrentTitle
+		}
+
+		return fmt.Sprintf("Navigated back.\nCurrent URL: %s\nPage title: %s", url, title), nil
+	})
+}
+
+// ---- Browser Forward Tool ----
+
+type BrowserForwardInput struct {
+	BrowserID string `json:"browser_id"`
+}
+
+func NewBrowserForwardTool(tc *tools.ToolContext) tool.InvokableTool {
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_forward",
+		Desc: "Navigate forward to the next page in browser history. Equivalent to clicking the browser's forward button.",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+		}),
+	}, func(ctx context.Context, input *BrowserForwardInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		if err := tc.BrowserService.GoForward(ctx, input.BrowserID); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		instance, _ := tc.BrowserService.GetBrowser(input.BrowserID)
+		url, title := "", ""
+		if instance != nil {
+			url = instance.CurrentURL
+			title = instance.CurrentTitle
+		}
+
+		return fmt.Sprintf("Navigated forward.\nCurrent URL: %s\nPage title: %s", url, title), nil
+	})
+}
+
 // ---- Browser Web Search Tool ----
 
 type BrowserWebSearchInput struct {
@@ -401,24 +523,31 @@ func NewBrowserInputTextTool(tc *tools.ToolContext) tool.InvokableTool {
 	})
 }
 
-// ---- Browser Scroll Down Tool ----
+// ---- Browser Scroll Tool ----
 
-type BrowserScrollDownInput struct {
+type BrowserScrollInput struct {
 	BrowserID string `json:"browser_id"`
+	Direction string `json:"direction"`
 	Amount    int    `json:"amount,omitempty"`
 }
 
-func NewBrowserScrollDownTool(tc *tools.ToolContext) tool.InvokableTool {
+func NewBrowserScrollTool(tc *tools.ToolContext) tool.InvokableTool {
 	return utils.NewTool(&schema.ToolInfo{
-		Name: "browser_scroll_down",
-		Desc: "Scroll the page down by a specified amount in pixels.",
+		Name: "browser_scroll",
+		Desc: "Scroll the page in any direction by a specified amount in pixels.",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
-			"amount":     {Type: schema.Integer, Required: false, Desc: "Pixels to scroll down (default: 500)"},
+			"direction":  {Type: schema.String, Required: true, Desc: "Scroll direction: 'up', 'down', 'left', or 'right'"},
+			"amount":     {Type: schema.Integer, Required: false, Desc: "Pixels to scroll (default: 500)"},
 		}),
-	}, func(ctx context.Context, input *BrowserScrollDownInput) (string, error) {
+	}, func(ctx context.Context, input *BrowserScrollInput) (string, error) {
 		if tc.BrowserService == nil {
 			return "Error: browser service not available", nil
+		}
+
+		direction := strings.ToLower(input.Direction)
+		if direction != "up" && direction != "down" && direction != "left" && direction != "right" {
+			return "Error: direction must be 'up', 'down', 'left', or 'right'", nil
 		}
 
 		amount := input.Amount
@@ -426,44 +555,11 @@ func NewBrowserScrollDownTool(tc *tools.ToolContext) tool.InvokableTool {
 			amount = 500
 		}
 
-		if err := tc.BrowserService.Scroll(ctx, input.BrowserID, "down", amount); err != nil {
+		if err := tc.BrowserService.Scroll(ctx, input.BrowserID, direction, amount); err != nil {
 			return fmt.Sprintf("Error: %v", err), nil
 		}
 
-		return fmt.Sprintf("Scrolled down %d pixels", amount), nil
-	})
-}
-
-// ---- Browser Scroll Up Tool ----
-
-type BrowserScrollUpInput struct {
-	BrowserID string `json:"browser_id"`
-	Amount    int    `json:"amount,omitempty"`
-}
-
-func NewBrowserScrollUpTool(tc *tools.ToolContext) tool.InvokableTool {
-	return utils.NewTool(&schema.ToolInfo{
-		Name: "browser_scroll_up",
-		Desc: "Scroll the page up by a specified amount in pixels.",
-		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
-			"amount":     {Type: schema.Integer, Required: false, Desc: "Pixels to scroll up (default: 500)"},
-		}),
-	}, func(ctx context.Context, input *BrowserScrollUpInput) (string, error) {
-		if tc.BrowserService == nil {
-			return "Error: browser service not available", nil
-		}
-
-		amount := input.Amount
-		if amount <= 0 {
-			amount = 500
-		}
-
-		if err := tc.BrowserService.Scroll(ctx, input.BrowserID, "up", amount); err != nil {
-			return fmt.Sprintf("Error: %v", err), nil
-		}
-
-		return fmt.Sprintf("Scrolled up %d pixels", amount), nil
+		return fmt.Sprintf("Scrolled %s %d pixels", direction, amount), nil
 	})
 }
 
@@ -794,4 +890,304 @@ func NewBrowserListTabsTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		return sb.String(), nil
 	})
+}
+
+// ---- Vision-Based Tools ----
+
+// ---- Browser Get Visual State Tool ----
+
+type BrowserGetVisualStateInput struct {
+	BrowserID    string `json:"browser_id"`
+	AnalyzeImage bool   `json:"analyze_image,omitempty"`
+}
+
+func NewBrowserGetVisualStateTool(tc *tools.ToolContext) tool.InvokableTool {
+	// Determine description based on whether vision model is configured
+	desc := "Get the current page state with numbered labels on all interactive elements (links, buttons, inputs, etc.). Returns a list of all labeled elements with their details."
+	if tc.VisionModelID != "" {
+		desc += " Set analyze_image=true to use the configured vision AI model to describe the page visually."
+	} else {
+		desc += " Vision analysis is not available (no vision model configured in workspace tools)."
+	}
+
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_get_visual_state",
+		Desc: desc,
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id":    {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+			"analyze_image": {Type: schema.Boolean, Required: false, Desc: "If true, use a vision AI model to analyze and describe the screenshot (default: false, requires vision model configured)"},
+		}),
+	}, func(ctx context.Context, input *BrowserGetVisualStateInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		state, err := tc.BrowserService.GetVisualState(ctx, input.BrowserID)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString("=== Page Visual State ===\n")
+		sb.WriteString(fmt.Sprintf("Title: %s\n", state.Title))
+		sb.WriteString(fmt.Sprintf("URL: %s\n", state.URL))
+		sb.WriteString(fmt.Sprintf("Viewport: %dx%d pixels\n", state.ViewportSize.Width, state.ViewportSize.Height))
+
+		if state.ScrollInfo != nil {
+			sb.WriteString(fmt.Sprintf("Scroll Position: %d%% from top", state.ScrollInfo.PercentY))
+			if state.ScrollInfo.AtTop {
+				sb.WriteString(" (at TOP)")
+			} else if state.ScrollInfo.AtBottom {
+				sb.WriteString(" (at BOTTOM)")
+			}
+			sb.WriteString("\n")
+		}
+
+		// If vision analysis is requested
+		if input.AnalyzeImage {
+			if tc.ModelService == nil {
+				sb.WriteString("\n=== Vision Analysis (Error) ===\nModel service not available\n")
+			} else if tc.VisionModelID == "" {
+				sb.WriteString("\n=== Vision Analysis (Error) ===\nNo vision model configured. Please configure a vision model in workspace browser tools settings.\n")
+			} else {
+				imageDataURI := fmt.Sprintf("data:image/png;base64,%s", base64.StdEncoding.EncodeToString(state.Screenshot))
+
+				prompt := `Analyze this webpage screenshot with numbered labels on interactive elements. Describe:
+1. The overall layout and purpose of the page
+2. Key visual elements and content visible
+3. Notable interactive elements you can see (buttons, forms, links, etc.)
+4. Any important information displayed on the page
+Be concise but comprehensive.`
+
+				analysis, err := analyzeImage(ctx, tc, imageDataURI, prompt, tc.VisionModelID)
+				if err != nil {
+					sb.WriteString(fmt.Sprintf("\n=== Vision Analysis (Error) ===\n%v\n", err))
+				} else {
+					sb.WriteString(fmt.Sprintf("\n=== Vision Analysis ===\n%s\n", analysis))
+				}
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("\n=== Interactive Elements (%d found) ===\n", len(state.Elements)))
+		sb.WriteString("Format: [label] tag[type] \"text\" (placeholder) -> href @(x,y)\n\n")
+
+		for _, el := range state.Elements {
+			sb.WriteString(fmt.Sprintf("[%s] %s", el.Label, el.Tag))
+			if el.Type != "" {
+				sb.WriteString(fmt.Sprintf("[%s]", el.Type))
+			}
+			if el.Text != "" {
+				text := el.Text
+				if len(text) > 60 {
+					text = text[:60] + "..."
+				}
+				sb.WriteString(fmt.Sprintf(" \"%s\"", text))
+			}
+			if el.Placeholder != "" {
+				sb.WriteString(fmt.Sprintf(" (placeholder: \"%s\")", el.Placeholder))
+			}
+			if el.Href != "" && el.Tag == "a" {
+				href := el.Href
+				if len(href) > 50 {
+					href = href[:50] + "..."
+				}
+				sb.WriteString(fmt.Sprintf(" -> %s", href))
+			}
+			sb.WriteString(fmt.Sprintf(" @(%d,%d)", el.X, el.Y))
+			sb.WriteString("\n")
+		}
+
+		sb.WriteString("\n=== Usage ===\n")
+		sb.WriteString("To interact with an element, use browser_click_label with the label number.\n")
+		sb.WriteString("Example: browser_click_label(browser_id, \"5\") to click element [5]\n")
+		sb.WriteString("After clicking an input, use browser_type to enter text.\n")
+
+		return sb.String(), nil
+	})
+}
+
+// ---- Browser Click At Coordinates Tool ----
+
+type BrowserClickAtInput struct {
+	BrowserID string `json:"browser_id"`
+	X         int    `json:"x"`
+	Y         int    `json:"y"`
+}
+
+func NewBrowserClickAtTool(tc *tools.ToolContext) tool.InvokableTool {
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_click_at",
+		Desc: "Click at specific x, y pixel coordinates on the page. Use this when you know the exact coordinates from analyzing a screenshot.",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+			"x":          {Type: schema.Integer, Required: true, Desc: "X coordinate (pixels from left)"},
+			"y":          {Type: schema.Integer, Required: true, Desc: "Y coordinate (pixels from top)"},
+		}),
+	}, func(ctx context.Context, input *BrowserClickAtInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		if err := tc.BrowserService.ClickAtCoordinates(ctx, input.BrowserID, input.X, input.Y); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		return fmt.Sprintf("Clicked at coordinates (%d, %d)", input.X, input.Y), nil
+	})
+}
+
+// ---- Browser Click By Label Tool ----
+
+type BrowserClickLabelInput struct {
+	BrowserID string `json:"browser_id"`
+	Label     string `json:"label"`
+}
+
+func NewBrowserClickLabelTool(tc *tools.ToolContext) tool.InvokableTool {
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_click_label",
+		Desc: "Click an element by its label number from browser_get_visual_state. First call browser_get_visual_state to see the page with labeled elements, then use the label number (e.g., '1', '2', '3') to click the desired element.",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+			"label":      {Type: schema.String, Required: true, Desc: "The label number of the element to click (e.g., '1', '2', '3')"},
+		}),
+	}, func(ctx context.Context, input *BrowserClickLabelInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		if err := tc.BrowserService.ClickByLabel(ctx, input.BrowserID, input.Label); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		return fmt.Sprintf("Clicked element with label [%s]", input.Label), nil
+	})
+}
+
+// ---- Browser Type Tool ----
+
+type BrowserTypeInput struct {
+	BrowserID string `json:"browser_id"`
+	Text      string `json:"text"`
+	Clear     bool   `json:"clear,omitempty"`
+}
+
+func NewBrowserTypeTool(tc *tools.ToolContext) tool.InvokableTool {
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_type",
+		Desc: "Type text at the current cursor position. First click on an input field using browser_click_label or browser_click_at to focus it, then use this tool to type text. Set clear=true to select all and replace existing content.",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+			"text":       {Type: schema.String, Required: true, Desc: "The text to type"},
+			"clear":      {Type: schema.Boolean, Required: false, Desc: "If true, select all existing text first (Ctrl+A) so new text replaces it (default: false)"},
+		}),
+	}, func(ctx context.Context, input *BrowserTypeInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		if err := tc.BrowserService.TypeText(ctx, input.BrowserID, input.Text, input.Clear); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		if input.Clear {
+			return fmt.Sprintf("Cleared and typed: \"%s\"", input.Text), nil
+		}
+		return fmt.Sprintf("Typed: \"%s\"", input.Text), nil
+	})
+}
+
+// ---- Browser Press Key Tool ----
+
+type BrowserPressKeyInput struct {
+	BrowserID string `json:"browser_id"`
+	Key       string `json:"key"`
+}
+
+func NewBrowserPressKeyTool(tc *tools.ToolContext) tool.InvokableTool {
+	return utils.NewTool(&schema.ToolInfo{
+		Name: "browser_press_key",
+		Desc: "Press a special key on the keyboard. Supported keys: Enter, Tab, Escape, Backspace, Delete, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Home, End, PageUp, PageDown, Space. Use this after typing text to submit forms (Enter) or navigate (Tab, Arrow keys).",
+		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+			"key":        {Type: schema.String, Required: true, Desc: "The key to press (e.g., 'Enter', 'Tab', 'Escape', 'Backspace', 'ArrowDown')"},
+		}),
+	}, func(ctx context.Context, input *BrowserPressKeyInput) (string, error) {
+		if tc.BrowserService == nil {
+			return "Error: browser service not available", nil
+		}
+
+		if err := tc.BrowserService.PressKey(ctx, input.BrowserID, input.Key); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+
+		return fmt.Sprintf("Pressed key: %s", input.Key), nil
+	})
+}
+
+// analyzeImage uses a vision-capable model to analyze an image
+// imageDataURI should be a data URI (data:image/...;base64,...) or a URL
+// prompt is the instruction for the model
+// modelID is required - specifies which vision model to use
+func analyzeImage(ctx context.Context, tc *tools.ToolContext, imageDataURI string, prompt string, modelID string) (string, error) {
+	if tc.ModelService == nil {
+		return "", fmt.Errorf("model service not available")
+	}
+
+	// Load models
+	modelsList, err := models.LoadModels()
+	if err != nil {
+		return "", fmt.Errorf("failed to load models: %w", err)
+	}
+
+	// Find the specified model
+	var visionConfig *models.ModelConfig
+	for _, cfg := range modelsList {
+		if cfg.ID == modelID {
+			visionConfig = cfg
+			break
+		}
+	}
+
+	if visionConfig == nil {
+		return "", fmt.Errorf("specified vision model not found: %s", modelID)
+	}
+
+	// Create the chat model
+	chatModel, err := tc.ModelService.CreateChatModel(ctx, visionConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to create vision model: %w", err)
+	}
+
+	// Build multimodal message with image
+	messages := []*schema.Message{
+		{
+			Role: schema.User,
+			MultiContent: []schema.ChatMessagePart{
+				{
+					Type: schema.ChatMessagePartTypeText,
+					Text: prompt,
+				},
+				{
+					Type: schema.ChatMessagePartTypeImageURL,
+					ImageURL: &schema.ChatMessageImageURL{
+						URL:    imageDataURI,
+						Detail: "auto",
+					},
+				},
+			},
+		},
+	}
+
+	// Call the model
+	resp, err := chatModel.Generate(ctx, messages)
+	if err != nil {
+		return "", fmt.Errorf("vision model call failed: %w", err)
+	}
+
+	if resp == nil || resp.Content == "" {
+		return "", fmt.Errorf("vision model returned empty response")
+	}
+
+	return resp.Content, nil
 }

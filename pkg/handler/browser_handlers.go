@@ -99,7 +99,7 @@ func (h *BrowserHandler) HandleWebSocket(c *gin.Context) {
 
 // streamScreenshots periodically sends screenshots for all browsers in a conversation
 func (h *BrowserHandler) streamScreenshots(conversationID string, conn *websocket.Conn, mu *sync.Mutex, closed *bool, stop chan struct{}) {
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	h.logger.Info("Starting screenshot stream", "conversationID", conversationID)

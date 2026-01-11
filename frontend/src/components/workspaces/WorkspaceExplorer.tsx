@@ -460,6 +460,38 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
   const assetItems = useMemo(
     () => {
       if (!activeWorkspace) return [];
+
+      // Map workspace asset references to display items
+      const workspaceAssets = (activeWorkspace.assets?.assets || []).map((assetRef) => {
+        // Determine icon based on asset type
+        let icon;
+        switch (assetRef.assetType) {
+          case "ssh":
+            icon = <DnsOutlinedIcon fontSize="small" />;
+            break;
+          case "docker_host":
+            icon = <StorageIcon fontSize="small" />;
+            break;
+          case "k8s":
+            icon = <HubOutlinedIcon fontSize="small" />;
+            break;
+          case "local":
+            icon = <TerminalIcon fontSize="small" />;
+            break;
+          default:
+            icon = <DnsOutlinedIcon fontSize="small" />;
+        }
+
+        return {
+          id: assetRef.id,
+          name: assetRef.assetName,
+          subtitle: assetRef.assetType,
+          icon,
+          aiHint: assetRef.aiHint,
+        };
+      });
+
+      // Legacy support: also include old hosts and k8s configs if present
       const hostAssets = (activeWorkspace.assets?.hosts || []).map((host) => ({
         id: host.id,
         name: host.name,
@@ -472,7 +504,7 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
         subtitle: cluster.namespace,
         icon: <HubOutlinedIcon fontSize="small" />,
       }));
-      return [...hostAssets, ...k8sAssets];
+      return [...workspaceAssets, ...hostAssets, ...k8sAssets];
     },
     [activeWorkspace],
   );
@@ -481,10 +513,10 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
 
   return (
     <Box
-      width={280}
-      borderRight={(theme) => `1px solid ${theme.palette.divider}`}
       display="flex"
       flexDirection="column"
+      height="100%"
+      overflow="hidden"
     >
       <Accordion
         disableGutters
@@ -492,11 +524,17 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
         onChange={toggleWorkspace}
         square
         sx={{
-          flex: workspaceExpanded ? "1 1 0%" : "0 auto",
+          flex: workspaceExpanded ? 1 : "none",
           minHeight: 0,
           display: "flex",
           flexDirection: "column",
-          transition: "flex 0.2s ease",
+          overflow: "hidden",
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          boxShadow: "none",
+          "&.MuiAccordion-root": {
+            "&:before": { display: "none" },
+          },
         }}
       >
         <AccordionSummary
@@ -528,9 +566,9 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
         </AccordionSummary>
         <AccordionDetails
           sx={{
-            flex: workspaceExpanded ? 1 : 0,
+            flex: 1,
             minHeight: 0,
-            overflow: workspaceExpanded ? "auto" : "hidden",
+            overflow: "auto",
             p: 0,
           }}
         >
@@ -578,16 +616,24 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
         onChange={toggleAssets}
         square
         sx={{
-          flex: assetsExpanded ? "1 1 0%" : "0 auto",
+          flex: assetsExpanded ? 1 : "none",
           minHeight: 0,
           display: "flex",
           flexDirection: "column",
-          transition: "flex 0.2s ease",
+          overflow: "hidden",
+          boxShadow: "none",
+          border: "none",
+          "&.MuiAccordion-root": {
+            "&:before": { display: "none" },
+          },
         }}
       >
         <AccordionSummary
           expandIcon={<ExpandMoreIcon fontSize="small" />}
-          sx={{ minHeight: 36, "& .MuiAccordionSummary-content": { my: 0 } }}
+          sx={{
+            minHeight: 36,
+            "& .MuiAccordionSummary-content": { my: 0 },
+          }}
         >
           <Typography variant="subtitle2">Assets</Typography>
           <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
@@ -596,9 +642,9 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
         </AccordionSummary>
         <AccordionDetails
           sx={{
-            flex: assetsExpanded ? 1 : 0,
+            flex: 1,
             minHeight: 0,
-            overflow: assetsExpanded ? "auto" : "hidden",
+            overflow: "auto",
             p: 0,
           }}
         >
@@ -613,7 +659,6 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
               dense
               disablePadding
               sx={{
-                "& .MuiListItemIcon-root": { minWidth: 24 },
                 "& .MuiListItem-root": { my: 0 },
                 "& .MuiListItemButton-root": { py: 0.25 },
               }}
@@ -623,10 +668,11 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
                   <ListItemButton dense>
                     <ListItemIcon sx={{ minWidth: 28 }}>{asset.icon}</ListItemIcon>
                     <ListItemText
-                      primary={asset.name}
+                      primary={asset.name || "(unnamed)"}
                       secondary={asset.subtitle}
-                      primaryTypographyProps={{ noWrap: true }}
-                      secondaryTypographyProps={{ noWrap: true }}
+                      primaryTypographyProps={{ noWrap: true, variant: "body2" }}
+                      secondaryTypographyProps={{ noWrap: true, variant: "caption" }}
+                      sx={{ overflow: "hidden" }}
                     />
                   </ListItemButton>
                 </ListItem>

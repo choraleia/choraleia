@@ -295,10 +295,17 @@ export type ScriptConfig = {
   runtimeEnv?: RuntimeEnv;   // Where to run: "local" (host machine) or "workspace" (container/pod)
 };
 
+// Built-in tool options
+export type BuiltinToolOptions = {
+  vision_model_id?: string;  // Model ID for vision analysis (only for browser_get_visual_state)
+};
+
 // Built-in tool configuration
 export type BuiltinConfig = {
-  toolId: string;            // Built-in tool identifier
-  options?: Record<string, unknown>; // Tool-specific options
+  toolId: string;              // Built-in tool identifier (single tool)
+  toolIds?: string[];          // Multiple tool IDs
+  options?: BuiltinToolOptions; // Tool-specific options
+  safeMode?: boolean;          // If true, restrict to read-only operations
 };
 
 // Browser service configuration (cloud browser providers)
@@ -520,10 +527,12 @@ export type Room = {
   // IDE mode panes (editor, terminals opened in IDE mode)
   panes: SpacePane[];
   activePaneId: string;
-  // Chat mode preview panes (terminals, editors opened by AI)
-  chatPanes: SpacePane[];
-  activeChatPaneId: string;
+  // Work panes (terminals, editors in unified layout preview panel)
+  workPanes: SpacePane[];
+  activeWorkPaneId: string;
   toolSessions: ToolSession[];
+  // Current conversation ID in chat mode (persisted across mode switches)
+  currentConversationId?: string;
 };
 
 // Work mode: chat (AI-driven) or ide (developer IDE)
@@ -595,10 +604,12 @@ export interface WorkspaceContextValue {
   openTerminalTab: () => void;
   // Work mode
   setWorkMode: (mode: WorkMode) => void;
-  // Chat mode preview pane operations
-  openChatTerminal: () => void;
-  setChatActivePane: (paneId: string) => void;
-  closeChatPane: (paneId: string) => void;
+  // Work pane operations (preview panel in unified layout)
+  openWorkTerminal: () => void;
+  setWorkActivePane: (paneId: string) => void;
+  closeWorkPane: (paneId: string) => void;
+  // Current conversation in chat mode
+  setCurrentConversationId: (conversationId: string) => void;
 }
 
 
@@ -677,8 +688,8 @@ const createRoom = (name: string): Room => {
     panes: [chatPane, editorPane],
     activePaneId: chatPane.id,
     // Chat mode: starts empty, AI will open terminals/editors as needed
-    chatPanes: [],
-    activeChatPaneId: "",
+    workPanes: [],
+    activeWorkPaneId: "",
     toolSessions,
   };
 };
@@ -891,9 +902,10 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
       location: "Local" as const,
       panes,
       activePaneId,
-      chatPanes: [],
-      activeChatPaneId: "",
+      workPanes: [],
+      activeWorkPaneId: "",
       toolSessions: [],
+      currentConversationId: r.current_conversation_id,
     };
   });
 
@@ -984,6 +996,8 @@ const convertToBackendRequest = (ws: Workspace): workspacesApi.CreateWorkspaceRe
     } : undefined,
     assets: ws.assets.assets.map((a) => ({
       asset_id: a.assetId,
+      asset_type: a.assetType,
+      asset_name: a.assetName,
       ai_hint: a.aiHint,
       restrictions: a.restrictions as Record<string, unknown>,
     })),
@@ -1324,6 +1338,8 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           // Convert assets to API format
           assets: config.assets.assets?.map((a) => ({
             asset_id: a.assetId,
+            asset_type: a.assetType,
+            asset_name: a.assetName,
             ai_hint: a.aiHint,
             restrictions: a.restrictions as Record<string, unknown>,
           })),
@@ -1685,15 +1701,15 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     async (filePath: string) => {
       if (!activeWorkspace) return;
 
-      // Check if file is already open
+      // Check if file is already open in workPanes (unified layout uses workPanes)
       const room = activeWorkspace.rooms.find(r => r.id === activeRoom?.id);
-      const existing = room?.panes.find(
+      const existing = room?.workPanes.find(
         (pane) => pane.kind === "editor" && pane.filePath === filePath,
       );
       if (existing) {
         mutateRoom(activeRoom?.id, (space) => ({
           ...space,
-          activePaneId: existing.id,
+          activeWorkPaneId: existing.id,
         }));
         return;
       }
@@ -1734,10 +1750,11 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           dirty: false,
         };
 
+        // Add to workPanes (unified layout uses workPanes for the preview panel)
         mutateRoom(activeRoom?.id, (space) => ({
           ...space,
-          panes: [...space.panes, editor],
-          activePaneId: editor.id,
+          workPanes: [...space.workPanes, editor],
+          activeWorkPaneId: editor.id,
         }));
       } catch (err) {
         console.error("Failed to read file:", err);
@@ -2133,8 +2150,8 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
   const openTerminalTab = useCallback(() => {
     mutateRoom(activeRoom?.id, (space) => {
-      // Count existing terminals to generate unique name
-      const terminalCount = space.panes.filter(
+      // Count existing terminals in workPanes (unified layout uses workPanes)
+      const terminalCount = space.workPanes.filter(
         (pane): pane is ToolPane =>
           pane.kind === "tool" && pane.title.startsWith("Terminal"),
       ).length;
@@ -2160,11 +2177,12 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         summary: terminalSession.summary,
       };
 
+      // Add to workPanes (unified layout uses workPanes for the preview panel)
       return {
         ...space,
         toolSessions: [...space.toolSessions, terminalSession],
-        panes: [...space.panes, toolPane],
-        activePaneId: toolPane.id,
+        workPanes: [...space.workPanes, toolPane],
+        activeWorkPaneId: toolPane.id,
       };
     });
   }, [activeRoom?.id, mutateRoom]);
@@ -2177,9 +2195,9 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
   }, [mutateActiveWorkspace]);
 
   // Chat mode: open a new terminal in preview panel
-  const openChatTerminal = useCallback(() => {
+  const openWorkTerminal = useCallback(() => {
     mutateRoom(activeRoom?.id, (space) => {
-      const terminalCount = space.chatPanes.filter(
+      const terminalCount = space.workPanes.filter(
         (pane): pane is ToolPane =>
           pane.kind === "tool" && pane.title.startsWith("Terminal"),
       ).length;
@@ -2206,35 +2224,53 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
       return {
         ...space,
         toolSessions: [...space.toolSessions, terminalSession],
-        chatPanes: [...space.chatPanes, toolPane],
-        activeChatPaneId: toolPane.id,
+        workPanes: [...space.workPanes, toolPane],
+        activeWorkPaneId: toolPane.id,
       };
     });
   }, [activeRoom?.id, mutateRoom]);
 
   // Chat mode: set active preview pane
-  const setChatActivePane = useCallback((paneId: string) => {
+  const setWorkActivePane = useCallback((paneId: string) => {
     mutateRoom(activeRoom?.id, (space) => ({
       ...space,
-      activeChatPaneId: paneId,
+      activeWorkPaneId: paneId,
     }));
   }, [activeRoom?.id, mutateRoom]);
 
   // Chat mode: close a preview pane
-  const closeChatPane = useCallback((paneId: string) => {
+  const closeWorkPane = useCallback((paneId: string) => {
     mutateRoom(activeRoom?.id, (space) => {
-      const newPanes = space.chatPanes.filter((p) => p.id !== paneId);
-      let newActiveId = space.activeChatPaneId;
-      if (space.activeChatPaneId === paneId) {
+      const newPanes = space.workPanes.filter((p) => p.id !== paneId);
+      let newActiveId = space.activeWorkPaneId;
+      if (space.activeWorkPaneId === paneId) {
         newActiveId = newPanes[0]?.id || "";
       }
       return {
         ...space,
-        chatPanes: newPanes,
-        activeChatPaneId: newActiveId,
+        workPanes: newPanes,
+        activeWorkPaneId: newActiveId,
       };
     });
   }, [activeRoom?.id, mutateRoom]);
+
+  // Chat mode: set current conversation ID (persists across mode switches and to backend)
+  const setCurrentConversationId = useCallback((conversationId: string) => {
+    // Update local state first (optimistic)
+    mutateRoom(activeRoom?.id, (space) => ({
+      ...space,
+      currentConversationId: conversationId,
+    }));
+
+    // Sync to backend (fire and forget, don't block UI)
+    if (activeWorkspaceId && activeRoom?.id) {
+      workspacesApi.updateRoom(activeWorkspaceId, activeRoom.id, {
+        current_conversation_id: conversationId || undefined,
+      }).catch((err) => {
+        console.error("Failed to persist conversation ID to backend:", err);
+      });
+    }
+  }, [activeRoom?.id, activeWorkspaceId, mutateRoom]);
 
   return (
     <WorkspaceContext.Provider
@@ -2275,9 +2311,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         startToolPreview,
         openTerminalTab,
         setWorkMode,
-        openChatTerminal,
-        setChatActivePane,
-        closeChatPane,
+        openWorkTerminal,
+        setWorkActivePane,
+        closeWorkPane,
+        setCurrentConversationId,
       }}
     >
       {children}

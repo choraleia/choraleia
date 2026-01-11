@@ -41,6 +41,7 @@ type ChatService struct {
 	db               *gorm.DB
 	modelService     *ModelService
 	workspaceService *WorkspaceService
+	assetService     *AssetService
 	toolLoader       ToolLoader
 	browserService   *BrowserService
 	logger           *slog.Logger
@@ -58,6 +59,16 @@ type StreamSession struct {
 	LastEventID    int64
 	StartedAt      time.Time
 	mu             sync.Mutex
+
+	// History for reconnection - stores chunks for replay
+	EventHistory   []*StreamEvent // Chunks for replay on reconnect
+	MaxHistorySize int            // Max events to keep in history
+
+	// Subscriber management for continue/reconnect
+	subscribers   map[chan *models.ChatCompletionChunk]struct{}
+	subscribersMu sync.RWMutex
+	done          chan struct{} // Closed when streaming is complete
+	Model         string        // Model ID for chunks
 }
 
 // StreamEvent represents a streaming event
@@ -86,6 +97,11 @@ func (s *ChatService) SetToolLoader(loader ToolLoader) {
 // SetBrowserService sets the browser service for context injection
 func (s *ChatService) SetBrowserService(browserService *BrowserService) {
 	s.browserService = browserService
+}
+
+// SetAssetService sets the asset service for asset info lookup
+func (s *ChatService) SetAssetService(assetService *AssetService) {
+	s.assetService = assetService
 }
 
 // AutoMigrate creates database tables
@@ -383,13 +399,30 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 		MessageID:      assistantMsg.ID,
 		Cancel:         cancel,
 		StartedAt:      time.Now(),
+		MaxHistorySize: 1000, // Keep last 1000 chunks for replay
+		EventHistory:   make([]*StreamEvent, 0, 1000),
+		subscribers:    make(map[chan *models.ChatCompletionChunk]struct{}),
+		done:           make(chan struct{}),
+		Model:          req.Model,
 	}
 	s.activeStreams.Store(conv.ID, session)
 
 	// Run streaming in goroutine
 	go func() {
 		defer close(chunks)
-		defer s.activeStreams.Delete(conv.ID)
+		defer func() {
+			// Close done channel to signal all subscribers
+			close(session.done)
+			// Close all subscriber channels
+			session.subscribersMu.Lock()
+			for ch := range session.subscribers {
+				close(ch)
+			}
+			session.subscribers = nil
+			session.subscribersMu.Unlock()
+			// Remove from active streams
+			s.activeStreams.Delete(conv.ID)
+		}()
 		defer cancel()
 
 		// runStreamingAgent returns the final message being processed
@@ -418,7 +451,7 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 			s.SaveMessage(targetMsg)
 
 			// Send error content chunk so it displays in the chat
-			chunks <- &models.ChatCompletionChunk{
+			errorChunk := &models.ChatCompletionChunk{
 				ID:             targetMsg.ID,
 				Object:         "chat.completion.chunk",
 				Created:        time.Now().Unix(),
@@ -433,9 +466,11 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 					},
 				},
 			}
+			s.updateStreamBuffer(conv.ID, errorChunk)
+			chunks <- errorChunk
 
 			// Send finish chunk with stop reason (OpenAI compatible)
-			chunks <- &models.ChatCompletionChunk{
+			finishChunk := &models.ChatCompletionChunk{
 				ID:             targetMsg.ID,
 				Object:         "chat.completion.chunk",
 				Created:        time.Now().Unix(),
@@ -449,6 +484,8 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 					},
 				},
 			}
+			s.updateStreamBuffer(conv.ID, finishChunk)
+			chunks <- finishChunk
 		}
 
 		// Update conversation timestamp
@@ -652,6 +689,153 @@ func (s *ChatService) IsStreaming(conversationID string) bool {
 	return ok
 }
 
+// StreamState represents the current state of a streaming session
+type StreamState struct {
+	IsStreaming    bool       `json:"is_streaming"`
+	ConversationID string     `json:"conversation_id"`
+	MessageID      string     `json:"message_id,omitempty"`
+	LastEventID    int64      `json:"last_event_id"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+}
+
+// GetStreamState returns the current streaming state for reconnection
+func (s *ChatService) GetStreamState(conversationID string) *StreamState {
+	state := &StreamState{
+		ConversationID: conversationID,
+		IsStreaming:    false,
+	}
+
+	session, ok := s.activeStreams.Load(conversationID)
+	if !ok {
+		return state
+	}
+
+	sess := session.(*StreamSession)
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	state.IsStreaming = true
+	state.MessageID = sess.MessageID
+	state.LastEventID = sess.LastEventID
+	state.StartedAt = &sess.StartedAt
+
+	return state
+}
+
+// GetStreamEvents returns buffered events since a given event ID for reconnection
+func (s *ChatService) GetStreamEvents(conversationID string, sinceEventID int64) []*StreamEvent {
+	session, ok := s.activeStreams.Load(conversationID)
+	if !ok {
+		return nil
+	}
+
+	sess := session.(*StreamSession)
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+
+	// Find events since the given ID
+	var events []*StreamEvent
+	for _, evt := range sess.EventHistory {
+		if evt.ID > sinceEventID {
+			events = append(events, evt)
+		}
+	}
+	return events
+}
+
+// updateStreamBuffer appends a chunk to the session history for replay on reconnection
+func (s *ChatService) updateStreamBuffer(conversationID string, chunk *models.ChatCompletionChunk) {
+	session, ok := s.activeStreams.Load(conversationID)
+	if !ok {
+		return
+	}
+
+	sess := session.(*StreamSession)
+	sess.mu.Lock()
+
+	// Update message ID if needed
+	if chunk.ID != "" && sess.MessageID == "" {
+		sess.MessageID = chunk.ID
+	}
+
+	// Increment event ID and add chunk to history
+	sess.LastEventID++
+	event := &StreamEvent{
+		ID:   sess.LastEventID,
+		Type: "chunk",
+		Data: chunk,
+	}
+
+	// Add to history with size limit
+	if len(sess.EventHistory) >= sess.MaxHistorySize {
+		sess.EventHistory = sess.EventHistory[1:]
+	}
+	sess.EventHistory = append(sess.EventHistory, event)
+
+	sess.mu.Unlock()
+
+	// Broadcast to all subscribers (non-blocking)
+	sess.subscribersMu.RLock()
+	for ch := range sess.subscribers {
+		select {
+		case ch <- chunk:
+		default:
+			// Skip if subscriber is slow
+		}
+	}
+	sess.subscribersMu.RUnlock()
+}
+
+// SubscribeToStream subscribes to an active stream and returns a channel for chunks
+// Returns nil if no active stream exists
+func (s *ChatService) SubscribeToStream(conversationID string) (<-chan *models.ChatCompletionChunk, func()) {
+	session, ok := s.activeStreams.Load(conversationID)
+	if !ok {
+		return nil, nil
+	}
+
+	sess := session.(*StreamSession)
+
+	// Check if already done
+	select {
+	case <-sess.done:
+		return nil, nil
+	default:
+	}
+
+	// Create subscriber channel
+	ch := make(chan *models.ChatCompletionChunk, 100)
+
+	sess.subscribersMu.Lock()
+	if sess.subscribers == nil {
+		sess.subscribersMu.Unlock()
+		return nil, nil
+	}
+	sess.subscribers[ch] = struct{}{}
+	sess.subscribersMu.Unlock()
+
+	// Return unsubscribe function
+	unsubscribe := func() {
+		sess.subscribersMu.Lock()
+		delete(sess.subscribers, ch)
+		sess.subscribersMu.Unlock()
+	}
+
+	return ch, unsubscribe
+}
+
+// GetStreamDoneChannel returns a channel that's closed when the stream is done
+func (s *ChatService) GetStreamDoneChannel(conversationID string) <-chan struct{} {
+	session, ok := s.activeStreams.Load(conversationID)
+	if !ok {
+		// Return already closed channel
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	return session.(*StreamSession).done
+}
+
 // ========== Internal helpers ==========
 
 func (s *ChatService) getOrCreateConversation(req *models.ChatCompletionRequest) (*models.Conversation, error) {
@@ -830,7 +1014,7 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 }
 
 func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string, conversationID string) ([]tool.InvokableTool, error) {
-	s.logger.Info("loadWorkspaceTools called", "workspaceID", workspaceID, "conversationID", conversationID, "hasToolLoader", s.toolLoader != nil)
+	s.logger.Debug("loadWorkspaceTools called", "workspaceID", workspaceID, "conversationID", conversationID, "hasToolLoader", s.toolLoader != nil)
 
 	if workspaceID == "" {
 		s.logger.Warn("workspaceID is empty, skipping tool loading")
@@ -847,7 +1031,7 @@ func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string
 		return nil, err
 	}
 
-	s.logger.Info("Got workspace for tool loading",
+	s.logger.Debug("Got workspace for tool loading",
 		"workspaceID", workspaceID,
 		"workspaceName", workspace.Name,
 		"toolsCount", len(workspace.Tools))
@@ -863,7 +1047,7 @@ func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string
 		return nil, err
 	}
 
-	s.logger.Info("Workspace tools loaded", "workspaceID", workspaceID, "toolCount", len(tools))
+	s.logger.Debug("Workspace tools loaded", "workspaceID", workspaceID, "toolCount", len(tools))
 	return tools, nil
 }
 
@@ -993,6 +1177,12 @@ When using tools:
 
 Be professional, helpful, and concise in your responses.`
 
+	// Add workspace asset context
+	assetContext := s.getWorkspaceAssetContext(workspaceID)
+	if assetContext != "" {
+		basePrompt += "\n\n" + assetContext
+	}
+
 	// Add browser context if there are active browsers
 	browserContext := s.getBrowserContext(conversationID)
 	if browserContext != "" {
@@ -1000,6 +1190,73 @@ Be professional, helpful, and concise in your responses.`
 	}
 
 	return basePrompt
+}
+
+// getWorkspaceAssetContext returns the asset information for the workspace
+func (s *ChatService) getWorkspaceAssetContext(workspaceID string) string {
+	if s.workspaceService == nil || s.assetService == nil || workspaceID == "" {
+		return ""
+	}
+
+	workspace, err := s.workspaceService.GetWorkspace(workspaceID)
+	if err != nil || workspace == nil {
+		return ""
+	}
+
+	if len(workspace.Assets) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("=== WORKSPACE CONFIGURED ASSETS ===\n")
+	sb.WriteString("The following assets are configured for this workspace. You can use these assets to help complete user requests.\n\n")
+
+	for i, assetRef := range workspace.Assets {
+		sb.WriteString(fmt.Sprintf("Asset %d:\n", i+1))
+		sb.WriteString(fmt.Sprintf("  asset_id: %s\n", assetRef.AssetID))
+		sb.WriteString(fmt.Sprintf("  name: %s\n", assetRef.AssetName))
+		sb.WriteString(fmt.Sprintf("  type: %s\n", assetRef.AssetType))
+
+		// Add AI hint if provided
+		if assetRef.AIHint != nil && *assetRef.AIHint != "" {
+			sb.WriteString(fmt.Sprintf("  hint: %s\n", *assetRef.AIHint))
+		}
+
+		// Try to get additional asset details
+		if asset, err := s.assetService.GetAsset(assetRef.AssetID); err == nil && asset != nil {
+			// Add type-specific information
+			switch asset.Type {
+			case models.AssetTypeSSH:
+				if cfg, ok := asset.Config["host"].(string); ok && cfg != "" {
+					sb.WriteString(fmt.Sprintf("  host: %s\n", cfg))
+				}
+				if port, ok := asset.Config["port"].(float64); ok {
+					sb.WriteString(fmt.Sprintf("  port: %d\n", int(port)))
+				}
+				if user, ok := asset.Config["username"].(string); ok && user != "" {
+					sb.WriteString(fmt.Sprintf("  username: %s\n", user))
+				}
+			case models.AssetTypeDockerHost:
+				if connType, ok := asset.Config["connection_type"].(string); ok {
+					sb.WriteString(fmt.Sprintf("  connection_type: %s\n", connType))
+				}
+			case models.AssetTypeLocal:
+				if shell, ok := asset.Config["shell"].(string); ok && shell != "" {
+					sb.WriteString(fmt.Sprintf("  shell: %s\n", shell))
+				}
+				if workDir, ok := asset.Config["working_dir"].(string); ok && workDir != "" {
+					sb.WriteString(fmt.Sprintf("  working_dir: %s\n", workDir))
+				}
+			}
+
+			if asset.Description != "" {
+				sb.WriteString(fmt.Sprintf("  description: %s\n", asset.Description))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
 }
 
 // getBrowserContext returns the current browser status for the conversation
@@ -1131,7 +1388,7 @@ func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*s
 }
 
 func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCompletionRequest, conv *models.Conversation, assistantMsg *models.Message, chunks chan<- *models.ChatCompletionChunk) (*models.Message, error) {
-	s.logger.Info("runStreamingAgent started",
+	s.logger.Debug("runStreamingAgent started",
 		"workspaceID", req.WorkspaceID,
 		"conversationID", conv.ID,
 		"modelID", req.Model)
@@ -1142,7 +1399,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		s.logger.Warn("Failed to load workspace tools", "error", err)
 	}
 
-	s.logger.Info("After loadWorkspaceTools",
+	s.logger.Debug("After loadWorkspaceTools",
 		"toolCount", len(workspaceTools),
 		"hasTools", len(workspaceTools) > 0)
 
@@ -1189,8 +1446,14 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		return assistantMsg, fmt.Errorf("failed to create agent: %w", err)
 	}
 
+	// Helper to send chunk and update buffer
+	sendChunk := func(chunk *models.ChatCompletionChunk) {
+		s.updateStreamBuffer(conv.ID, chunk)
+		chunks <- chunk
+	}
+
 	// Send initial chunk with role
-	chunks <- &models.ChatCompletionChunk{
+	sendChunk(&models.ChatCompletionChunk{
 		ID:             assistantMsg.ID,
 		Object:         "chat.completion.chunk",
 		Created:        time.Now().Unix(),
@@ -1204,7 +1467,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				},
 			},
 		},
-	}
+	})
 
 	// Run agent with streaming
 	iter := agent.Run(ctx, &adk.AgentInput{Messages: history, EnableStreaming: true})
@@ -1240,7 +1503,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				continue
 			}
 
-			s.logger.Info("Received tool result", "toolCallID", fullMsg.ToolCallID, "toolName", fullMsg.ToolName)
+			s.logger.Debug("Received tool result", "toolCallID", fullMsg.ToolCallID, "toolName", fullMsg.ToolName)
 
 			// Get current round index from the assistant message
 			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
@@ -1250,7 +1513,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			s.SaveMessage(currentAssistantMsg)
 
 			// Send tool result chunk to frontend
-			chunks <- &models.ChatCompletionChunk{
+			sendChunk(&models.ChatCompletionChunk{
 				ID:             currentAssistantMsg.ID,
 				Object:         "chat.completion.chunk",
 				Created:        time.Now().Unix(),
@@ -1266,7 +1529,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 						},
 					},
 				},
-			}
+			})
 
 			// Continue to next iteration - more content may follow
 		} else if msgRole == schema.Assistant {
@@ -1287,7 +1550,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 					// Send content and reasoning deltas to client
 					if chunk.Content != "" {
-						chunks <- &models.ChatCompletionChunk{
+						sendChunk(&models.ChatCompletionChunk{
 							ID:             currentAssistantMsg.ID,
 							Object:         "chat.completion.chunk",
 							Created:        time.Now().Unix(),
@@ -1301,10 +1564,10 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 									},
 								},
 							},
-						}
+						})
 					}
 					if chunk.ReasoningContent != "" {
-						chunks <- &models.ChatCompletionChunk{
+						sendChunk(&models.ChatCompletionChunk{
 							ID:             currentAssistantMsg.ID,
 							Object:         "chat.completion.chunk",
 							Created:        time.Now().Unix(),
@@ -1318,7 +1581,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 									},
 								},
 							},
-						}
+						})
 					}
 				}
 			}
@@ -1349,7 +1612,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 					// Send tool call chunk to client with index
 					tcIndex := i
-					chunks <- &models.ChatCompletionChunk{
+					sendChunk(&models.ChatCompletionChunk{
 						ID:             currentAssistantMsg.ID,
 						Object:         "chat.completion.chunk",
 						Created:        time.Now().Unix(),
@@ -1371,7 +1634,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 								},
 							},
 						},
-					}
+					})
 				}
 				// Save current state - tool execution will happen in next iteration
 				s.SaveMessage(currentAssistantMsg)
@@ -1392,7 +1655,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	}
 
 	// Send final chunk
-	chunks <- &models.ChatCompletionChunk{
+	sendChunk(&models.ChatCompletionChunk{
 		ID:             currentAssistantMsg.ID,
 		Object:         "chat.completion.chunk",
 		Created:        time.Now().Unix(),
@@ -1405,7 +1668,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				FinishReason: models.FinishReasonStop,
 			},
 		},
-	}
+	})
 
 	return currentAssistantMsg, nil
 }

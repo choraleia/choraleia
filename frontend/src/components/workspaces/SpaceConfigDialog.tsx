@@ -70,6 +70,15 @@ import {
 } from "../../state/workspaces";
 import { listAssets, AssetLike, AssetType } from "../assets/api/assets";
 import { listBuiltinTools, BuiltinToolDefinition } from "../../api/builtin-tools";
+import { getApiBase } from "../../api/base";
+
+// Vision model info for selection
+interface VisionModel {
+  id: string;
+  name: string;
+  model: string;
+  provider: string;
+}
 
 interface SpaceConfigDialogProps {
   open: boolean;
@@ -761,12 +770,14 @@ function ToolConfigItem({
   onToggle,
   onUpdate,
   onRemove,
+  visionModels = [],
 }: {
   tool: ToolConfig;
   expanded: boolean;
   onToggle: () => void;
   onUpdate: (patch: Partial<ToolConfig>) => void;
   onRemove: () => void;
+  visionModels?: VisionModel[];
 }) {
   return (
     <Box
@@ -1202,6 +1213,51 @@ function ToolConfigItem({
             </>
           )}
 
+          {/* Builtin tool config - vision model selector only for browser_get_visual_state */}
+          {tool.type === "builtin" && tool.builtin?.toolId === "browser_get_visual_state" && (
+            <Box>
+              <FieldLabel label="Vision Model" required />
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 0.5 }}>
+                Select a vision model for the analyze_image feature
+              </Typography>
+              <FormControl size="small" fullWidth error={!tool.builtin?.options?.vision_model_id}>
+                <Select
+                  value={tool.builtin?.options?.vision_model_id || ""}
+                  displayEmpty
+                  onChange={(e) =>
+                    onUpdate({
+                      builtin: {
+                        ...tool.builtin,
+                        toolId: tool.builtin?.toolId || "",
+                        options: {
+                          ...tool.builtin?.options,
+                          vision_model_id: e.target.value || undefined,
+                        },
+                      },
+                    })
+                  }
+                >
+                  <MenuItem value="" disabled>
+                    <em>Select a vision model...</em>
+                  </MenuItem>
+                  {visionModels.map((m) => (
+                    <MenuItem key={m.id} value={m.id}>
+                      {m.name} ({m.provider})
+                    </MenuItem>
+                  ))}
+                </Select>
+                {!tool.builtin?.options?.vision_model_id && (
+                  <FormHelperText>Vision model is required for this tool</FormHelperText>
+                )}
+              </FormControl>
+              {visionModels.length === 0 && (
+                <Typography variant="caption" color="warning.main" sx={{ mt: 0.5, display: "block" }}>
+                  No vision models found. Add a model with task_types=image_understanding.
+                </Typography>
+              )}
+            </Box>
+          )}
+
           {/* AI Hint */}
           <Box>
             <FieldLabel label="AI Hint" />
@@ -1315,7 +1371,11 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   const [builtinTools, setBuiltinTools] = useState<BuiltinToolDefinition[]>([]);
   const [loadingBuiltinTools, setLoadingBuiltinTools] = useState(false);
   const [selectedBuiltinTools, setSelectedBuiltinTools] = useState<Set<string>>(new Set());
-  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["workspace", "asset", "database", "transfer"]));
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set()); // Default: all collapsed
+
+  // Vision models for browser_get_visual_state tool
+  const [visionModels, setVisionModels] = useState<VisionModel[]>([]);
+  const [loadingVisionModels, setLoadingVisionModels] = useState(false);
 
 
   // Asset type icons
@@ -1364,6 +1424,22 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
         .finally(() => setLoadingBuiltinTools(false));
     }
   }, [open, tab, builtinTools.length, loadingBuiltinTools]);
+
+  // Fetch vision models for browser_get_visual_state tool configuration
+  useEffect(() => {
+    if (open && tab === 2 && visionModels.length === 0 && !loadingVisionModels) {
+      setLoadingVisionModels(true);
+      fetch(`${getApiBase()}/api/models?task_types=image_understanding`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.code === 200 && Array.isArray(data.data)) {
+            setVisionModels(data.data);
+          }
+        })
+        .catch((err) => console.error("Failed to fetch vision models:", err))
+        .finally(() => setLoadingVisionModels(false));
+    }
+  }, [open, tab, visionModels.length, loadingVisionModels]);
 
 
   // Add asset to workspace
@@ -1466,6 +1542,96 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
       ...prev,
       tools: prev.tools.map((t) => (t.id === toolId ? { ...t, ...patch } : t)),
     }));
+  };
+
+  // Group tools by type (level 1) and category (level 2) for display
+  const groupedTools = useMemo(() => {
+    // Level 1: group by tool type
+    const typeGroups: Record<string, {
+      label: string;
+      categories: Record<string, { label: string; tools: ToolConfig[] }>;
+    }> = {};
+
+    for (const tool of state.tools) {
+      const toolType = tool.type;
+      const typeLabel = toolTypeLabels[toolType] || toolType;
+
+      if (!typeGroups[toolType]) {
+        typeGroups[toolType] = { label: typeLabel, categories: {} };
+      }
+
+      // Level 2: for builtin tools, group by category; for others, use "default"
+      let categoryKey = "default";
+      let categoryLabel = "";
+
+      if (toolType === "builtin" && tool.builtin?.toolId) {
+        const builtinDef = builtinTools.find((b) => b.id === tool.builtin?.toolId);
+        categoryKey = builtinDef?.category || "other";
+        const categoryLabels: Record<string, string> = {
+          workspace: "Workspace Tools",
+          asset: "Remote Asset Tools",
+          database: "Database Tools",
+          transfer: "Transfer Tools",
+          browser: "Browser Tools",
+          other: "Other Tools",
+        };
+        categoryLabel = categoryLabels[categoryKey] || categoryKey;
+      }
+
+      if (!typeGroups[toolType].categories[categoryKey]) {
+        typeGroups[toolType].categories[categoryKey] = { label: categoryLabel, tools: [] };
+      }
+      typeGroups[toolType].categories[categoryKey].tools.push(tool);
+    }
+
+    // Convert to array and sort: builtin first, then alphabetically
+    const sortedTypes = Object.keys(typeGroups).sort((a, b) => {
+      if (a === "builtin") return -1;
+      if (b === "builtin") return 1;
+      return a.localeCompare(b);
+    });
+
+    return sortedTypes.map((type) => {
+      const group = typeGroups[type];
+      const sortedCategories = Object.keys(group.categories).sort();
+      return {
+        type,
+        label: group.label,
+        totalTools: Object.values(group.categories).reduce((sum, c) => sum + c.tools.length, 0),
+        categories: sortedCategories.map((cat) => ({
+          key: cat,
+          ...group.categories[cat],
+        })),
+      };
+    });
+  }, [state.tools, builtinTools]);
+
+  // State for expanded type groups and category groups (default: all collapsed)
+  const [expandedTypeGroups, setExpandedTypeGroups] = useState<Set<string>>(new Set());
+  const [expandedCategoryGroups, setExpandedCategoryGroups] = useState<Set<string>>(new Set());
+
+  const toggleTypeGroup = (type: string) => {
+    setExpandedTypeGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(type)) {
+        next.delete(type);
+      } else {
+        next.add(type);
+      }
+      return next;
+    });
+  };
+
+  const toggleCategoryGroup = (key: string) => {
+    setExpandedCategoryGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
   };
 
   const removeTool = (toolId: string) => {
@@ -1897,7 +2063,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   const tabs = ["General", "Assets", "Tools"];
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
       <DialogTitle sx={{ pb: 0 }}>Space Configuration</DialogTitle>
       <Tabs
         value={tab}
@@ -2499,24 +2665,137 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
         {/* Tools Tab */}
         {tab === 2 && (
           <Box display="flex" flexDirection="column" gap={2}>
-            {/* Configured Tools */}
+            {/* Configured Tools - grouped by type (level 1) and category (level 2) */}
             <FormSection title="Workspace Tools">
-              <Box display="flex" flexDirection="column" gap={1.5}>
+              <Box display="flex" flexDirection="column" gap={0.5}>
                 {state.tools.length === 0 && (
                   <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
                     No tools configured. Add MCP servers, APIs, or scripts to extend AI capabilities.
                   </Typography>
                 )}
-                {state.tools.map((tool) => (
-                  <ToolConfigItem
-                    key={tool.id}
-                    tool={tool}
-                    expanded={expandedToolId === tool.id}
-                    onToggle={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
-                    onUpdate={(patch) => updateTool(tool.id, patch)}
-                    onRemove={() => removeTool(tool.id)}
-                  />
-                ))}
+                {groupedTools.map((typeGroup) => {
+                  const isTypeExpanded = expandedTypeGroups.has(typeGroup.type);
+                  return (
+                    <Box
+                      key={typeGroup.type}
+                      sx={{
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 1,
+                        overflow: "hidden",
+                      }}
+                    >
+                      {/* Level 1: Type Header */}
+                      <Box
+                        display="flex"
+                        alignItems="center"
+                        gap={1}
+                        px={1.5}
+                        py={1}
+                        sx={{
+                          bgcolor: "action.hover",
+                          cursor: "pointer",
+                          "&:hover": { bgcolor: "action.selected" },
+                        }}
+                        onClick={() => toggleTypeGroup(typeGroup.type)}
+                      >
+                        {isTypeExpanded ? (
+                          <ExpandLessIcon fontSize="small" />
+                        ) : (
+                          <ExpandMoreIcon fontSize="small" />
+                        )}
+                        <Typography variant="body2" fontWeight={600} flex={1}>
+                          {typeGroup.label}
+                        </Typography>
+                        <Chip
+                          label={typeGroup.totalTools}
+                          size="small"
+                          sx={{ height: 20, fontSize: 11 }}
+                        />
+                      </Box>
+
+                      {/* Level 1 Content */}
+                      <Collapse in={isTypeExpanded}>
+                        <Box display="flex" flexDirection="column">
+                          {typeGroup.categories.map((category) => {
+                            const categoryKey = `${typeGroup.type}-${category.key}`;
+                            const isCategoryExpanded = expandedCategoryGroups.has(categoryKey);
+                            const hasCategory = category.label !== "";
+
+                            // If no category label (non-builtin tools), show tools directly
+                            if (!hasCategory) {
+                              return (
+                                <Box key={category.key} p={1} display="flex" flexDirection="column" gap={1}>
+                                  {category.tools.map((tool) => (
+                                    <ToolConfigItem
+                                      key={tool.id}
+                                      tool={tool}
+                                      expanded={expandedToolId === tool.id}
+                                      onToggle={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
+                                      onUpdate={(patch) => updateTool(tool.id, patch)}
+                                      onRemove={() => removeTool(tool.id)}
+                                      visionModels={visionModels}
+                                    />
+                                  ))}
+                                </Box>
+                              );
+                            }
+
+                            // Level 2: Category with collapsible header
+                            return (
+                              <Box key={category.key}>
+                                {/* Level 2: Category Header */}
+                                <Box
+                                  display="flex"
+                                  alignItems="center"
+                                  gap={1}
+                                  px={2}
+                                  py={0.75}
+                                  sx={{
+                                    borderTop: "1px solid",
+                                    borderColor: "divider",
+                                    cursor: "pointer",
+                                    "&:hover": { bgcolor: "action.hover" },
+                                  }}
+                                  onClick={() => toggleCategoryGroup(categoryKey)}
+                                >
+                                  {isCategoryExpanded ? (
+                                    <ExpandLessIcon fontSize="small" sx={{ fontSize: 16 }} />
+                                  ) : (
+                                    <ExpandMoreIcon fontSize="small" sx={{ fontSize: 16 }} />
+                                  )}
+                                  <Typography variant="body2" fontSize={13} flex={1}>
+                                    {category.label}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {category.tools.length}
+                                  </Typography>
+                                </Box>
+
+                                {/* Level 2 Content: Tools */}
+                                <Collapse in={isCategoryExpanded}>
+                                  <Box p={1} pl={2} display="flex" flexDirection="column" gap={1}>
+                                    {category.tools.map((tool) => (
+                                      <ToolConfigItem
+                                        key={tool.id}
+                                        tool={tool}
+                                        expanded={expandedToolId === tool.id}
+                                        onToggle={() => setExpandedToolId(expandedToolId === tool.id ? null : tool.id)}
+                                        onUpdate={(patch) => updateTool(tool.id, patch)}
+                                        onRemove={() => removeTool(tool.id)}
+                                        visionModels={visionModels}
+                                      />
+                                    ))}
+                                  </Box>
+                                </Collapse>
+                              </Box>
+                            );
+                          })}
+                        </Box>
+                      </Collapse>
+                    </Box>
+                  );
+                })}
               </Box>
             </FormSection>
 
@@ -2667,15 +2946,30 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                           const categoryTools = builtinTools.filter((t) => t.category === category);
                           if (categoryTools.length === 0) return null;
 
-                          const addedCount = categoryTools.filter((t) =>
+                          // Count tools already added to workspace
+                          const addedTools = categoryTools.filter((t) =>
                             state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id)
-                          ).length;
+                          );
+                          const addedCount = addedTools.length;
+
+                          // Available tools = not yet added
                           const availableTools = categoryTools.filter((t) =>
                             !state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id)
                           );
+
+                          // Selected = pending selection (not yet added but checked)
                           const selectedInCategory = availableTools.filter((t) => selectedBuiltinTools.has(t.id)).length;
-                          const allSelectedInCategory = availableTools.length > 0 && selectedInCategory === availableTools.length;
-                          const someSelectedInCategory = selectedInCategory > 0 && selectedInCategory < availableTools.length;
+
+                          // All tools in category are either added OR selected
+                          const allChecked = categoryTools.every((t) =>
+                            state.tools.some((st) => st.type === "builtin" && st.builtin?.toolId === t.id) ||
+                            selectedBuiltinTools.has(t.id)
+                          );
+
+                          // Some (but not all) tools are added or selected
+                          const totalCheckedOrAdded = addedCount + selectedInCategory;
+                          const someChecked = totalCheckedOrAdded > 0 && totalCheckedOrAdded < categoryTools.length;
+
                           const isExpanded = expandedCategories.has(category);
 
                           return (
@@ -2698,8 +2992,8 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                               >
                                 <Checkbox
                                   size="small"
-                                  checked={allSelectedInCategory}
-                                  indeterminate={someSelectedInCategory}
+                                  checked={allChecked}
+                                  indeterminate={someChecked}
                                   disabled={availableTools.length === 0}
                                   onClick={(e) => e.stopPropagation()}
                                   onChange={(e) => toggleCategorySelection(category, e.target.checked)}

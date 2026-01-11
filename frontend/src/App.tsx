@@ -37,7 +37,6 @@ const AppContent: React.FC = () => {
     "assets",
   );
   const [assetsVisible, setAssetsVisible] = useState<boolean>(true);
-  const [spacesExplorerVisible, setSpacesExplorerVisible] = useState<boolean>(true);
   const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   const [tunnelManagerOpen, setTunnelManagerOpen] = useState(false);
   // Preserve app statistics
@@ -107,12 +106,7 @@ const AppContent: React.FC = () => {
   };
 
   const handleSpacesClick = () => {
-    if (selectedMenu !== "spaces") {
-      setSelectedMenu("spaces");
-      setSpacesExplorerVisible(true);
-      return;
-    }
-    setSpacesExplorerVisible((prev) => !prev);
+    setSelectedMenu("spaces");
   };
 
   return (
@@ -155,20 +149,17 @@ const AppContent: React.FC = () => {
             onClick={handleSpacesClick}
             sx={(theme) => {
               const spacesActive = selectedMenu === "spaces";
-              const shown = spacesActive && spacesExplorerVisible;
               return {
                 color: spacesActive
-                  ? shown
-                    ? theme.palette.primary.main
-                    : theme.palette.text.secondary
+                  ? theme.palette.primary.main
                   : theme.palette.text.secondary,
-                bgcolor: shown ? theme.palette.action.selected : "transparent",
+                bgcolor: spacesActive ? theme.palette.action.selected : "transparent",
                 borderRadius: 6,
                 transition: "background-color 0.15s, color 0.15s",
                 "&:hover": { bgcolor: theme.palette.action.hover },
               };
             }}
-            title={spacesExplorerVisible && selectedMenu === "spaces" ? "Hide Explorer" : "Show Spaces"}
+            title="Workspaces"
           >
             <SpaceDashboardIcon fontSize="small" />
           </IconButton>
@@ -211,7 +202,7 @@ const AppContent: React.FC = () => {
               flexDirection="column"
               minHeight={0}
             >
-              <SpacesView explorerVisible={spacesExplorerVisible} />
+              <SpacesView />
             </Box>
             <Box
               display={selectedMenu === "settings" ? "flex" : "none"}

@@ -140,12 +140,18 @@ type ViewportConfig struct {
 	Height int `json:"height"`
 }
 
+// BuiltinToolOptions contains tool-specific options for builtin tools
+type BuiltinToolOptions struct {
+	VisionModelID string `json:"vision_model_id,omitempty"` // Model ID for vision analysis (only for browser_get_visual_state)
+}
+
 // BuiltinConfig represents built-in tool configuration
 type BuiltinConfig struct {
-	ToolID        string                 `json:"tool_id"`                   // Built-in tool ID (e.g., "mysql_query", "workspace_exec_command")
-	SystemToolRef *string                `json:"system_tool_ref,omitempty"` // Reference to a SystemTool ID (for reusing system-level config)
-	Options       map[string]interface{} `json:"options,omitempty"`         // Tool-specific options
-	SafeMode      bool                   `json:"safe_mode,omitempty"`       // If true, restrict to read-only operations
+	ToolID        string              `json:"tool_id"`                   // Built-in tool ID (e.g., "mysql_query", "workspace_exec_command")
+	ToolIDs       []string            `json:"tool_ids,omitempty"`        // Multiple tool IDs
+	SystemToolRef *string             `json:"system_tool_ref,omitempty"` // Reference to a SystemTool ID (for reusing system-level config)
+	Options       *BuiltinToolOptions `json:"options,omitempty"`         // Tool-specific options
+	SafeMode      bool                `json:"safe_mode,omitempty"`       // If true, restrict to read-only operations
 }
 
 // ToolWithStatus represents a tool with its runtime status

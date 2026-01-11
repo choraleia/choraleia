@@ -458,7 +458,7 @@ func (s *AIAgentService) LogMessages(key string, msgs []*schema.Message) {
 	if err != nil {
 		s.logger.Error("Failed to marshal messages for log", "error", err)
 	}
-	s.logger.Info("Chat messages", "key", key, "messages", string(text))
+	s.logger.Debug("Chat messages", "key", key, "messages", string(text))
 }
 
 // sanitizeMessages cleans up history messages to ensure API compatibility

@@ -138,6 +138,8 @@ type CreateRuntimeRequest struct {
 // CreateAssetRefRequest represents asset reference for creation
 type CreateAssetRefRequest struct {
 	AssetID      string         `json:"asset_id"`
+	AssetType    string         `json:"asset_type,omitempty"`
+	AssetName    string         `json:"asset_name,omitempty"`
 	AIHint       *string        `json:"ai_hint,omitempty"`
 	Restrictions models.JSONMap `json:"restrictions,omitempty"`
 }
@@ -228,6 +230,8 @@ func (s *WorkspaceService) Create(ctx context.Context, req *CreateWorkspaceReque
 				ID:           uuid.New().String(),
 				WorkspaceID:  workspace.ID,
 				AssetID:      assetReq.AssetID,
+				AssetType:    assetReq.AssetType,
+				AssetName:    assetReq.AssetName,
 				AIHint:       assetReq.AIHint,
 				Restrictions: assetReq.Restrictions,
 				CreatedAt:    time.Now(),
@@ -430,20 +434,12 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *UpdateWor
 			}
 			// Create new assets
 			for _, assetReq := range req.Assets {
-				// Get asset info from asset service
-				var assetType, assetName string
-				var asset models.Asset
-				if err := tx.Where("id = ?", assetReq.AssetID).First(&asset).Error; err == nil {
-					assetType = string(asset.Type)
-					assetName = asset.Name
-				}
-
 				assetRef := &models.WorkspaceAssetRef{
 					ID:           uuid.New().String(),
 					WorkspaceID:  id,
 					AssetID:      assetReq.AssetID,
-					AssetType:    assetType,
-					AssetName:    assetName,
+					AssetType:    assetReq.AssetType,
+					AssetName:    assetReq.AssetName,
 					AIHint:       assetReq.AIHint,
 					Restrictions: assetReq.Restrictions,
 					CreatedAt:    time.Now(),
