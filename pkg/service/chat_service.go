@@ -1177,6 +1177,12 @@ When using tools:
 
 Be professional, helpful, and concise in your responses.`
 
+	// Add workspace info context
+	workspaceContext := s.getWorkspaceInfoContext(workspaceID)
+	if workspaceContext != "" {
+		basePrompt += "\n\n" + workspaceContext
+	}
+
 	// Add workspace asset context
 	assetContext := s.getWorkspaceAssetContext(workspaceID)
 	if assetContext != "" {
@@ -1184,12 +1190,54 @@ Be professional, helpful, and concise in your responses.`
 	}
 
 	// Add browser context if there are active browsers
-	browserContext := s.getBrowserContext(conversationID)
-	if browserContext != "" {
-		basePrompt += "\n\n" + browserContext
-	}
+	//browserContext := s.getBrowserContext(conversationID)
+	//if browserContext != "" {
+	//	basePrompt += "\n\n" + browserContext
+	//}
 
 	return basePrompt
+}
+
+// getWorkspaceInfoContext returns the workspace basic information
+func (s *ChatService) getWorkspaceInfoContext(workspaceID string) string {
+	if s.workspaceService == nil || workspaceID == "" {
+		return ""
+	}
+
+	workspace, err := s.workspaceService.GetWorkspace(workspaceID)
+	if err != nil || workspace == nil {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("=== CURRENT WORKSPACE ===\n")
+	sb.WriteString(fmt.Sprintf("workspace_id: %s\n", workspace.ID))
+	sb.WriteString(fmt.Sprintf("name: %s\n", workspace.Name))
+
+	if workspace.Description != "" {
+		sb.WriteString(fmt.Sprintf("description: %s\n", workspace.Description))
+	}
+
+	sb.WriteString(fmt.Sprintf("status: %s\n", workspace.Status))
+
+	// Add runtime information
+	if workspace.Runtime != nil {
+		sb.WriteString(fmt.Sprintf("runtime_type: %s\n", workspace.Runtime.Type))
+
+		if workspace.Runtime.WorkDirPath != "" {
+			sb.WriteString(fmt.Sprintf("working_directory: %s\n", workspace.Runtime.WorkDirPath))
+		}
+
+		if workspace.Runtime.WorkDirContainerPath != nil && *workspace.Runtime.WorkDirContainerPath != "" {
+			sb.WriteString(fmt.Sprintf("container_working_directory: %s\n", *workspace.Runtime.WorkDirContainerPath))
+		}
+
+		if workspace.Runtime.ContainerName != nil && *workspace.Runtime.ContainerName != "" {
+			sb.WriteString(fmt.Sprintf("container_name: %s\n", *workspace.Runtime.ContainerName))
+		}
+	}
+
+	return sb.String()
 }
 
 // getWorkspaceAssetContext returns the asset information for the workspace

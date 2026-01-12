@@ -7,26 +7,15 @@ declare global {
   }
 }
 
+// Setup MonacoEnvironment before loader.config
+// Monaco min version uses workerMain.js for all workers
+window.MonacoEnvironment = {
+  getWorkerUrl: () => {
+    return `/monaco/vs/base/worker/workerMain.js`;
+  },
+};
+
 loader.config({ paths: { vs: "/monaco/vs" } });
 
-const workerPaths: Record<string, string> = {
-  json: "language/json/json.worker",
-  css: "language/css/css.worker",
-  scss: "language/css/css.worker",
-  less: "language/css/css.worker",
-  html: "language/html/html.worker",
-  handlebars: "language/html/html.worker",
-  razor: "language/html/html.worker",
-  typescript: "language/typescript/ts.worker",
-  javascript: "language/typescript/ts.worker",
-};
-
-const monacoEnv: Environment = window.MonacoEnvironment ?? {};
-monacoEnv.getWorkerUrl = (_moduleId, label) => {
-  const workerPath = workerPaths[label] || "editor/editor.worker";
-  const base = window.MonacoEnvironment?.baseUrl ?? "";
-  return `${base}/monaco/vs/${workerPath}.js`;
-};
-window.MonacoEnvironment = monacoEnv;
 
 export {};
