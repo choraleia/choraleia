@@ -9,6 +9,7 @@ import React, {
 import { v4 as uuid } from "uuid";
 import * as workspacesApi from "../api/workspaces";
 import { fsList, FSEntry, fsMkdir, fsTouch, fsRemove, fsRename, fsWrite, fsRead } from "../api/fs";
+import { cleanupTerminal } from "../components/assets/Terminal";
 
 export type FileNode = {
   id: string;
@@ -19,12 +20,6 @@ export type FileNode = {
   content?: string;
 };
 
-export type ChatMessage = {
-  id: string;
-  role: "user" | "assistant" | "system";
-  content: string;
-  timestamp: number;
-};
 
 // Runtime environment type
 export type RuntimeType = "local" | "docker-local" | "docker-remote";
@@ -419,15 +414,6 @@ export const PRESET_MCP_SERVERS = [
   },
 ] as const;
 
-// Built-in tools available
-export const BUILTIN_TOOLS = [
-  { id: "terminal", name: "Terminal", description: "Execute commands in workspace terminal" },
-  { id: "file-browser", name: "File Browser", description: "Browse and manage files" },
-  { id: "code-search", name: "Code Search", description: "Search code in workspace" },
-  { id: "git", name: "Git", description: "Git operations (status, diff, commit, etc.)" },
-  { id: "web-browser", name: "Web Browser", description: "Headless browser for web automation (local/Docker)" },
-] as const;
-
 // Tool configuration
 export type ToolConfig = {
   id: string;
@@ -471,22 +457,323 @@ export const sanitizeWorkspaceName = (name: string): string => {
     .slice(0, 63);
 };
 
-export type ChatSession = {
+// ============================================
+// Pane Tree Types - Splittable workspace layout
+// ============================================
+
+// Tab types that can be displayed in a Pane
+export type TabType = "terminal" | "editor" | "browser";
+
+// Tab item - content displayed in a Pane
+export interface TabItem {
   id: string;
+  type: TabType;
   title: string;
-  messages: ChatMessage[];
-  createdAt: number;
-  updatedAt: number;
-  activeTools: ToolSession[];
+  // Terminal specific
+  terminalKey?: string;
+  // Editor specific
+  filePath?: string;
+  content?: string;
+  language?: string;
+  dirty?: boolean;
+  // Browser specific
+  browserId?: string;
+  url?: string;
+}
+
+// Split direction for pane splitting
+export type SplitDirection = "left" | "right" | "up" | "down";
+
+// Unified Pane type - can be leaf (with tabs) or branch (with children)
+export interface Pane {
+  id: string;
+  // Branch node properties (when has children)
+  direction?: "horizontal" | "vertical";
+  children?: Pane[];
+  sizes?: number[];  // Percentage for each child, e.g., [50, 50]
+  // Leaf node properties (when has tabs)
+  tabs?: TabItem[];
+  activeTabId?: string;
+}
+
+// Type guards for Pane
+export const isLeafPane = (pane: Pane): boolean => Array.isArray(pane.tabs);
+export const isBranchPane = (pane: Pane): boolean => Array.isArray(pane.children);
+
+// Create an empty leaf pane
+export const createEmptyPane = (): Pane => ({
+  id: uuid(),
+  tabs: [],
+  activeTabId: "",
+});
+
+// Create a leaf pane with tabs
+export const createLeafPane = (tabs: TabItem[], activeTabId?: string): Pane => ({
+  id: uuid(),
+  tabs,
+  activeTabId: activeTabId || tabs[0]?.id || "",
+});
+
+// Create a branch pane
+export const createBranchPane = (
+  direction: "horizontal" | "vertical",
+  children: Pane[],
+  sizes?: number[]
+): Pane => ({
+  id: uuid(),
+  direction,
+  children,
+  sizes: sizes || children.map(() => 100 / children.length),
+});
+
+// ============================================
+// Pane Tree Operations
+// ============================================
+
+// Find a pane by ID in the tree
+export const findPaneById = (tree: Pane, id: string): Pane | null => {
+  if (tree.id === id) return tree;
+  if (tree.children) {
+    for (const child of tree.children) {
+      const found = findPaneById(child, id);
+      if (found) return found;
+    }
+  }
+  return null;
 };
 
-export type ChatPane = {
-  id: string;
-  kind: "chat";
-  title: string;
-  sessions: ChatSession[];
-  activeSessionId: string;
+// Find parent of a pane
+export const findParentPane = (tree: Pane, childId: string): Pane | null => {
+  if (tree.children) {
+    for (const child of tree.children) {
+      if (child.id === childId) return tree;
+      const found = findParentPane(child, childId);
+      if (found) return found;
+    }
+  }
+  return null;
 };
+
+// Get all leaf panes
+export const getAllLeafPanes = (tree: Pane): Pane[] => {
+  if (isLeafPane(tree)) return [tree];
+  if (tree.children) {
+    return tree.children.flatMap(getAllLeafPanes);
+  }
+  return [];
+};
+
+// Find the first leaf pane
+export const findFirstLeafPane = (tree: Pane): Pane | null => {
+  if (isLeafPane(tree)) return tree;
+  if (tree.children && tree.children.length > 0) {
+    return findFirstLeafPane(tree.children[0]);
+  }
+  return null;
+};
+
+// Deep clone a pane tree
+const clonePaneTree = (pane: Pane): Pane => {
+  const cloned: Pane = { ...pane };
+  if (pane.tabs) {
+    cloned.tabs = pane.tabs.map(tab => ({ ...tab }));
+  }
+  if (pane.children) {
+    cloned.children = pane.children.map(clonePaneTree);
+  }
+  if (pane.sizes) {
+    cloned.sizes = [...pane.sizes];
+  }
+  return cloned;
+};
+
+// Update a pane in the tree (immutable)
+export const updatePaneInTree = (
+  tree: Pane,
+  paneId: string,
+  updater: (pane: Pane) => Pane
+): Pane => {
+  if (tree.id === paneId) {
+    return updater(clonePaneTree(tree));
+  }
+  if (tree.children) {
+    return {
+      ...tree,
+      children: tree.children.map(child => updatePaneInTree(child, paneId, updater)),
+    };
+  }
+  return tree;
+};
+
+// Clean up tree: remove empty panes, collapse single-child branches
+export const cleanupPaneTree = (tree: Pane): Pane | null => {
+  // If leaf pane with no tabs, return null (to be removed)
+  if (isLeafPane(tree)) {
+    if (!tree.tabs || tree.tabs.length === 0) return null;
+    return tree;
+  }
+
+  // If branch pane, clean up children
+  if (tree.children) {
+    const cleanedChildren = tree.children
+      .map(cleanupPaneTree)
+      .filter((child): child is Pane => child !== null);
+
+    // No children left
+    if (cleanedChildren.length === 0) return null;
+
+    // Only one child, promote it
+    if (cleanedChildren.length === 1) return cleanedChildren[0];
+
+    // Recalculate sizes
+    const totalSize = tree.sizes?.reduce((a, b) => a + b, 0) || 100;
+    const newSizes = cleanedChildren.map(() => totalSize / cleanedChildren.length);
+
+    return {
+      ...tree,
+      children: cleanedChildren,
+      sizes: newSizes,
+    };
+  }
+
+  return tree;
+};
+
+// Split a pane: move a tab to a new pane in the specified direction
+export const splitPane = (
+  tree: Pane,
+  targetPaneId: string,
+  targetTabId: string,
+  direction: SplitDirection
+): Pane => {
+  const targetPane = findPaneById(tree, targetPaneId);
+  if (!targetPane || !isLeafPane(targetPane) || !targetPane.tabs) return tree;
+
+  const tabIndex = targetPane.tabs.findIndex(t => t.id === targetTabId);
+  if (tabIndex === -1) return tree;
+
+  const tabToMove = targetPane.tabs[tabIndex];
+  const isHorizontal = direction === "left" || direction === "right";
+  const insertFirst = direction === "left" || direction === "up";
+
+  // Create new pane with the moved tab
+  const newPane = createLeafPane([tabToMove], tabToMove.id);
+
+  // Update the tree
+  const updatedTree = updatePaneInTree(tree, targetPaneId, (pane) => {
+    const remainingTabs = pane.tabs!.filter(t => t.id !== targetTabId);
+    const newActiveTabId = pane.activeTabId === targetTabId
+      ? (remainingTabs[0]?.id || "")
+      : pane.activeTabId;
+
+    // If no tabs left in original pane, just return the new pane structure
+    if (remainingTabs.length === 0) {
+      return newPane;
+    }
+
+    // Create updated original pane
+    const updatedOriginalPane: Pane = {
+      ...pane,
+      tabs: remainingTabs,
+      activeTabId: newActiveTabId,
+    };
+
+    // Create branch with both panes
+    const children = insertFirst
+      ? [newPane, updatedOriginalPane]
+      : [updatedOriginalPane, newPane];
+
+    return createBranchPane(
+      isHorizontal ? "horizontal" : "vertical",
+      children,
+      [50, 50]
+    );
+  });
+
+  return updatedTree;
+};
+
+// Close a tab in a pane
+export const closeTabInPane = (
+  tree: Pane,
+  paneId: string,
+  tabId: string
+): Pane => {
+  const updatedTree = updatePaneInTree(tree, paneId, (pane) => {
+    if (!pane.tabs) return pane;
+    const remainingTabs = pane.tabs.filter(t => t.id !== tabId);
+    const newActiveTabId = pane.activeTabId === tabId
+      ? (remainingTabs[0]?.id || "")
+      : pane.activeTabId;
+    return {
+      ...pane,
+      tabs: remainingTabs,
+      activeTabId: newActiveTabId,
+    };
+  });
+
+  return cleanupPaneTree(updatedTree) || createEmptyPane();
+};
+
+// Add a tab to a pane
+export const addTabToPane = (
+  tree: Pane,
+  paneId: string,
+  tab: TabItem,
+  activate: boolean = true
+): Pane => {
+  return updatePaneInTree(tree, paneId, (pane) => {
+    if (!pane.tabs) return pane;
+    return {
+      ...pane,
+      tabs: [...pane.tabs, tab],
+      activeTabId: activate ? tab.id : pane.activeTabId,
+    };
+  });
+};
+
+// Set active tab in a pane
+export const setActiveTabInPane = (
+  tree: Pane,
+  paneId: string,
+  tabId: string
+): Pane => {
+  return updatePaneInTree(tree, paneId, (pane) => ({
+    ...pane,
+    activeTabId: tabId,
+  }));
+};
+
+// Update pane sizes in a branch
+export const updatePaneSizes = (
+  tree: Pane,
+  paneId: string,
+  sizes: number[]
+): Pane => {
+  return updatePaneInTree(tree, paneId, (pane) => ({
+    ...pane,
+    sizes,
+  }));
+};
+
+// Find tab by ID in the tree
+export const findTabInTree = (tree: Pane, tabId: string): { pane: Pane; tab: TabItem } | null => {
+  if (isLeafPane(tree) && tree.tabs) {
+    const tab = tree.tabs.find(t => t.id === tabId);
+    if (tab) return { pane: tree, tab };
+  }
+  if (tree.children) {
+    for (const child of tree.children) {
+      const found = findTabInTree(child, tabId);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
+// ============================================
+// Legacy Types (for backward compatibility)
+// ============================================
 
 export type EditorPane = {
   id: string;
@@ -506,7 +793,7 @@ export type ToolPane = {
   summary: string;
 };
 
-export type SpacePane = ChatPane | EditorPane | ToolPane;
+export type SpacePane = EditorPane | ToolPane;
 
 export type ToolSession = {
   id: string;
@@ -524,12 +811,15 @@ export type Room = {
   description?: string;
   environment: "Local" | "Remote";
   location: "Local" | "Remote" | "Docker" | "Pod";
-  // IDE mode panes (editor, terminals opened in IDE mode)
+  // IDE mode panes (editor, terminals opened in IDE mode) - legacy
   panes: SpacePane[];
   activePaneId: string;
-  // Work panes (terminals, editors in unified layout preview panel)
+  // Work panes (terminals, editors in unified layout preview panel) - legacy
   workPanes: SpacePane[];
   activeWorkPaneId: string;
+  // New: Splittable pane tree
+  paneTree: Pane;
+  activePaneTreePaneId: string;  // Currently focused leaf pane in paneTree
   toolSessions: ToolSession[];
   // Current conversation ID in chat mode (persisted across mode switches)
   currentConversationId?: string;
@@ -580,8 +870,6 @@ export interface WorkspaceContextValue {
   renameRoom: (roomId: string, name: string) => void;
   deleteRoom: (roomId: string) => void;
   duplicateRoom: (roomId: string) => void;
-  setActivePane: (paneId: string) => void;
-  closePane: (paneId: string) => void;
   // File operations
   openFileFromTree: (filePath: string) => void;
   updateEditorContent: (paneId: string, content: string) => void;
@@ -593,14 +881,7 @@ export interface WorkspaceContextValue {
   ) => void;
   deleteFileNode: (path: string) => void;
   renameFileNode: (path: string, newName: string) => void;
-  // Chat operations
-  sendChatMessage: (paneId: string, content: string) => void;
-  setActiveChatSession: (paneId: string, sessionId: string) => void;
-  createChatSession: (paneId: string) => void;
-  renameChatSession: (paneId: string, sessionId: string, title: string) => void;
-  deleteChatSession: (paneId: string, sessionId: string) => void;
   // Tool operations
-  startToolPreview: (toolId: string) => void;
   openTerminalTab: () => void;
   // Work mode
   setWorkMode: (mode: WorkMode) => void;
@@ -610,6 +891,16 @@ export interface WorkspaceContextValue {
   closeWorkPane: (paneId: string) => void;
   // Current conversation in chat mode
   setCurrentConversationId: (conversationId: string) => void;
+  // Pane tree operations (splittable layout)
+  addTabToPaneTree: (tab: TabItem, targetPaneId?: string) => void;
+  closeTabFromPaneTree: (paneId: string, tabId: string) => void;
+  setActiveTabInPaneTree: (paneId: string, tabId: string) => void;
+  setActivePaneInPaneTree: (paneId: string) => void;
+  splitPaneInTree: (paneId: string, tabId: string, direction: SplitDirection) => void;
+  resizePanesInTree: (paneId: string, sizes: number[]) => void;
+  updateTabInPaneTree: (paneId: string, tabId: string, updates: Partial<TabItem>) => void;
+  saveTabInPaneTree: (paneId: string, tabId: string) => Promise<void>;
+  openFileInPaneTree: (filePath: string) => Promise<void>;
 }
 
 
@@ -619,78 +910,21 @@ const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(
 
 const palette = ["#4f46e5", "#0ea5e9", "#10b981", "#f97316"];
 
-const seedChat = (toolSessions?: ToolSession[]): ChatPane => {
-  const initialSession: ChatSession = {
-    id: uuid(),
-    title: "Session 1",
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    messages: [
-      {
-        id: uuid(),
-        role: "assistant",
-        content: "Space is ready. Ask me to run terminals, AI tools, and file updates inside the space.",
-        timestamp: Date.now() - 1000 * 60 * 5,
-      },
-    ],
-    activeTools: toolSessions ? toolSessions.slice(0, 2) : [],
-  };
-  return {
-    id: uuid(),
-    kind: "chat",
-    title: "AI Chat",
-    sessions: [initialSession],
-    activeSessionId: initialSession.id,
-  };
-};
-
-const seedEditor = (): EditorPane => ({
-  id: uuid(),
-  kind: "editor",
-  title: "README.md",
-  filePath: "/services/orchestrator/README.md",
-  content:
-    "# Orchestrator\nCoordinates terminals, AI tools, and file updates inside the space.\n",
-  language: "markdown",
-  dirty: false,
-});
-
-const seedToolSessions = (): ToolSession[] => [
-  {
-    id: uuid(),
-    label: "Ops Terminal",
-    type: "terminal",
-    status: "running",
-    summary: "ssh ops@staging cluster",
-    endpoint: { host: "10.0.3.12", port: 22 },
-    connectionTime: Date.now() - 1000 * 60 * 7,
-  },
-  {
-    id: uuid(),
-    label: "Docs Browser",
-    type: "browser",
-    status: "idle",
-    summary: "wss://docs.internal/search",
-  },
-];
-
 const createRoom = (name: string): Room => {
-  const toolSessions = seedToolSessions();
-  const chatPane = seedChat(toolSessions);
-  const editorPane = seedEditor();
+  const initialPane = createEmptyPane();
   return {
     id: uuid(),
     name,
     description: "Local space scoped to ops files",
     environment: "Local",
     location: "Local",
-    // Manual mode: starts with chat and welcome editor
-    panes: [chatPane, editorPane],
-    activePaneId: chatPane.id,
-    // Chat mode: starts empty, AI will open terminals/editors as needed
+    panes: [],
+    activePaneId: "",
     workPanes: [],
     activeWorkPaneId: "",
-    toolSessions,
+    paneTree: initialPane,
+    activePaneTreePaneId: initialPane.id,
+    toolSessions: [],
   };
 };
 
@@ -732,58 +966,6 @@ export const createRoomConfigTemplate = (name = "new-space"): SpaceConfigInput =
     assets: [],
   },
   tools: [],
-});
-
-const ensureChatPane = (pane: any, availableTools: ToolSession[] = []): ChatPane => {
-  const fallbackTools = availableTools.slice(0, 2);
-  const normalizedPane: ChatPane = pane.sessions && pane.activeSessionId
-    ? ({
-        ...pane,
-        sessions: pane.sessions.map((session: ChatSession) => ({
-          ...session,
-          activeTools:
-            Array.isArray(session.activeTools) && session.activeTools.length > 0
-              ? session.activeTools
-              : fallbackTools,
-        })),
-      } as ChatPane)
-    : (() => {
-        const legacyMessages: ChatMessage[] = pane.messages || [];
-        const sessionId = uuid();
-        return {
-          id: pane.id || uuid(),
-          kind: "chat",
-          title: pane.title || "AI Chat",
-          sessions: [
-            {
-              id: sessionId,
-              title: "Session 1",
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-              messages: legacyMessages,
-              activeTools: fallbackTools,
-            },
-          ],
-          activeSessionId: sessionId,
-        };
-      })();
-  return normalizedPane;
-};
-
-const normalizeWorkspace = (workspace: Workspace): Workspace => ({
-  ...workspace,
-  description: workspace.description || "",
-  runtime: workspace.runtime || createDefaultRuntime(workspace.name),
-  assets: workspace.assets || { hosts: [], k8s: [] },
-  tools: workspace.tools || [],
-  rooms: workspace.rooms.map((space) => ({
-    ...space,
-    panes: space.panes.map((pane) =>
-      pane.kind === "chat"
-        ? ensureChatPane(pane, space.toolSessions)
-        : pane,
-    ),
-  })),
 });
 
 const findFileNode = (nodes: FileNode[], path: string): FileNode | undefined => {
@@ -881,17 +1063,23 @@ const renameNode = (
 const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
 
   const rooms: Room[] = (ws.rooms || []).map((r) => {
-    // Get panes from layout, or create default panes
-    let panes = r.layout?.panes as SpacePane[] || [];
-    let activePaneId = r.active_pane_id || "";
+    // Get panes from layout (editor/tool panes only)
+    const panes = (r.layout?.panes as SpacePane[]) || [];
+    const activePaneId = r.active_pane_id || "";
 
-    // Ensure at least a chat pane exists
-    if (panes.length === 0 || !panes.some(p => p.kind === "chat")) {
-      const chatPane = seedChat([]);
-      panes = [chatPane, ...panes];
-      if (!activePaneId) {
-        activePaneId = chatPane.id;
-      }
+    // Restore paneTree from layout if available, otherwise create empty pane
+    let paneTree: Pane;
+    let activePaneTreePaneId: string;
+
+    if (r.layout?.paneTree && typeof r.layout.paneTree === 'object') {
+      // Restore from saved layout
+      paneTree = r.layout.paneTree as Pane;
+      activePaneTreePaneId = (r.layout.activePaneTreePaneId as string) || paneTree.id;
+    } else {
+      // Create new empty pane
+      const initialPane = createEmptyPane();
+      paneTree = initialPane;
+      activePaneTreePaneId = initialPane.id;
     }
 
     return {
@@ -904,6 +1092,8 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
       activePaneId,
       workPanes: [],
       activeWorkPaneId: "",
+      paneTree,
+      activePaneTreePaneId,
       toolSessions: [],
       currentConversationId: r.current_conversation_id,
     };
@@ -1667,35 +1857,6 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     [activeWorkspace, mutateActiveWorkspace],
   );
 
-  const setActivePane = useCallback(
-    (paneId: string) => {
-      mutateRoom(activeRoom?.id, (space) => ({
-        ...space,
-        activePaneId: paneId,
-      }));
-    },
-    [activeRoom?.id, mutateRoom],
-  );
-
-  const closePane = useCallback(
-    (paneId: string) => {
-      mutateRoom(activeRoom?.id, (space) => {
-        const pane = space.panes.find((p) => p.id === paneId);
-        if (!pane || pane.kind === "chat") return space;
-        const remaining = space.panes.filter((p) => p.id !== paneId);
-        const nextActive =
-          space.activePaneId === paneId
-            ? remaining.find((p) => p.kind === "chat")?.id || remaining[0]?.id
-            : space.activePaneId;
-        return {
-          ...space,
-          panes: remaining,
-          activePaneId: nextActive || space.activePaneId,
-        };
-      });
-    },
-    [activeRoom?.id, mutateRoom],
-  );
 
   const openFileFromTree = useCallback(
     async (filePath: string) => {
@@ -1768,7 +1929,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     (paneId: string, content: string) => {
       mutateRoom(activeRoom?.id, (space) => ({
         ...space,
-        panes: space.panes.map((pane) =>
+        workPanes: space.workPanes.map((pane) =>
           pane.id === paneId && pane.kind === "editor"
             ? { ...pane, content, dirty: true }
             : pane,
@@ -1784,9 +1945,9 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
 
       const { runtime } = activeWorkspace;
 
-      // Find the pane to save
+      // Find the pane to save from workPanes
       const room = activeWorkspace.rooms.find(r => r.id === activeRoom?.id);
-      const pane = room?.panes.find(
+      const pane = room?.workPanes.find(
         (p): p is EditorPane => p.id === paneId && p.kind === "editor",
       );
       if (!pane) return;
@@ -1811,10 +1972,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           content: pane.content,
         });
 
-        // Update the room pane's dirty state
+        // Update the room workPane's dirty state
         mutateRoom(activeRoom?.id, (space) => ({
           ...space,
-          panes: space.panes.map((p) =>
+          workPanes: space.workPanes.map((p) =>
             p.id === paneId && p.kind === "editor"
               ? { ...p, dirty: false }
               : p,
@@ -1837,122 +1998,6 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     [activeRoom?.id, activeWorkspace, mutateRoom],
   );
 
-  const sendChatMessage = useCallback(
-    (paneId: string, content: string) => {
-      if (!content.trim()) return;
-      mutateRoom(activeRoom?.id, (space) => ({
-        ...space,
-        panes: space.panes.map((pane) => {
-          if (pane.id !== paneId || pane.kind !== "chat") return pane;
-          const session = pane.sessions.find((s) => s.id === pane.activeSessionId);
-          if (!session) return pane;
-          const userMessage: ChatMessage = {
-            id: uuid(),
-            role: "user",
-            content,
-            timestamp: Date.now(),
-          };
-          const assistantMessage: ChatMessage = {
-            id: uuid(),
-            role: "assistant",
-            content: `Captured in ${space.name}. I will sync workspace context in the background.`,
-            timestamp: Date.now(),
-          };
-          const updatedSession: ChatSession = {
-            ...session,
-            updatedAt: Date.now(),
-            messages: [...session.messages, userMessage, assistantMessage],
-          };
-          return {
-            ...pane,
-            sessions: pane.sessions.map((s) => (s.id === session.id ? updatedSession : s)),
-          };
-        }),
-      }));
-    },
-    [activeRoom?.id, mutateRoom],
-  );
-
-  const setActiveChatSession = useCallback(
-    (paneId: string, sessionId: string) => {
-      mutateRoom(activeRoom?.id, (space) => ({
-        ...space,
-        panes: space.panes.map((pane) =>
-          pane.id === paneId && pane.kind === "chat"
-            ? { ...pane, activeSessionId: sessionId }
-            : pane,
-        ),
-      }));
-    },
-    [activeRoom?.id, mutateRoom],
-  );
-
-  const createChatSession = useCallback(
-    (paneId: string) => {
-      mutateRoom(activeRoom?.id, (space) => ({
-        ...space,
-        panes: space.panes.map((pane) => {
-          if (pane.id !== paneId || pane.kind !== "chat") return pane;
-          const defaultTools = space.toolSessions.slice(0, 2);
-          const newSession: ChatSession = {
-            id: uuid(),
-            title: `Session ${pane.sessions.length + 1}`,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            messages: [],
-            activeTools: defaultTools,
-          };
-          return {
-            ...pane,
-            sessions: [...pane.sessions, newSession],
-            activeSessionId: newSession.id,
-          };
-        }),
-      }));
-    },
-    [activeRoom?.id, mutateRoom],
-  );
-
-  const renameChatSession = useCallback(
-    (paneId: string, sessionId: string, title: string) => {
-      mutateRoom(activeRoom?.id, (space) => ({
-        ...space,
-        panes: space.panes.map((pane) => {
-          if (pane.id !== paneId || pane.kind !== "chat") return pane;
-          return {
-            ...pane,
-            sessions: pane.sessions.map((session) =>
-              session.id === sessionId ? { ...session, title } : session,
-            ),
-          };
-        }),
-      }));
-    },
-    [activeRoom?.id, mutateRoom],
-  );
-
-  const deleteChatSession = useCallback(
-    (paneId: string, sessionId: string) => {
-      mutateRoom(activeRoom?.id, (space) => ({
-        ...space,
-        panes: space.panes.map((pane) => {
-          if (pane.id !== paneId || pane.kind !== "chat") return pane;
-          if (pane.sessions.length <= 1) return pane;
-          const remainingSessions = pane.sessions.filter((session) => session.id !== sessionId);
-          const nextActive =
-            pane.activeSessionId === sessionId
-              ? remainingSessions[0]?.id || pane.activeSessionId
-              : pane.activeSessionId;
-          return {
-            ...pane,
-            sessions: remainingSessions,
-            activeSessionId: nextActive,
-          };
-        }),
-      }));
-    },
-    [activeRoom?.id, mutateRoom],
-  );
 
   const addFileNode = useCallback(
     async (parentPath: string | null, type: "file" | "folder", name: string) => {
@@ -2028,21 +2073,21 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         // Call backend API to delete
         await fsRemove({ assetId, containerId: containerIdentifier, path: targetPath });
 
-        // Close any editor panes that have this file open
+        // Close any editor panes that have this file open (in workPanes)
         mutateRoom(activeRoom?.id, (space) => {
-          const panesToKeep = space.panes.filter((pane) => {
+          const workPanesToKeep = space.workPanes.filter((pane) => {
             if (pane.kind !== "editor") return true;
             // If deleting a folder, close all files under it
             return !pane.filePath.startsWith(targetPath);
           });
-          const needsNewActivePane = !panesToKeep.some((p) => p.id === space.activePaneId);
-          const newActivePaneId = needsNewActivePane
-            ? panesToKeep.find((p) => p.kind === "chat")?.id || panesToKeep[0]?.id || space.activePaneId
-            : space.activePaneId;
+          const needsNewActiveWorkPane = !workPanesToKeep.some((p) => p.id === space.activeWorkPaneId);
+          const newActiveWorkPaneId = needsNewActiveWorkPane
+            ? workPanesToKeep[0]?.id || space.activeWorkPaneId
+            : space.activeWorkPaneId;
           return {
             ...space,
-            panes: panesToKeep,
-            activePaneId: newActivePaneId,
+            workPanes: workPanesToKeep,
+            activeWorkPaneId: newActiveWorkPaneId,
           };
         });
 
@@ -2084,9 +2129,9 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         // Call backend API to rename
         await fsRename({ assetId, containerId: containerIdentifier, from: targetPath, to: newPath });
 
-        // Update editor panes that have this file/folder open
+        // Update editor panes that have this file/folder open (in workPanes)
         mutateRoom(activeRoom?.id, (space) => {
-          const updatedPanes = space.panes.map((pane) => {
+          const updatedWorkPanes = space.workPanes.map((pane) => {
             if (pane.kind !== "editor") return pane;
             if (pane.filePath === targetPath) {
               // Direct match - update path and title
@@ -2101,7 +2146,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           });
           return {
             ...space,
-            panes: updatedPanes,
+            workPanes: updatedWorkPanes,
           };
         });
 
@@ -2120,72 +2165,6 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     [activeRoom?.id, activeWorkspace, mutateRoom],
   );
 
-  const startToolPreview = useCallback(
-    (toolId: string) => {
-      mutateRoom(activeRoom?.id, (space) => {
-        const session = space.toolSessions.find((tool) => tool.id === toolId);
-        if (!session) return space;
-        return {
-          ...space,
-          panes: space.panes.map((pane) => {
-            if (pane.kind !== "chat") return pane;
-            return {
-              ...pane,
-              sessions: pane.sessions.map((sessionItem) => {
-                if (sessionItem.id !== pane.activeSessionId) return sessionItem;
-                const alreadyActive = sessionItem.activeTools.some((tool) => tool.id === session.id);
-                if (alreadyActive) return sessionItem;
-                return {
-                  ...sessionItem,
-                  activeTools: [...sessionItem.activeTools, session],
-                };
-              }),
-            };
-          }),
-        };
-      });
-    },
-    [activeRoom?.id, mutateRoom],
-  );
-
-  const openTerminalTab = useCallback(() => {
-    mutateRoom(activeRoom?.id, (space) => {
-      // Count existing terminals in workPanes (unified layout uses workPanes)
-      const terminalCount = space.workPanes.filter(
-        (pane): pane is ToolPane =>
-          pane.kind === "tool" && pane.title.startsWith("Terminal"),
-      ).length;
-
-      const terminalId = uuid();
-      const terminalLabel = terminalCount === 0 ? "Terminal" : `Terminal ${terminalCount + 1}`;
-
-      // Create new terminal session
-      const terminalSession: ToolSession = {
-        id: terminalId,
-        label: terminalLabel,
-        type: "terminal",
-        status: "running",
-        summary: "Interactive terminal session",
-      };
-
-      // Create new terminal pane
-      const toolPane: ToolPane = {
-        id: uuid(),
-        kind: "tool",
-        title: terminalLabel,
-        toolId: terminalId,
-        summary: terminalSession.summary,
-      };
-
-      // Add to workPanes (unified layout uses workPanes for the preview panel)
-      return {
-        ...space,
-        toolSessions: [...space.toolSessions, terminalSession],
-        workPanes: [...space.workPanes, toolPane],
-        activeWorkPaneId: toolPane.id,
-      };
-    });
-  }, [activeRoom?.id, mutateRoom]);
 
   const setWorkMode = useCallback((mode: WorkMode) => {
     mutateActiveWorkspace((workspace) => ({
@@ -2272,6 +2251,308 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     }
   }, [activeRoom?.id, activeWorkspaceId, mutateRoom]);
 
+  // ============================================
+  // Pane Tree Operations
+  // ============================================
+
+  // Add a tab to pane tree (to specific pane or active pane)
+  const addTabToPaneTree = useCallback((tab: TabItem, targetPaneId?: string) => {
+    mutateRoom(activeRoom?.id, (space) => {
+      const paneId = targetPaneId || space.activePaneTreePaneId;
+      const targetPane = findPaneById(space.paneTree, paneId);
+
+      // If target pane doesn't exist or is not a leaf, add to first leaf pane
+      let actualPaneId = paneId;
+      if (!targetPane || !isLeafPane(targetPane)) {
+        const firstLeaf = findFirstLeafPane(space.paneTree);
+        if (firstLeaf) {
+          actualPaneId = firstLeaf.id;
+        } else {
+          // No leaf pane exists, create one
+          return {
+            ...space,
+            paneTree: createLeafPane([tab], tab.id),
+            activePaneTreePaneId: space.paneTree.id,
+          };
+        }
+      }
+
+      return {
+        ...space,
+        paneTree: addTabToPane(space.paneTree, actualPaneId, tab, true),
+        activePaneTreePaneId: actualPaneId,
+      };
+    });
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Open a new terminal tab in pane tree
+  const openTerminalTab = useCallback(() => {
+    if (!activeRoom || !activeWorkspace) return;
+
+    // Count existing terminals in paneTree
+    let terminalCount = 0;
+    const countTerminals = (pane: Pane) => {
+      if (isLeafPane(pane) && pane.tabs) {
+        terminalCount += pane.tabs.filter(t => t.type === "terminal").length;
+      }
+      if (pane.children) {
+        pane.children.forEach(countTerminals);
+      }
+    };
+    countTerminals(activeRoom.paneTree);
+
+    const terminalLabel = terminalCount === 0 ? "Terminal" : `Terminal ${terminalCount + 1}`;
+    const terminalTab: TabItem = {
+      id: uuid(),
+      type: "terminal",
+      title: terminalLabel,
+      terminalKey: `workspace-terminal-${activeWorkspace.id}-${uuid()}`,
+    };
+
+    addTabToPaneTree(terminalTab);
+  }, [activeRoom, activeWorkspace, addTabToPaneTree]);
+
+  // Close a tab from pane tree
+  const closeTabFromPaneTree = useCallback((paneId: string, tabId: string) => {
+    mutateRoom(activeRoom?.id, (space) => {
+      // Find the tab before closing to check if it needs cleanup
+      const tabResult = findTabInTree(space.paneTree, tabId);
+      if (tabResult && tabResult.tab.type === "terminal" && tabResult.tab.terminalKey) {
+        // Cleanup terminal connection
+        cleanupTerminal(tabResult.tab.terminalKey);
+      }
+
+      const newTree = closeTabInPane(space.paneTree, paneId, tabId);
+
+      // If the closed pane was active, find a new active pane
+      let newActivePaneId = space.activePaneTreePaneId;
+      if (!findPaneById(newTree, newActivePaneId)) {
+        const firstLeaf = findFirstLeafPane(newTree);
+        newActivePaneId = firstLeaf?.id || newTree.id;
+      }
+
+      return {
+        ...space,
+        paneTree: newTree,
+        activePaneTreePaneId: newActivePaneId,
+      };
+    });
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Set active tab in a pane
+  const setActiveTabInPaneTree = useCallback((paneId: string, tabId: string) => {
+    mutateRoom(activeRoom?.id, (space) => ({
+      ...space,
+      paneTree: setActiveTabInPane(space.paneTree, paneId, tabId),
+      activePaneTreePaneId: paneId,
+    }));
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Set active pane (focus)
+  const setActivePaneInPaneTree = useCallback((paneId: string) => {
+    mutateRoom(activeRoom?.id, (space) => ({
+      ...space,
+      activePaneTreePaneId: paneId,
+    }));
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Split a pane
+  const splitPaneInTree = useCallback((paneId: string, tabId: string, direction: SplitDirection) => {
+    mutateRoom(activeRoom?.id, (space) => {
+      const newTree = splitPane(space.paneTree, paneId, tabId, direction);
+
+      // Find the new pane that contains the moved tab
+      const tabLocation = findTabInTree(newTree, tabId);
+      const newActivePaneId = tabLocation?.pane.id || space.activePaneTreePaneId;
+
+      return {
+        ...space,
+        paneTree: newTree,
+        activePaneTreePaneId: newActivePaneId,
+      };
+    });
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Resize panes in a branch
+  const resizePanesInTree = useCallback((paneId: string, sizes: number[]) => {
+    mutateRoom(activeRoom?.id, (space) => ({
+      ...space,
+      paneTree: updatePaneSizes(space.paneTree, paneId, sizes),
+    }));
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Update a tab's properties in pane tree (e.g., editor content)
+  const updateTabInPaneTree = useCallback((paneId: string, tabId: string, updates: Partial<TabItem>) => {
+    mutateRoom(activeRoom?.id, (space) => ({
+      ...space,
+      paneTree: updatePaneInTree(space.paneTree, paneId, (pane) => {
+        if (!pane.tabs) return pane;
+        return {
+          ...pane,
+          tabs: pane.tabs.map(tab =>
+            tab.id === tabId ? { ...tab, ...updates } : tab
+          ),
+        };
+      }),
+    }));
+  }, [activeRoom?.id, mutateRoom]);
+
+  // Save a tab's content (for editor tabs)
+  const saveTabInPaneTree = useCallback(async (paneId: string, tabId: string) => {
+    if (!activeWorkspace || !activeRoom) return;
+
+    // Find the tab
+    const pane = findPaneById(activeRoom.paneTree, paneId);
+    if (!pane || !pane.tabs) return;
+
+    const tab = pane.tabs.find(t => t.id === tabId);
+    if (!tab || tab.type !== "editor" || !tab.filePath) return;
+
+    const { runtime } = activeWorkspace;
+
+    // Determine API params based on runtime type
+    let assetId: string | undefined;
+    let containerIdentifier: string | undefined;
+
+    if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
+      assetId = runtime.dockerAssetId;
+      containerIdentifier = runtime.containerName || runtime.containerId ||
+        (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
+    }
+
+    try {
+      // Call backend API to save file
+      await fsWrite({
+        assetId,
+        containerId: containerIdentifier,
+        path: tab.filePath,
+        content: tab.content || "",
+      });
+
+      // Update dirty flag
+      updateTabInPaneTree(paneId, tabId, { dirty: false });
+
+      // Update workspace-level fileTree
+      setWorkspaces((prev) =>
+        prev.map((ws) =>
+          ws.id === activeWorkspace.id
+            ? { ...ws, fileTree: updateFileContent(ws.fileTree, tab.filePath!, tab.content || "") }
+            : ws
+        )
+      );
+    } catch (err) {
+      console.error("Failed to save file:", err);
+    }
+  }, [activeRoom, activeWorkspace, updateTabInPaneTree]);
+
+  // Open a file in pane tree
+  const openFileInPaneTree = useCallback(async (filePath: string) => {
+    if (!activeWorkspace || !activeRoom) return;
+
+    // Check if file is already open in pane tree
+    const findExistingTab = (pane: Pane): { paneId: string; tabId: string } | null => {
+      if (isLeafPane(pane) && pane.tabs) {
+        const tab = pane.tabs.find(t => t.type === "editor" && t.filePath === filePath);
+        if (tab) return { paneId: pane.id, tabId: tab.id };
+      }
+      if (pane.children) {
+        for (const child of pane.children) {
+          const found = findExistingTab(child);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const existing = findExistingTab(activeRoom.paneTree);
+    if (existing) {
+      setActiveTabInPaneTree(existing.paneId, existing.tabId);
+      return;
+    }
+
+    // Find node in workspace-level fileTree to get the file name
+    const node = findFileNode(activeWorkspace.fileTree, filePath);
+    if (!node || node.type !== "file") return;
+
+    const { runtime } = activeWorkspace;
+
+    // Determine API params based on runtime type
+    let assetId: string | undefined;
+    let containerIdentifier: string | undefined;
+
+    if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
+      assetId = runtime.dockerAssetId;
+      containerIdentifier = runtime.containerName || runtime.containerId ||
+        (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
+    }
+
+    try {
+      // Read file content from backend
+      const content = await fsRead({
+        assetId,
+        containerId: containerIdentifier,
+        path: filePath,
+      });
+
+      // Determine language from file extension
+      const ext = node.name.split('.').pop()?.toLowerCase();
+      const languageMap: Record<string, string> = {
+        'js': 'javascript',
+        'jsx': 'javascript',
+        'ts': 'typescript',
+        'tsx': 'typescript',
+        'py': 'python',
+        'go': 'go',
+        'rs': 'rust',
+        'md': 'markdown',
+        'json': 'json',
+        'yaml': 'yaml',
+        'yml': 'yaml',
+        'html': 'html',
+        'css': 'css',
+        'scss': 'scss',
+        'sql': 'sql',
+        'sh': 'shell',
+        'bash': 'shell',
+      };
+
+      // Create editor tab
+      const editorTab: TabItem = {
+        id: uuid(),
+        type: "editor",
+        title: node.name,
+        filePath: node.path,
+        content,
+        language: languageMap[ext || ''] || undefined,
+        dirty: false,
+      };
+
+      // Add to pane tree
+      addTabToPaneTree(editorTab);
+    } catch (err) {
+      console.error("Failed to read file:", err);
+    }
+  }, [activeRoom, activeWorkspace, setActiveTabInPaneTree, addTabToPaneTree]);
+
+  // Sync paneTree to backend when it changes (debounced)
+  useEffect(() => {
+    if (!activeWorkspaceId || !activeRoom) return;
+
+    const timeoutId = setTimeout(() => {
+      // Save paneTree to backend layout
+      workspacesApi.updateRoom(activeWorkspaceId, activeRoom.id, {
+        layout: {
+          paneTree: activeRoom.paneTree,
+          activePaneTreePaneId: activeRoom.activePaneTreePaneId,
+        },
+      }).catch((err) => {
+        console.error("Failed to persist paneTree to backend:", err);
+      });
+    }, 500); // Debounce 500ms
+
+    return () => clearTimeout(timeoutId);
+  }, [activeWorkspaceId, activeRoom?.id, activeRoom?.paneTree, activeRoom?.activePaneTreePaneId]);
+
   return (
     <WorkspaceContext.Provider
       value={{
@@ -2295,26 +2576,27 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         renameRoom: renameRoomHandler,
         deleteRoom: deleteRoomHandler,
         duplicateRoom: duplicateRoomHandler,
-        setActivePane,
-        closePane,
         openFileFromTree,
         updateEditorContent,
         saveEditorContent,
-        sendChatMessage,
-        setActiveChatSession,
-        createChatSession,
-        renameChatSession,
-        deleteChatSession,
         addFileNode,
         deleteFileNode,
         renameFileNode,
-        startToolPreview,
         openTerminalTab,
         setWorkMode,
         openWorkTerminal,
         setWorkActivePane,
         closeWorkPane,
         setCurrentConversationId,
+        addTabToPaneTree,
+        closeTabFromPaneTree,
+        setActiveTabInPaneTree,
+        setActivePaneInPaneTree,
+        splitPaneInTree,
+        resizePanesInTree,
+        updateTabInPaneTree,
+        saveTabInPaneTree,
+        openFileInPaneTree,
       }}
     >
       {children}

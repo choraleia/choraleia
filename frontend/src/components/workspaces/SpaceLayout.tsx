@@ -1,39 +1,28 @@
-import React, { useCallback, useState, useMemo, useEffect } from "react";
+import React, { useCallback, useState, useMemo, useEffect, useRef } from "react";
 import {
   Box,
   IconButton,
-  Tabs,
-  Tab,
   Typography,
   Tooltip,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import CloseIcon from "@mui/icons-material/Close";
-import TerminalIcon from "@mui/icons-material/Terminal";
-import DescriptionIcon from "@mui/icons-material/Description";
-import WebIcon from "@mui/icons-material/Web";
-import CircleIcon from "@mui/icons-material/Circle";
 import RoomTopBar from "./SpaceTopBar";
 import SpaceConfigDialog from "./SpaceConfigDialog";
 import RoomManagerDialog from "./RoomManagerDialog";
 import WorkspaceChat from "./WorkspaceChat";
 import WorkspaceExplorer from "./WorkspaceExplorer";
-import BrowserPreview from "./BrowserPreview";
-import TerminalComponent from "../assets/Terminal";
-import Editor from "@monaco-editor/react";
-import { useWorkspaces, SpaceConfigInput, EditorPane } from "../../state/workspaces";
+import { PaneTreeRenderer, TabContent } from "./pane";
+import {
+  useWorkspaces,
+  SpaceConfigInput,
+  TabItem,
+  SplitDirection,
+  isLeafPane,
+  Pane,
+  findTabInTree,
+} from "../../state/workspaces";
 import { listBrowsers, BrowserInstance } from "../../api/browser";
-
-// Preview tab item interface
-interface PreviewTab {
-  id: string;
-  type: "terminal" | "editor" | "browser";
-  title: string;
-  modified?: boolean;
-  terminalKey?: string;
-  filePath?: string;
-  content?: string;
-}
+import { v4 as uuid } from "uuid";
 
 interface SpaceLayoutProps {
   onBackToOverview?: () => void;
@@ -44,10 +33,15 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
     activeWorkspace,
     activeRoom,
     updateWorkspaceConfig,
-    openWorkTerminal,
-    closeWorkPane,
-    setWorkActivePane,
-    updateEditorContent,
+    // Pane tree operations
+    addTabToPaneTree,
+    closeTabFromPaneTree,
+    setActiveTabInPaneTree,
+    setActivePaneInPaneTree,
+    splitPaneInTree,
+    resizePanesInTree,
+    updateTabInPaneTree,
+    saveTabInPaneTree,
   } = useWorkspaces();
 
   // Dialog states
@@ -66,6 +60,136 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
 
   // Track current conversation ID for browser preview
   const [currentConversationId, setCurrentConversationId] = useState<string>("");
+
+  // Browser instances for pane tree
+  const [browsers, setBrowsers] = useState<BrowserInstance[]>([]);
+
+  // Track which browsers we've already added to avoid infinite loop
+  const addedBrowserIdsRef = useRef<Set<string>>(new Set());
+
+  // Fetch browsers for this conversation
+  useEffect(() => {
+    if (!currentConversationId) {
+      setBrowsers([]);
+      addedBrowserIdsRef.current.clear();
+      return;
+    }
+    const fetchBrowsers = async () => {
+      try {
+        const result = await listBrowsers(currentConversationId);
+        setBrowsers(result || []);
+      } catch (error) {
+        console.error("Failed to fetch browsers:", error);
+      }
+    };
+    fetchBrowsers();
+    const interval = setInterval(fetchBrowsers, 5000);
+    return () => clearInterval(interval);
+  }, [currentConversationId]);
+
+  // Add browser tabs to pane tree when new browsers appear
+  useEffect(() => {
+    if (!activeRoom || browsers.length === 0) return;
+
+    // Helper function to check if browser tab already exists in paneTree
+    const browserTabExists = (browserId: string, pane: Pane): boolean => {
+      if (isLeafPane(pane) && pane.tabs) {
+        return pane.tabs.some(tab => tab.type === "browser" && tab.browserId === browserId);
+      }
+      if (pane.children) {
+        return pane.children.some(child => browserTabExists(browserId, child));
+      }
+      return false;
+    };
+
+    // Add new browsers as tabs (only if not already in paneTree and status is not closed/error)
+    browsers.forEach(browser => {
+      // Skip closed or errored browsers - don't add them as new tabs
+      if (browser.status === "closed" || browser.status === "error") {
+        return;
+      }
+      // Check both ref and paneTree to avoid duplicates
+      if (!addedBrowserIdsRef.current.has(browser.id) && !browserTabExists(browser.id, activeRoom.paneTree)) {
+        addedBrowserIdsRef.current.add(browser.id);
+        const browserTab: TabItem = {
+          id: `browser-${browser.id}`,
+          type: "browser",
+          title: browser.current_title || (browser.current_url ? new URL(browser.current_url).hostname : "Browser"),
+          browserId: browser.id,
+          url: browser.current_url,
+        };
+        addTabToPaneTree(browserTab);
+      } else {
+        // Mark as added if it exists in paneTree but not in ref (e.g., after page refresh)
+        addedBrowserIdsRef.current.add(browser.id);
+      }
+    });
+  }, [browsers, activeRoom, addTabToPaneTree]);
+
+  // Close browser tabs when browser is closed or has error
+  useEffect(() => {
+    if (!activeRoom) return;
+
+    // Find all browser tabs in pane tree
+    const findBrowserTabs = (pane: Pane): { paneId: string; tabId: string; browserId: string }[] => {
+      const results: { paneId: string; tabId: string; browserId: string }[] = [];
+      if (isLeafPane(pane) && pane.tabs) {
+        pane.tabs.forEach(tab => {
+          if (tab.type === "browser" && tab.browserId) {
+            results.push({ paneId: pane.id, tabId: tab.id, browserId: tab.browserId });
+          }
+        });
+      }
+      if (pane.children) {
+        pane.children.forEach(child => {
+          results.push(...findBrowserTabs(child));
+        });
+      }
+      return results;
+    };
+
+    const browserTabs = findBrowserTabs(activeRoom.paneTree);
+
+    browserTabs.forEach(({ paneId, tabId, browserId }) => {
+      const browser = browsers.find(b => b.id === browserId);
+      // Close tab if browser is closed, has error, or no longer exists in the list
+      if (!browser || browser.status === "closed" || browser.status === "error") {
+        // Remove from tracking ref
+        addedBrowserIdsRef.current.delete(browserId);
+        // Close the tab
+        closeTabFromPaneTree(paneId, tabId);
+      }
+    });
+  }, [browsers, activeRoom, closeTabFromPaneTree]);
+
+  // Update browser tab titles with page title
+  useEffect(() => {
+    if (!activeRoom) return;
+
+    browsers.forEach(browser => {
+      if (browser.status === "closed" || browser.status === "error") return;
+
+      const tabId = `browser-${browser.id}`;
+      const tabResult = findTabInTree(activeRoom.paneTree, tabId);
+
+      if (tabResult) {
+        // Determine the new title - prefer page title, fallback to hostname
+        const newTitle = browser.current_title ||
+          (browser.current_url ? (() => {
+            try {
+              return new URL(browser.current_url).hostname;
+            } catch {
+              return "Browser";
+            }
+          })() : "Browser");
+
+        // Only update if title changed
+        if (tabResult.tab.title !== newTitle) {
+          updateTabInPaneTree(tabResult.pane.id, tabId, { title: newTitle });
+        }
+      }
+    });
+  }, [browsers, activeRoom, updateTabInPaneTree]);
 
   const closeConfig = useCallback(() => setConfigOpen(false), []);
   const openRoomManager = useCallback(() => setRoomManagerOpen(true), []);
@@ -92,74 +216,59 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
     };
   }, [activeWorkspace]);
 
-  // Get preview tabs from workPanes
-  const previewTabs: PreviewTab[] = useMemo(() => {
-    if (!activeRoom) return [];
-    const tabs: PreviewTab[] = [];
-    activeRoom.workPanes.forEach((pane) => {
-      if (pane.kind === "tool" && pane.title.startsWith("Terminal")) {
-        tabs.push({
-          id: pane.id,
-          type: "terminal",
-          title: pane.title,
-          terminalKey: `workspace-chat-terminal-${activeWorkspace?.id}-${pane.id}`,
-        });
-      } else if (pane.kind === "editor") {
-        const editorPane = pane as EditorPane;
-        tabs.push({
-          id: pane.id,
-          type: "editor",
-          title: editorPane.filePath.split("/").pop() || "Untitled",
-          filePath: editorPane.filePath,
-          content: editorPane.content,
-          modified: editorPane.dirty,
-        });
+  // Pane tree event handlers
+  const handleTabChange = useCallback((paneId: string, tabId: string) => {
+    setActiveTabInPaneTree(paneId, tabId);
+  }, [setActiveTabInPaneTree]);
+
+  const handleCloseTab = useCallback((paneId: string, tabId: string) => {
+    closeTabFromPaneTree(paneId, tabId);
+  }, [closeTabFromPaneTree]);
+
+  const handleSplitPane = useCallback((paneId: string, tabId: string, direction: SplitDirection) => {
+    splitPaneInTree(paneId, tabId, direction);
+  }, [splitPaneInTree]);
+
+  const handlePaneFocus = useCallback((paneId: string) => {
+    setActivePaneInPaneTree(paneId);
+  }, [setActivePaneInPaneTree]);
+
+  const handleResizePanes = useCallback((paneId: string, sizes: number[]) => {
+    resizePanesInTree(paneId, sizes);
+  }, [resizePanesInTree]);
+
+  const handleAddTerminal = useCallback((targetPaneId?: string) => {
+    // Count existing terminals in pane tree
+    let terminalCount = 0;
+    const countTerminals = (pane: Pane | undefined) => {
+      if (!pane) return;
+      if (isLeafPane(pane) && pane.tabs) {
+        terminalCount += pane.tabs.filter(t => t.type === "terminal").length;
       }
-    });
-    return tabs;
-  }, [activeRoom, activeWorkspace?.id]);
+      if (pane.children) {
+        pane.children.forEach(countTerminals);
+      }
+    };
+    countTerminals(activeRoom?.paneTree);
 
-  const activePreviewTabId = activeRoom?.activeWorkPaneId || previewTabs[0]?.id || null;
-  const activeTab = previewTabs.find((t) => t.id === activePreviewTabId);
+    const terminalLabel = terminalCount === 0 ? "Terminal" : `Terminal ${terminalCount + 1}`;
+    const terminalTab: TabItem = {
+      id: uuid(),
+      type: "terminal",
+      title: terminalLabel,
+      terminalKey: `workspace-terminal-${activeWorkspace?.id}-${uuid()}`,
+    };
 
-  const handleTabChange = useCallback(
-    (_: React.SyntheticEvent, value: string) => {
-      setWorkActivePane(value);
-    },
-    [setWorkActivePane]
-  );
+    addTabToPaneTree(terminalTab, targetPaneId);
+  }, [activeRoom?.paneTree, activeWorkspace?.id, addTabToPaneTree]);
 
-  const handleAddTerminal = useCallback(() => {
-    openWorkTerminal();
-  }, [openWorkTerminal]);
+  const handleEditorChange = useCallback((paneId: string, tabId: string, content: string) => {
+    updateTabInPaneTree(paneId, tabId, { content, dirty: true });
+  }, [updateTabInPaneTree]);
 
-  const handleCloseTab = useCallback((tabId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    closeWorkPane(tabId);
-  }, [closeWorkPane]);
-
-  const getTabIcon = (type: PreviewTab["type"]) => {
-    switch (type) {
-      case "terminal": return <TerminalIcon fontSize="small" />;
-      case "editor": return <DescriptionIcon fontSize="small" />;
-      case "browser": return <WebIcon fontSize="small" />;
-    }
-  };
-
-  const getLanguage = (filePath?: string) => {
-    if (!filePath) return undefined;
-    if (filePath.endsWith(".md")) return "markdown";
-    if (filePath.endsWith(".ts") || filePath.endsWith(".tsx")) return "typescript";
-    if (filePath.endsWith(".js") || filePath.endsWith(".jsx")) return "javascript";
-    if (filePath.endsWith(".json")) return "json";
-    if (filePath.endsWith(".py")) return "python";
-    if (filePath.endsWith(".go")) return "go";
-    if (filePath.endsWith(".yaml") || filePath.endsWith(".yml")) return "yaml";
-    if (filePath.endsWith(".sh")) return "shell";
-    if (filePath.endsWith(".css")) return "css";
-    if (filePath.endsWith(".html")) return "html";
-    return undefined;
-  };
+  const handleEditorSave = useCallback((paneId: string, tabId: string) => {
+    saveTabInPaneTree(paneId, tabId);
+  }, [saveTabInPaneTree]);
 
   // Explorer resize handler
   const handleExplorerResize = useCallback((e: React.MouseEvent) => {
@@ -204,6 +313,11 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
   }, [chatWidth]);
+
+  // Render tab content using TabContent component
+  const renderTabContent = useCallback((props: React.ComponentProps<typeof TabContent>) => {
+    return <TabContent {...props} conversationId={currentConversationId} />;
+  }, [currentConversationId]);
 
   return (
     <Box display="flex" flexDirection="column" height="100%">
@@ -254,7 +368,7 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
       </Box>
 
       {/* Content Area */}
-      <Box display="flex" flex={1} minHeight={0} width="100%">
+      <Box display="flex" flex={1} minHeight={0} minWidth={0} width="100%" overflow="hidden">
         {/* Explorer Panel */}
         {showExplorer && (
           <>
@@ -302,22 +416,44 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
           </>
         )}
 
-        {/* Preview Panel (Work Area) */}
-        {activeWorkspace && (
-          <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
-            <PreviewPanel
-              previewTabs={previewTabs}
-              activePreviewTabId={activePreviewTabId}
-              activeTab={activeTab}
-              activeWorkspace={activeWorkspace}
-              onTabChange={handleTabChange}
-              onAddTerminal={handleAddTerminal}
-              onCloseTab={handleCloseTab}
-              getTabIcon={getTabIcon}
-              getLanguage={getLanguage}
-              updateEditorContent={updateEditorContent}
-              conversationId={currentConversationId}
-            />
+        {/* Work Area - Pane Tree */}
+        {activeWorkspace && activeRoom && (
+          <Box flex={1} display="flex" flexDirection="column" minHeight={0} minWidth={0} overflow="hidden">
+            {/* Add terminal button when no tabs */}
+            {isLeafPane(activeRoom.paneTree) && (!activeRoom.paneTree.tabs || activeRoom.paneTree.tabs.length === 0) ? (
+              <Box display="flex" flexDirection="column" alignItems="center" justifyContent="center" height="100%" gap={2}>
+                <Typography variant="body2" color="text.secondary">
+                  No tabs open
+                </Typography>
+                <Tooltip title="New Terminal">
+                  <IconButton onClick={() => handleAddTerminal()} color="primary">
+                    <AddIcon />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            ) : (
+              <PaneTreeRenderer
+                pane={activeRoom.paneTree}
+                activePaneId={activeRoom.activePaneTreePaneId}
+                workspaceId={activeWorkspace.id}
+                workspaceName={activeWorkspace.name}
+                runtimeType={activeWorkspace.runtime.type}
+                dockerAssetId={activeWorkspace.runtime.dockerAssetId}
+                containerName={activeWorkspace.runtime.containerName}
+                containerId={activeWorkspace.runtime.containerId}
+                containerMode={activeWorkspace.runtime.containerMode}
+                conversationId={currentConversationId}
+                onTabChange={handleTabChange}
+                onCloseTab={handleCloseTab}
+                onSplitPane={handleSplitPane}
+                onPaneFocus={handlePaneFocus}
+                onResizePanes={handleResizePanes}
+                onAddTerminal={handleAddTerminal}
+                onEditorChange={handleEditorChange}
+                onEditorSave={handleEditorSave}
+                renderTabContent={renderTabContent}
+              />
+            )}
           </Box>
         )}
       </Box>
@@ -326,162 +462,6 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
         <SpaceConfigDialog open={isConfigOpen} onClose={closeConfig} initialConfig={dialogInitialConfig} onSave={handleSaveConfig} />
       )}
       <RoomManagerDialog open={isRoomManagerOpen} onClose={closeRoomManager} />
-    </Box>
-  );
-};
-
-// Preview Panel Component
-interface PreviewPanelProps {
-  previewTabs: PreviewTab[];
-  activePreviewTabId: string | null;
-  activeTab: PreviewTab | undefined;
-  activeWorkspace: any;
-  onTabChange: (event: React.SyntheticEvent, value: string) => void;
-  onAddTerminal: () => void;
-  onCloseTab: (tabId: string, event: React.MouseEvent) => void;
-  getTabIcon: (type: PreviewTab["type"]) => React.ReactNode;
-  getLanguage: (filePath?: string) => string | undefined;
-  updateEditorContent: (paneId: string, content: string) => void;
-  conversationId: string;
-}
-
-const PreviewPanel: React.FC<PreviewPanelProps> = ({
-  previewTabs, activePreviewTabId, activeTab, activeWorkspace,
-  onTabChange, onAddTerminal, onCloseTab, getTabIcon, getLanguage,
-  updateEditorContent, conversationId,
-}) => {
-  const [browsers, setBrowsers] = useState<BrowserInstance[]>([]);
-
-  // Fetch browsers for this conversation
-  useEffect(() => {
-    if (!conversationId) { setBrowsers([]); return; }
-    const fetchBrowsers = async () => {
-      try {
-        const result = await listBrowsers(conversationId);
-        setBrowsers(result || []);
-      } catch (error) {
-        console.error("Failed to fetch browsers:", error);
-      }
-    };
-    fetchBrowsers();
-    const interval = setInterval(fetchBrowsers, 5000);
-    return () => clearInterval(interval);
-  }, [conversationId]);
-
-  // Build all tabs including browser tabs
-  const allTabs = useMemo(() => {
-    const tabs: PreviewTab[] = [...previewTabs];
-    browsers.forEach((browser) => {
-      tabs.push({
-        id: `browser-${browser.id}`,
-        type: "browser",
-        title: browser.current_url ? new URL(browser.current_url).hostname : "Browser",
-      });
-    });
-    return tabs;
-  }, [previewTabs, browsers]);
-
-  // Use activePreviewTabId directly, fallback to first tab if not found
-  const effectiveActiveTabId = allTabs.some(t => t.id === activePreviewTabId)
-    ? activePreviewTabId
-    : allTabs[0]?.id || null;
-  const effectiveActiveTab = allTabs.find((t) => t.id === effectiveActiveTabId);
-
-  // Handle tab change - just call onTabChange for all tabs
-  const handleTabChangeInternal = (event: React.SyntheticEvent, value: string) => {
-    onTabChange(event, value);
-  };
-
-  return (
-    <Box display="flex" flexDirection="column" height="100%">
-      {/* Tab bar */}
-      <Box
-        display="flex"
-        alignItems="center"
-        sx={{ borderBottom: "1px solid", borderColor: "divider", height: 36, minHeight: 36, bgcolor: "background.paper" }}
-      >
-        <Tabs
-          value={effectiveActiveTabId || false}
-          onChange={handleTabChangeInternal}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{
-            minHeight: 36, flex: 1,
-            "& .MuiTab-root": { minHeight: 36, py: 0, px: 1.5, textTransform: "none", fontSize: 12 },
-          }}
-        >
-          {allTabs.map((tab) => (
-            <Tab
-              key={tab.id}
-              value={tab.id}
-              label={
-                <Box display="flex" alignItems="center" gap={0.5}>
-                  {getTabIcon(tab.type)}
-                  <span>{tab.title}</span>
-                  {tab.modified && <CircleIcon sx={{ fontSize: 8, color: "warning.main" }} />}
-                  {!tab.id.startsWith("browser-") && (
-                    <CloseIcon sx={{ fontSize: 14, ml: 0.5, opacity: 0.6 }} onClick={(e) => onCloseTab(tab.id, e)} />
-                  )}
-                </Box>
-              }
-            />
-          ))}
-        </Tabs>
-        <Tooltip title="New Terminal">
-          <IconButton size="small" onClick={onAddTerminal} sx={{ mr: 1 }}>
-            <AddIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
-
-      {/* Tab content */}
-      <Box flex={1} display="flex" flexDirection="column" minHeight={0}>
-        {allTabs.length === 0 ? (
-          <Box display="flex" alignItems="center" justifyContent="center" height="100%" color="text.secondary">
-            <Typography variant="body2">No tabs open. Click + to add a terminal.</Typography>
-          </Box>
-        ) : (
-          <>
-            {allTabs.filter((tab) => tab.type === "terminal").map((tab) => (
-              <Box
-                key={tab.id}
-                flex={1}
-                display={effectiveActiveTabId === tab.id ? "flex" : "none"}
-                flexDirection="column"
-                minHeight={0}
-              >
-                <TerminalComponent
-                  hostInfo={{ ip: "localhost", port: 0, name: tab.title }}
-                  tabKey={tab.terminalKey!}
-                  assetId={activeWorkspace.runtime.type === "local" ? "local" : activeWorkspace.runtime.dockerAssetId || "local"}
-                  containerId={
-                    activeWorkspace.runtime.type !== "local"
-                      ? (activeWorkspace.runtime.containerName || activeWorkspace.runtime.containerId ||
-                         (activeWorkspace.runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined))
-                      : undefined
-                  }
-                  isActive={effectiveActiveTabId === tab.id}
-                />
-              </Box>
-            ))}
-            {effectiveActiveTab?.type === "editor" && (
-              <Editor
-                height="100%"
-                defaultLanguage={getLanguage(effectiveActiveTab.filePath)}
-                value={effectiveActiveTab.content || ""}
-                onChange={(value) => { if (effectiveActiveTab && value !== undefined) updateEditorContent(effectiveActiveTab.id, value); }}
-                options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: "on", wordWrap: "on", automaticLayout: true }}
-              />
-            )}
-            {effectiveActiveTab?.type === "browser" && (
-              <BrowserPreview
-                conversationId={conversationId}
-                browserId={effectiveActiveTabId?.startsWith("browser-") ? effectiveActiveTabId.replace("browser-", "") : undefined}
-              />
-            )}
-          </>
-        )}
-      </Box>
     </Box>
   );
 };

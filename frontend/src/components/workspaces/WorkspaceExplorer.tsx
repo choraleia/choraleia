@@ -252,6 +252,7 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
     fileTreeLoading,
     refreshFileTree,
     openFileFromTree,
+    openFileInPaneTree,
     openTerminalTab,
     addFileNode,
     deleteFileNode,
@@ -591,7 +592,7 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
             ) : fileTree.length > 0 ? (
               <FileTree
                 nodes={fileTree}
-                openFile={openFileFromTree}
+                openFile={openFileInPaneTree}
                 onContextMenu={handleFileContextMenu}
                 expandedFolders={expandedFolders}
                 toggleFolder={toggleFolder}

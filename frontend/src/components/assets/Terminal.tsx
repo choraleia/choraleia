@@ -686,17 +686,45 @@ function TerminalComponent({
 
       void connectSocket();
 
-      return () => {
-        const td = terminalInstances.get(tabKey);
-        if (td?.socket) {
-          td.socket.close();
-        }
-      };
+      // Note: We don't close the socket here on unmount because the terminal
+      // instance persists in terminalInstances map and may be reattached
+      // after a split operation. Socket cleanup happens in cleanupTerminal().
+      return;
     }
 
     // Terminal already exists: no setup needed here.
     return;
   }, [tabKey]);
+
+  // Handle terminal DOM reattachment when component remounts (e.g., after split)
+  // This runs on every render to check if DOM element changed
+  useEffect(() => {
+    const terminalData = terminalInstances.get(tabKey);
+    if (!terminalData || !terminalRef.current) return;
+
+    // Check if terminal needs to be reattached to new container
+    if (terminalData.domElement !== terminalRef.current) {
+      console.log("Terminal DOM element changed (split detected), reattaching for tab:", tabKey);
+
+      // Get the terminal's internal DOM element (the .xterm container)
+      const xtermElement = terminalData.domElement?.querySelector('.xterm');
+
+      if (xtermElement) {
+        // Move the terminal's DOM to the new container
+        terminalRef.current.innerHTML = "";
+        terminalRef.current.appendChild(xtermElement);
+
+        // Update the stored DOM element reference
+        terminalData.domElement = terminalRef.current;
+
+        // Fit after reattach
+        setTimeout(() => {
+          terminalData.fitAddon.fit();
+          terminalData.terminal.focus();
+        }, 0);
+      }
+    }
+  }); // No dependencies - runs on every render to catch DOM changes
 
   // On tab active, fit only on size change
   useEffect(() => {
@@ -726,46 +754,42 @@ function TerminalComponent({
     }, 0);
   }, [isActive, tabKey]);
 
-  // Listen to terminal-resize event
+  // Use ResizeObserver to detect container size changes (debounced)
+  // This handles all resize scenarios: window resize, pane drag, toggle chat/browser, etc.
+  // Note: We don't check isActive here because all terminals should resize when container changes
   useEffect(() => {
+    if (!terminalRef.current) return;
+
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const handleResize = () => {
-      if (!isActive) return;
-      const terminalData = terminalInstances.get(tabKey);
-      if (!terminalData || !terminalRef.current) return;
-      terminalData.fitAddon.fit();
+      // Debounce: only fit after resize stops for 150ms
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+      }
+      resizeTimeout = setTimeout(() => {
+        const terminalData = terminalInstances.get(tabKey);
+        if (terminalData) {
+          terminalData.fitAddon.fit();
+        }
+      }, 150);
     };
 
-    window.addEventListener("asset-tree-resize", handleResize as EventListener);
-    window.addEventListener(
-      "asset-tree-visible",
-      handleResize as EventListener,
-    );
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(terminalRef.current);
+
+    // Also listen to window resize as backup
+    window.addEventListener("resize", handleResize);
+
     return () => {
-      window.removeEventListener(
-        "asset-tree-resize",
-        handleResize as EventListener,
-      );
-      window.removeEventListener(
-        "asset-tree-visible",
-        handleResize as EventListener,
-      );
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+      }
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", handleResize);
     };
-  }, [isActive, tabKey]);
+  }, [tabKey]);
 
-  // Listen to window resize
-  useEffect(() => {
-    const handleWindowResize = () => {
-      if (!isActive) return;
-      const terminalData = terminalInstances.get(tabKey);
-      if (!terminalData || !terminalRef.current) return;
-      terminalData.fitAddon.fit();
-    };
-
-    window.addEventListener("resize", handleWindowResize);
-    return () => {
-      window.removeEventListener("resize", handleWindowResize);
-    };
-  }, [isActive, tabKey]);
 
   // Keyboard shortcuts for terminal (Ctrl+Shift+C/V/F)
   useEffect(() => {
@@ -802,6 +826,7 @@ function TerminalComponent({
         style={{
           height: "100%",
           width: "100%",
+          minWidth: 0,
           overflow: "hidden",
           position: "relative",
         }}
