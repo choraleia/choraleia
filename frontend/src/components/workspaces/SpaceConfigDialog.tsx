@@ -39,6 +39,8 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import TerminalIcon from "@mui/icons-material/Terminal";
 import StorageIcon from "@mui/icons-material/Storage";
 import SettingsIcon from "@mui/icons-material/Settings";
+import SmartToyIcon from "@mui/icons-material/SmartToy";
+import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import {
   SpaceConfigInput,
   RuntimeType,
@@ -67,10 +69,15 @@ import {
   PRESET_DOCKER_IMAGES,
   isValidWorkspaceName,
   sanitizeWorkspaceName,
+  AgentConfig,
+  AgentType,
+  AGENT_TYPE_INFO,
+  PRESET_AGENTS,
 } from "../../state/workspaces";
 import { listAssets, AssetLike, AssetType } from "../assets/api/assets";
 import { listBuiltinTools, BuiltinToolDefinition } from "../../api/builtin-tools";
 import { getApiBase } from "../../api/base";
+import AgentDesigner from "./AgentDesigner";
 
 // Vision model info for selection
 interface VisionModel {
@@ -87,6 +94,7 @@ interface SpaceConfigDialogProps {
   initialConfig: SpaceConfigInput;
   existingNames?: string[];  // List of existing workspace names for uniqueness check
   editingName?: string;      // Current name if editing (to allow keeping same name)
+  workspaceId?: string;      // Workspace ID for editing existing workspace
 }
 
 const uid = () =>
@@ -1324,6 +1332,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   initialConfig,
   existingNames = [],
   editingName,
+  workspaceId,
 }) => {
   const [tab, setTab] = useState(0);
   const [state, setState] = useState<SpaceConfigInput>(initialConfig);
@@ -1370,12 +1379,15 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   // Built-in tools from backend
   const [builtinTools, setBuiltinTools] = useState<BuiltinToolDefinition[]>([]);
   const [loadingBuiltinTools, setLoadingBuiltinTools] = useState(false);
+  const builtinToolsFetched = React.useRef(false);
   const [selectedBuiltinTools, setSelectedBuiltinTools] = useState<Set<string>>(new Set());
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set()); // Default: all collapsed
 
   // Vision models for browser_get_visual_state tool
   const [visionModels, setVisionModels] = useState<VisionModel[]>([]);
   const [loadingVisionModels, setLoadingVisionModels] = useState(false);
+  const visionModelsFetched = React.useRef(false);
+
 
 
   // Asset type icons
@@ -1416,18 +1428,20 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
 
   // Fetch built-in tools when Tools tab is active
   useEffect(() => {
-    if (open && tab === 2 && builtinTools.length === 0 && !loadingBuiltinTools) {
+    if (open && tab === 2 && !builtinToolsFetched.current && !loadingBuiltinTools) {
+      builtinToolsFetched.current = true;
       setLoadingBuiltinTools(true);
       listBuiltinTools()
         .then((res) => setBuiltinTools(res.tools || []))
         .catch((err) => console.error("Failed to fetch builtin tools:", err))
         .finally(() => setLoadingBuiltinTools(false));
     }
-  }, [open, tab, builtinTools.length, loadingBuiltinTools]);
+  }, [open, tab, loadingBuiltinTools]);
 
   // Fetch vision models for browser_get_visual_state tool configuration
   useEffect(() => {
-    if (open && tab === 2 && visionModels.length === 0 && !loadingVisionModels) {
+    if (open && tab === 2 && !visionModelsFetched.current && !loadingVisionModels) {
+      visionModelsFetched.current = true;
       setLoadingVisionModels(true);
       fetch(`${getApiBase()}/api/models?task_types=image_understanding`)
         .then((res) => res.json())
@@ -1439,7 +1453,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
         .catch((err) => console.error("Failed to fetch vision models:", err))
         .finally(() => setLoadingVisionModels(false));
     }
-  }, [open, tab, visionModels.length, loadingVisionModels]);
+  }, [open, tab, loadingVisionModels]);
 
 
   // Add asset to workspace
@@ -1808,6 +1822,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     resetNewToolForm();
   };
 
+
   // Fetch Docker host assets
   const fetchDockerHostAssets = useCallback(async () => {
     setLoadingDockerHosts(true);
@@ -2060,10 +2075,23 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     }
   };
 
-  const tabs = ["General", "Assets", "Tools"];
+  const tabs = ["General", "Assets", "Tools", "Agents"];
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md">
+    <Dialog
+      open={open}
+      onClose={onClose}
+      fullWidth
+      maxWidth={false}
+      PaperProps={{
+        sx: {
+          width: '90%',
+          height: '90%',
+          maxWidth: '90%',
+          maxHeight: '90%',
+        }
+      }}
+    >
       <DialogTitle sx={{ pb: 0 }}>Space Configuration</DialogTitle>
       <Tabs
         value={tab}
@@ -3380,6 +3408,18 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                 )}
               </Box>
             </FormSection>
+          </Box>
+        )}
+
+        {/* Agents Tab */}
+        {tab === 3 && (
+          <Box sx={{ height: "calc(90vh - 200px)", minHeight: 500 }}>
+            <AgentDesigner
+              workspaceId={workspaceId || ""}
+              agents={state.agents || []}
+              tools={state.tools || []}
+              onChange={(agents) => handleChange({ agents })}
+            />
           </Box>
         )}
       </DialogContent>

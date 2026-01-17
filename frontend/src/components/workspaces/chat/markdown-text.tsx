@@ -170,7 +170,13 @@ const defaultComponents = memoizeMarkdownComponents({
     <Typography
       component="p"
       variant="body2"
-      sx={{ mt: 1.5, mb: 1.5, lineHeight: 1.5 }}
+      sx={{
+        mt: 1.5,
+        mb: 1.5,
+        lineHeight: 1.5,
+        wordBreak: "break-word",
+        overflowWrap: "anywhere",
+      }}
       className={className}
       {...props}
     />
@@ -323,6 +329,8 @@ const defaultComponents = memoizeMarkdownComponents({
           border: `1px solid ${theme.palette.divider}`,
           fontSize: "0.85em",
           fontWeight: 600,
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
         })}
         className={className}
         {...props}

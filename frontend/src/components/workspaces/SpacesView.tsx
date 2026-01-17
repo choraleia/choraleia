@@ -36,6 +36,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import BuildIcon from "@mui/icons-material/Build";
 import FolderIcon from "@mui/icons-material/Folder";
+import SmartToyIcon from "@mui/icons-material/SmartToy";
 import SpaceLayout from "./SpaceLayout";
 import { Workspace, useWorkspaces, createRoomConfigTemplate, SpaceConfigInput, RuntimeType } from "../../state/workspaces";
 import SpaceConfigDialog from "./SpaceConfigDialog";
@@ -303,6 +304,7 @@ const SpacesView: React.FC = () => {
         runtime: editingWorkspace.runtime,
         assets: editingWorkspace.assets,
         tools: editingWorkspace.tools,
+        agents: editingWorkspace.agents || [],
       };
     }
     return createRoomConfigTemplate(`workspace-${workspaces.length + 1}`);
@@ -419,6 +421,7 @@ const SpacesView: React.FC = () => {
           const isActive = workspace.id === activeWorkspaceId;
           const toolsCount = workspace.tools.length;
           const assetsCount = workspace.assets.assets.length;
+          const agentsCount = (workspace.agents || []).length;
 
           return (
             <Grid item key={workspace.id} xs={12} sm={6} md={4} lg={3}>
@@ -510,6 +513,18 @@ const SpacesView: React.FC = () => {
                               icon={<FolderIcon sx={{ fontSize: 14 }} />}
                               label={assetsCount}
                               variant="outlined"
+                              sx={{ height: 22, fontSize: "0.7rem" }}
+                            />
+                          </Tooltip>
+                        )}
+                        {agentsCount > 0 && (
+                          <Tooltip title="Agents">
+                            <Chip
+                              size="small"
+                              icon={<SmartToyIcon sx={{ fontSize: 14 }} />}
+                              label={agentsCount}
+                              variant="outlined"
+                              color="primary"
                               sx={{ height: 22, fontSize: "0.7rem" }}
                             />
                           </Tooltip>
@@ -628,6 +643,7 @@ const SpacesView: React.FC = () => {
         onSave={handleDialogSave}
         existingNames={workspaces.map(ws => ws.name)}
         editingName={editingWorkspace?.name}
+        workspaceId={editingWorkspace?.id}
       />
     </Box>
   );
