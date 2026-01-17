@@ -393,6 +393,23 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 	// Create cancellable context
 	streamCtx, cancel := context.WithCancel(ctx)
 
+	// Check if there's an existing session and wait for it to complete
+	if existingSession, ok := s.activeStreams.Load(conv.ID); ok {
+		oldSess := existingSession.(*StreamSession)
+		// Cancel the old session if still running
+		oldSess.Cancel()
+		// Wait for old session to complete (with timeout)
+		select {
+		case <-oldSess.done:
+			// Old session completed
+		case <-time.After(5 * time.Second):
+			// Timeout - proceed anyway
+			s.logger.Warn("Timeout waiting for old session to complete", "conversationID", conv.ID)
+		}
+		// Remove old session
+		s.activeStreams.Delete(conv.ID)
+	}
+
 	// Register active stream
 	session := &StreamSession{
 		ConversationID: conv.ID,
@@ -436,56 +453,84 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 				targetMsg = assistantMsg
 			}
 
-			// Convert error to user-friendly message
-			errorMsg := s.formatAgentError(err)
+			// Check if this is a cancellation
+			if errors.Is(err, context.Canceled) {
+				// Ensure message status is updated (in case runStreamingAgent didn't save)
+				if targetMsg.Status != models.MessageStatusCompleted {
+					targetMsg.Status = models.MessageStatusCompleted
+					targetMsg.FinishReason = models.FinishReasonCancelled
+					s.SaveMessage(targetMsg)
+				}
 
-			// Append error to existing content using Parts
-			existingText := targetMsg.GetTextContent()
-			if existingText != "" {
-				targetMsg.AddTextPart(errorMsg, targetMsg.GetMaxRoundIndex())
-			} else {
-				targetMsg.AddTextPart(errorMsg, 0)
-			}
-			targetMsg.Status = models.MessageStatusError
-			targetMsg.FinishReason = models.FinishReasonStop
-			s.SaveMessage(targetMsg)
-
-			// Send error content chunk so it displays in the chat
-			errorChunk := &models.ChatCompletionChunk{
-				ID:             targetMsg.ID,
-				Object:         "chat.completion.chunk",
-				Created:        time.Now().Unix(),
-				Model:          req.Model,
-				ConversationID: conv.ID,
-				Choices: []models.ChatCompletionChunkChoice{
-					{
-						Index: 0,
-						Delta: models.ChatCompletionChunkDelta{
-							Content: "\n\n" + errorMsg,
+				// Send finish chunk with cancelled reason
+				finishChunk := &models.ChatCompletionChunk{
+					ID:             targetMsg.ID,
+					Object:         "chat.completion.chunk",
+					Created:        time.Now().Unix(),
+					Model:          req.Model,
+					ConversationID: conv.ID,
+					Choices: []models.ChatCompletionChunkChoice{
+						{
+							Index:        0,
+							Delta:        models.ChatCompletionChunkDelta{},
+							FinishReason: models.FinishReasonCancelled,
 						},
 					},
-				},
-			}
-			s.updateStreamBuffer(conv.ID, errorChunk)
-			chunks <- errorChunk
+				}
+				s.updateStreamBuffer(conv.ID, finishChunk)
+				chunks <- finishChunk
+			} else {
+				// Convert error to user-friendly message
+				errorMsg := s.formatAgentError(err)
 
-			// Send finish chunk with stop reason (OpenAI compatible)
-			finishChunk := &models.ChatCompletionChunk{
-				ID:             targetMsg.ID,
-				Object:         "chat.completion.chunk",
-				Created:        time.Now().Unix(),
-				Model:          req.Model,
-				ConversationID: conv.ID,
-				Choices: []models.ChatCompletionChunkChoice{
-					{
-						Index:        0,
-						Delta:        models.ChatCompletionChunkDelta{},
-						FinishReason: models.FinishReasonStop,
+				// Append error to existing content using Parts
+				existingText := targetMsg.GetTextContent()
+				if existingText != "" {
+					targetMsg.AddTextPart(errorMsg, targetMsg.GetMaxRoundIndex())
+				} else {
+					targetMsg.AddTextPart(errorMsg, 0)
+				}
+				targetMsg.Status = models.MessageStatusError
+				targetMsg.FinishReason = models.FinishReasonStop
+				s.SaveMessage(targetMsg)
+
+				// Send error content chunk so it displays in the chat
+				errorChunk := &models.ChatCompletionChunk{
+					ID:             targetMsg.ID,
+					Object:         "chat.completion.chunk",
+					Created:        time.Now().Unix(),
+					Model:          req.Model,
+					ConversationID: conv.ID,
+					Choices: []models.ChatCompletionChunkChoice{
+						{
+							Index: 0,
+							Delta: models.ChatCompletionChunkDelta{
+								Content: "\n\n" + errorMsg,
+							},
+						},
 					},
-				},
+				}
+				s.updateStreamBuffer(conv.ID, errorChunk)
+				chunks <- errorChunk
+
+				// Send finish chunk with stop reason (OpenAI compatible)
+				finishChunk := &models.ChatCompletionChunk{
+					ID:             targetMsg.ID,
+					Object:         "chat.completion.chunk",
+					Created:        time.Now().Unix(),
+					Model:          req.Model,
+					ConversationID: conv.ID,
+					Choices: []models.ChatCompletionChunkChoice{
+						{
+							Index:        0,
+							Delta:        models.ChatCompletionChunkDelta{},
+							FinishReason: models.FinishReasonStop,
+						},
+					},
+				}
+				s.updateStreamBuffer(conv.ID, finishChunk)
+				chunks <- finishChunk
 			}
-			s.updateStreamBuffer(conv.ID, finishChunk)
-			chunks <- finishChunk
 		}
 
 		// Update conversation timestamp
@@ -672,12 +717,9 @@ func (s *ChatService) handleRegenerateAction(req *models.ChatCompletionRequest) 
 func (s *ChatService) CancelStream(conversationID string) error {
 	if session, ok := s.activeStreams.Load(conversationID); ok {
 		sess := session.(*StreamSession)
+		// Just cancel the context - the goroutine will handle cleanup and send finish chunk
 		sess.Cancel()
-
-		// Update message status
-		s.UpdateMessageStatus(sess.MessageID, models.MessageStatusCompleted, models.FinishReasonCancelled)
-
-		s.activeStreams.Delete(conversationID)
+		// Don't delete activeStreams here - let the goroutine clean up after sending finish chunk
 		return nil
 	}
 	return nil
@@ -1523,10 +1565,19 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Track current assistant message
 	currentAssistantMsg := assistantMsg
 
+	// Track if we've already handled cancellation (to avoid double save)
+	cancelled := false
+
 	for {
+		// Check for cancellation before getting next part
 		select {
 		case <-ctx.Done():
-			s.UpdateMessageStatus(currentAssistantMsg.ID, models.MessageStatusCompleted, models.FinishReasonCancelled)
+			if !cancelled {
+				cancelled = true
+				currentAssistantMsg.Status = models.MessageStatusCompleted
+				currentAssistantMsg.FinishReason = models.FinishReasonCancelled
+				s.SaveMessage(currentAssistantMsg)
+			}
 			return currentAssistantMsg, ctx.Err()
 		default:
 		}
@@ -1536,6 +1587,16 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			break
 		}
 		if part.Err != nil {
+			// Check if this is a cancellation error
+			if errors.Is(part.Err, context.Canceled) || errors.Is(part.Err, context.DeadlineExceeded) {
+				if !cancelled {
+					cancelled = true
+					currentAssistantMsg.Status = models.MessageStatusCompleted
+					currentAssistantMsg.FinishReason = models.FinishReasonCancelled
+					s.SaveMessage(currentAssistantMsg)
+				}
+				return currentAssistantMsg, part.Err
+			}
 			s.logger.Error("Agent iteration error", "error", part.Err)
 			return currentAssistantMsg, fmt.Errorf("agent error: %w", part.Err)
 		}
@@ -1585,11 +1646,60 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			var iterChunks []*schema.Message
 			if part.Output.MessageOutput.MessageStream != nil {
 				for {
+					// Check for cancellation during streaming
+					select {
+					case <-ctx.Done():
+						// Concat accumulated chunks and save before returning
+						if len(iterChunks) > 0 {
+							streamedMsg, concatErr := schema.ConcatMessages(iterChunks)
+							if concatErr == nil {
+								roundIndex := currentAssistantMsg.GetMaxRoundIndex()
+								if streamedMsg.ReasoningContent != "" {
+									currentAssistantMsg.AddReasoningPart(streamedMsg.ReasoningContent, roundIndex)
+								}
+								if streamedMsg.Content != "" {
+									currentAssistantMsg.AddTextPart(streamedMsg.Content, roundIndex)
+								}
+							}
+						}
+						if !cancelled {
+							cancelled = true
+							currentAssistantMsg.Status = models.MessageStatusCompleted
+							currentAssistantMsg.FinishReason = models.FinishReasonCancelled
+							s.SaveMessage(currentAssistantMsg)
+						}
+						return currentAssistantMsg, ctx.Err()
+					default:
+					}
+
 					chunk, err := part.Output.MessageOutput.MessageStream.Recv()
 					if errors.Is(err, io.EOF) {
 						break
 					}
 					if err != nil {
+						// Check if error is due to context cancellation
+						if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+							// Save accumulated content before returning
+							if len(iterChunks) > 0 {
+								streamedMsg, concatErr := schema.ConcatMessages(iterChunks)
+								if concatErr == nil {
+									roundIndex := currentAssistantMsg.GetMaxRoundIndex()
+									if streamedMsg.ReasoningContent != "" {
+										currentAssistantMsg.AddReasoningPart(streamedMsg.ReasoningContent, roundIndex)
+									}
+									if streamedMsg.Content != "" {
+										currentAssistantMsg.AddTextPart(streamedMsg.Content, roundIndex)
+									}
+								}
+							}
+							if !cancelled {
+								cancelled = true
+								currentAssistantMsg.Status = models.MessageStatusCompleted
+								currentAssistantMsg.FinishReason = models.FinishReasonCancelled
+								s.SaveMessage(currentAssistantMsg)
+							}
+							return currentAssistantMsg, ctx.Err()
+						}
 						s.logger.Error("Agent stream error", "error", err)
 						return currentAssistantMsg, fmt.Errorf("stream error: %w", err)
 					}

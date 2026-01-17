@@ -16,7 +16,9 @@ import (
 	"github.com/choraleia/choraleia/pkg/event"
 	"github.com/choraleia/choraleia/pkg/handler"
 	"github.com/choraleia/choraleia/pkg/service"
+	"github.com/choraleia/choraleia/pkg/service/repomap"
 	"github.com/choraleia/choraleia/pkg/tools"
+	"github.com/choraleia/choraleia/pkg/tools/workspace_repomap"
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -334,6 +336,24 @@ func (s *Server) SetupRoutes() {
 	workspaceService.SetRuntimeStatusService(runtimeStatusService)
 	// Setup callbacks for runtime events (e.g., save container ID when created)
 	workspaceService.SetupRuntimeCallbacks()
+
+	// Initialize RepoMap service for code indexing
+	repoMapService := repomap.NewRepoMapService(repomap.DefaultServiceConfig())
+	workspaceService.SetRepoMapService(repoMapService)
+	workspaceService.SetFSRegistry(fsRegistry)
+	// Initialize repo map for all existing workspaces
+	go func() {
+		if err := workspaceService.InitRepoMapForAllWorkspaces(context.Background()); err != nil {
+			slog.Error("Failed to init repo map for workspaces", "error", err)
+		}
+		// Start background indexing service
+		repoMapService.Start()
+	}()
+	// Set global repo map service getter for tools
+	workspace_repomap.GetRepoMapService = func() *repomap.RepoMapService {
+		return repoMapService
+	}
+
 	workspaceHandler := handler.NewWorkspaceHandler(workspaceService)
 	workspaceHandler.RegisterRoutes(apiGroup)
 
