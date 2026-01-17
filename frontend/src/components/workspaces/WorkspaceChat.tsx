@@ -56,7 +56,7 @@ type UIMessage = {
   content: any[];  // Structured content array for UI
   createdAt: Date;
   parentId: string | null;
-  status?: "running" | "complete" | "error";
+  status?: "running" | "complete" | "error" | "cancelled";
 };
 
 // Convert MessagePart to UI content format
@@ -469,14 +469,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         const msgs = response.messages;
         const uiMsgs = storedMessagesToUIMessages(msgs);
 
-        // Debug logging
-        console.log("[loadMessages] Raw messages from API:", msgs.map(m => ({
-          id: m.id,
-          role: m.role,
-          parent_id: m.parent_id,
-          parts: m.parts?.length,
-        })));
-
         setAllMessages(uiMsgs);
         setCurrentHeadId(null);
       }
@@ -556,11 +548,19 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     });
 
     const contentParts: any[] = [];
+    let finishReason: string | undefined;
 
     for await (const chunk of stream) {
+
       if (abortControllerRef.current?.signal.aborted) break;
 
       for (const choice of chunk.choices) {
+        // Check for finish reason
+        if (choice.finish_reason) {
+          finishReason = choice.finish_reason;
+          continue;
+        }
+
         // New assistant round marker - skip
         if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls && !choice.delta.reasoning_content) {
           continue;
@@ -638,11 +638,14 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
       );
     }
 
-    // Mark complete
+    // Determine final status based on finish reason
+    const finalStatus = finishReason === "cancelled" ? "cancelled" : "complete";
+
+    // Mark message with final status
     setAllMessages((prev) =>
       prev.map((msg) =>
         msg.id === assistantMessageId
-          ? { ...msg, status: "complete" as const }
+          ? { ...msg, status: finalStatus as "complete" | "cancelled" }
           : msg
       )
     );
@@ -650,6 +653,13 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
   // Send message handler
   const onNew = useCallback(async (appendMessage: AppendMessage) => {
+    // Guard: don't send if already running
+    if (isRunning) {
+      console.warn("Cannot send message while another is running");
+      return;
+    }
+
+
     const textContent = appendMessage.content
       .filter((part): part is { type: "text"; text: string } => part.type === "text")
       .map((part) => part.text)
@@ -701,6 +711,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     };
 
     setAllMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setCurrentHeadId(null); // Reset to auto-detect new head (the new assistant message)
     setIsRunning(true);
     abortControllerRef.current = new AbortController();
 
@@ -725,17 +736,20 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentThreadId, workspaceId, selectedModel, streamChat, currentBranchPath, isNewChat]);
 
-  // Cancel handler
+  // Cancel handler - notify backend to cancel, let stream end naturally with finish_reason
   const onCancel = useCallback(async () => {
-    abortControllerRef.current?.abort();
     if (currentThreadId) {
       try {
         await cancelStream(currentThreadId);
+        // Don't set isRunning=false here - wait for the stream to end naturally
+        // The stream will receive a chunk with finish_reason="cancelled"
       } catch (error) {
         console.error("Failed to cancel stream:", error);
+        // Only force stop if cancel API fails
+        abortControllerRef.current?.abort();
+        setIsRunning(false);
       }
     }
-    setIsRunning(false);
   }, [currentThreadId]);
 
   // Reload handler - regenerate assistant response (creates a sibling branch)

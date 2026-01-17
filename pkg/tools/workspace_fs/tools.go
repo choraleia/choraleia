@@ -131,22 +131,76 @@ func NewListTool(tc *tools.ToolContext) tool.InvokableTool {
 // ---- Read File Tool ----
 
 type ReadInput struct {
-	Path     string `json:"path"`
-	MaxBytes *int   `json:"max_bytes,omitempty"`
+	Path      string `json:"path"`
+	StartLine *int   `json:"start_line,omitempty"` // 1-based start line number
+	EndLine   *int   `json:"end_line,omitempty"`   // 1-based end line number (inclusive)
+	MaxBytes  *int   `json:"max_bytes,omitempty"`
 }
 
 func NewReadTool(tc *tools.ToolContext) tool.InvokableTool {
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_read",
-		Desc: "Read the content of a file in the workspace. Use for viewing configuration files, logs, or source code.",
+		Desc: `Read the content of a file in the workspace. Use for viewing configuration files, logs, or source code.
+Supports reading specific line ranges for efficient reading of large files.`,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path":      {Type: schema.String, Required: true, Desc: "File path to read"},
-			"max_bytes": {Type: schema.Integer, Required: false, Desc: "Maximum bytes to read (default: no limit)"},
+			"path":       {Type: schema.String, Required: true, Desc: "File path to read"},
+			"start_line": {Type: schema.Integer, Required: false, Desc: "Start line number (1-based, inclusive). If omitted, starts from beginning."},
+			"end_line":   {Type: schema.Integer, Required: false, Desc: "End line number (1-based, inclusive). If omitted, reads to end."},
+			"max_bytes":  {Type: schema.Integer, Required: false, Desc: "Maximum bytes to read (default: no limit)"},
 		}),
 	}, func(ctx context.Context, input *ReadInput) (string, error) {
 		content, err := tc.ReadFile(ctx, tc.WorkspaceEndpoint(), input.Path)
 		if err != nil {
 			return "", fmt.Errorf("failed to read file: %w", err)
+		}
+
+		// Handle line range if specified
+		if input.StartLine != nil || input.EndLine != nil {
+			lines := strings.Split(content, "\n")
+			totalLines := len(lines)
+
+			startIdx := 0
+			endIdx := totalLines
+
+			if input.StartLine != nil {
+				startIdx = *input.StartLine - 1 // Convert to 0-based
+				if startIdx < 0 {
+					startIdx = 0
+				}
+				if startIdx > totalLines {
+					startIdx = totalLines
+				}
+			}
+
+			if input.EndLine != nil {
+				endIdx = *input.EndLine // End is inclusive, so no -1
+				if endIdx < 0 {
+					endIdx = 0
+				}
+				if endIdx > totalLines {
+					endIdx = totalLines
+				}
+			}
+
+			if startIdx > endIdx {
+				startIdx = endIdx
+			}
+
+			// Build result with line numbers
+			var sb strings.Builder
+			if startIdx > 0 {
+				sb.WriteString(fmt.Sprintf("... (lines 1-%d omitted)\n", startIdx))
+			}
+
+			for i := startIdx; i < endIdx; i++ {
+				sb.WriteString(fmt.Sprintf("%4d | %s\n", i+1, lines[i]))
+			}
+
+			if endIdx < totalLines {
+				sb.WriteString(fmt.Sprintf("... (lines %d-%d omitted)\n", endIdx+1, totalLines))
+			}
+
+			content = sb.String()
 		}
 
 		if input.MaxBytes != nil && len(content) > *input.MaxBytes {

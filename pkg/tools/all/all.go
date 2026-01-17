@@ -11,4 +11,5 @@ import (
 	_ "github.com/choraleia/choraleia/pkg/tools/transfer"
 	_ "github.com/choraleia/choraleia/pkg/tools/workspace_exec"
 	_ "github.com/choraleia/choraleia/pkg/tools/workspace_fs"
+	_ "github.com/choraleia/choraleia/pkg/tools/workspace_repomap"
 )

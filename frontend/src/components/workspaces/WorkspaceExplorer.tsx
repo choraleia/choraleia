@@ -1,8 +1,5 @@
 import React, { useMemo, useState, useCallback } from "react";
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Box,
   IconButton,
   List,
@@ -251,6 +248,7 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
     fileTree,
     fileTreeLoading,
     refreshFileTree,
+    loadDirectoryChildren,
     openFileFromTree,
     openFileInPaneTree,
     openTerminalTab,
@@ -298,9 +296,6 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
   // Selected file/folder path
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
 
-  const toggleWorkspace = (_event: React.SyntheticEvent, isExpanded: boolean) => setWorkspaceExpanded(isExpanded);
-  const toggleAssets = (_event: React.SyntheticEvent, isExpanded: boolean) => setAssetsExpanded(isExpanded);
-
   const toggleFolder = useCallback((path: string) => {
     setExpandedFolders((prev) => {
       const next = new Set(prev);
@@ -308,10 +303,26 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
         next.delete(path);
       } else {
         next.add(path);
+        // Check if this folder needs lazy loading (has empty children array)
+        const findNode = (nodes: FileNode[]): FileNode | undefined => {
+          for (const node of nodes) {
+            if (node.path === path) return node;
+            if (node.children) {
+              const found = findNode(node.children);
+              if (found) return found;
+            }
+          }
+          return undefined;
+        };
+        const node = findNode(fileTree);
+        if (node && node.type === "folder" && node.children && node.children.length === 0) {
+          // Lazy load children
+          loadDirectoryChildren(path);
+        }
       }
       return next;
     });
-  }, []);
+  }, [fileTree, loadDirectoryChildren]);
 
   const expandAllFolders = useCallback(() => {
     const allFolderPaths = new Set<string>();
@@ -512,36 +523,59 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
 
   if (!activeRoom) return null;
 
+  // Calculate heights based on which accordions are expanded
+  const getWorkspaceHeight = () => {
+    if (!workspaceExpanded) return "auto";
+    if (!assetsExpanded) return "100%";
+    return "50%";
+  };
+  const getAssetsHeight = () => {
+    if (!assetsExpanded) return "auto";
+    if (!workspaceExpanded) return "100%";
+    return "50%";
+  };
+
   return (
     <Box
-      display="flex"
-      flexDirection="column"
-      height="100%"
-      overflow="hidden"
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        overflow: "hidden",
+      }}
     >
-      <Accordion
-        disableGutters
-        expanded={workspaceExpanded}
-        onChange={toggleWorkspace}
-        square
+      {/* Workspace Section */}
+      <Box
         sx={{
-          flex: workspaceExpanded ? 1 : "none",
-          minHeight: 0,
+          height: getWorkspaceHeight(),
+          minHeight: workspaceExpanded ? 100 : "auto",
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
           borderBottom: "1px solid",
           borderColor: "divider",
-          boxShadow: "none",
-          "&.MuiAccordion-root": {
-            "&:before": { display: "none" },
-          },
         }}
       >
-        <AccordionSummary
-          expandIcon={<ExpandMoreIcon fontSize="small" />}
-          sx={{ minHeight: 36, "& .MuiAccordionSummary-content": { my: 0 } }}
+        <Box
+          onClick={() => setWorkspaceExpanded(!workspaceExpanded)}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            px: 2,
+            py: 0.5,
+            minHeight: 36,
+            cursor: "pointer",
+            "&:hover": { bgcolor: "action.hover" },
+          }}
         >
+          <ExpandMoreIcon
+            fontSize="small"
+            sx={{
+              transform: workspaceExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+              transition: "transform 0.2s",
+              mr: 1,
+            }}
+          />
           <Typography variant="subtitle2">Workspace</Typography>
           <Box flex={1} />
           <Tooltip title="Add file or folder">
@@ -564,124 +598,130 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
               <MoreVertIcon fontSize="inherit" />
             </IconButton>
           </Tooltip>
-        </AccordionSummary>
-        <AccordionDetails
-          sx={{
-            flex: 1,
-            minHeight: 0,
-            overflow: "auto",
-            p: 0,
-          }}
-        >
-          <List
-            dense
-            disablePadding
+        </Box>
+        {workspaceExpanded && (
+          <Box
             sx={{
-              "& .MuiListItemIcon-root": { minWidth: 24 },
-              "& .MuiListItem-root": { my: 0 },
-              "& .MuiListItemButton-root": { py: 0.25 },
+              flex: 1,
+              overflow: "auto",
             }}
           >
-            {fileTreeLoading ? (
-              <ListItem>
-                <ListItemText
-                  primary="Loading files..."
-                  primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
-                />
-              </ListItem>
-            ) : fileTree.length > 0 ? (
-              <FileTree
-                nodes={fileTree}
-                openFile={openFileInPaneTree}
-                onContextMenu={handleFileContextMenu}
-                expandedFolders={expandedFolders}
-                toggleFolder={toggleFolder}
-                options={fileListOptions}
-                selectedPath={selectedFilePath}
-                onSelect={setSelectedFilePath}
-              />
-            ) : (
-              <ListItem>
-                <ListItemText
-                  primary="No files"
-                  primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
-                />
-              </ListItem>
-            )}
-          </List>
-        </AccordionDetails>
-      </Accordion>
-      <Accordion
-        disableGutters
-        expanded={assetsExpanded}
-        onChange={toggleAssets}
-        square
-        sx={{
-          flex: assetsExpanded ? 1 : "none",
-          minHeight: 0,
-          display: "flex",
-          flexDirection: "column",
-          overflow: "hidden",
-          boxShadow: "none",
-          border: "none",
-          "&.MuiAccordion-root": {
-            "&:before": { display: "none" },
-          },
-        }}
-      >
-        <AccordionSummary
-          expandIcon={<ExpandMoreIcon fontSize="small" />}
-          sx={{
-            minHeight: 36,
-            "& .MuiAccordionSummary-content": { my: 0 },
-          }}
-        >
-          <Typography variant="subtitle2">Assets</Typography>
-          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-            {assetItems.length}
-          </Typography>
-        </AccordionSummary>
-        <AccordionDetails
-          sx={{
-            flex: 1,
-            minHeight: 0,
-            overflow: "auto",
-            p: 0,
-          }}
-        >
-          {assetItems.length === 0 ? (
-            <Box px={1.5} py={1}>
-              <Typography variant="body2" color="text.secondary">
-                No assets configured for this workspace.
-              </Typography>
-            </Box>
-          ) : (
             <List
               dense
               disablePadding
               sx={{
+                "& .MuiListItemIcon-root": { minWidth: 24 },
                 "& .MuiListItem-root": { my: 0 },
                 "& .MuiListItemButton-root": { py: 0.25 },
               }}
             >
-              {assetItems.map((asset) => (
-                <ListItem disablePadding key={asset.id}>
-                  <ListItemButton dense>
-                    <ListItemIcon sx={{ minWidth: 28 }}>{asset.icon}</ListItemIcon>
-                    <ListItemText
-                      primary={asset.name || "(unnamed)"}
-                      secondary={asset.subtitle}
-                      primaryTypographyProps={{ noWrap: true, variant: "body2" }}
-                      secondaryTypographyProps={{ noWrap: true, variant: "caption" }}
-                      sx={{ overflow: "hidden" }}
-                    />
-                  </ListItemButton>
+              {fileTreeLoading ? (
+                <ListItem>
+                  <ListItemText
+                    primary="Loading files..."
+                    primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
+                  />
                 </ListItem>
-              ))}
+              ) : fileTree.length > 0 ? (
+                <FileTree
+                  nodes={fileTree}
+                  openFile={openFileInPaneTree}
+                  onContextMenu={handleFileContextMenu}
+                  expandedFolders={expandedFolders}
+                  toggleFolder={toggleFolder}
+                  options={fileListOptions}
+                  selectedPath={selectedFilePath}
+                  onSelect={setSelectedFilePath}
+                />
+              ) : (
+                <ListItem>
+                  <ListItemText
+                    primary="No files"
+                    primaryTypographyProps={{ variant: "body2", color: "text.secondary" }}
+                  />
+                </ListItem>
+              )}
             </List>
-          )}
-        </AccordionDetails>
-      </Accordion>
+          </Box>
+        )}
+      </Box>
+
+      {/* Assets Section */}
+      <Box
+        sx={{
+          height: getAssetsHeight(),
+          minHeight: assetsExpanded ? 100 : "auto",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <Box
+          onClick={() => setAssetsExpanded(!assetsExpanded)}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            px: 2,
+            py: 0.5,
+            minHeight: 36,
+            cursor: "pointer",
+            "&:hover": { bgcolor: "action.hover" },
+          }}
+        >
+          <ExpandMoreIcon
+            fontSize="small"
+            sx={{
+              transform: assetsExpanded ? "rotate(0deg)" : "rotate(-90deg)",
+              transition: "transform 0.2s",
+              mr: 1,
+            }}
+          />
+          <Typography variant="subtitle2">Assets</Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+            {assetItems.length}
+          </Typography>
+        </Box>
+        {assetsExpanded && (
+          <Box
+            sx={{
+              flex: 1,
+              overflow: "auto",
+            }}
+          >
+            {assetItems.length === 0 ? (
+              <Box px={1.5} py={1}>
+                <Typography variant="body2" color="text.secondary">
+                  No assets configured for this workspace.
+                </Typography>
+              </Box>
+            ) : (
+              <List
+                dense
+                disablePadding
+                sx={{
+                  "& .MuiListItem-root": { my: 0 },
+                  "& .MuiListItemButton-root": { py: 0.25 },
+                }}
+              >
+                {assetItems.map((asset) => (
+                  <ListItem disablePadding key={asset.id}>
+                    <ListItemButton dense>
+                      <ListItemIcon sx={{ minWidth: 28 }}>{asset.icon}</ListItemIcon>
+                      <ListItemText
+                        primary={asset.name || "(unnamed)"}
+                        secondary={asset.subtitle}
+                        primaryTypographyProps={{ noWrap: true, variant: "body2" }}
+                        secondaryTypographyProps={{ noWrap: true, variant: "caption" }}
+                        sx={{ overflow: "hidden" }}
+                      />
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </Box>
+        )}
+      </Box>
 
       {/* Add file/folder menu */}
       <Menu

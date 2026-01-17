@@ -3,11 +3,17 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/service/fs"
+	"github.com/choraleia/choraleia/pkg/service/repomap"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -30,6 +36,8 @@ type WorkspaceService struct {
 	db             *gorm.DB
 	runtimeManager *RuntimeManager
 	toolManager    *ToolManager
+	repoMapService *repomap.RepoMapService
+	fsRegistry     *FSRegistry
 }
 
 // NewWorkspaceService creates a new WorkspaceService
@@ -79,6 +87,140 @@ func (s *WorkspaceService) SetRuntimeStatusService(ss *RuntimeStatusService) {
 // SetupRuntimeCallbacks sets up callbacks for the runtime manager
 func (s *WorkspaceService) SetupRuntimeCallbacks() {
 	s.runtimeManager.SetOnContainerCreated(s.updateRuntimeContainerInfo)
+}
+
+// SetRepoMapService sets the repo map service for code indexing
+func (s *WorkspaceService) SetRepoMapService(svc *repomap.RepoMapService) {
+	s.repoMapService = svc
+}
+
+// GetRepoMapService returns the repo map service
+func (s *WorkspaceService) GetRepoMapService() *repomap.RepoMapService {
+	return s.repoMapService
+}
+
+// SetFSRegistry sets the filesystem registry
+func (s *WorkspaceService) SetFSRegistry(reg *FSRegistry) {
+	s.fsRegistry = reg
+}
+
+// InitRepoMapForAllWorkspaces initializes repo map indexing for all existing workspaces
+func (s *WorkspaceService) InitRepoMapForAllWorkspaces(ctx context.Context) error {
+	if s.repoMapService == nil || s.fsRegistry == nil {
+		log.Printf("[RepoMap] InitRepoMapForAllWorkspaces: service or registry is nil")
+		return nil
+	}
+
+	var workspaces []models.Workspace
+	if err := s.db.Preload("Runtime").Find(&workspaces).Error; err != nil {
+		return err
+	}
+
+	log.Printf("[RepoMap] InitRepoMapForAllWorkspaces: found %d workspaces in database", len(workspaces))
+
+	registered := 0
+	for _, ws := range workspaces {
+		if ws.Runtime == nil {
+			log.Printf("[RepoMap] Skipping workspace %s: no runtime", ws.Name)
+			continue
+		}
+		if ws.Runtime.WorkDirPath == "" {
+			log.Printf("[RepoMap] Skipping workspace %s: empty workDir path", ws.Name)
+			continue
+		}
+		if err := s.registerWorkspaceRepoMap(ctx, &ws); err != nil {
+			log.Printf("[RepoMap] Failed to register workspace %s: %v", ws.ID, err)
+		} else {
+			registered++
+		}
+	}
+
+	log.Printf("[RepoMap] Initialized %d of %d workspaces", registered, len(workspaces))
+	return nil
+}
+
+// registerWorkspaceRepoMap registers a workspace for repo map indexing
+func (s *WorkspaceService) registerWorkspaceRepoMap(ctx context.Context, ws *models.Workspace) error {
+	if s.repoMapService == nil || s.fsRegistry == nil || ws.Runtime == nil {
+		return nil
+	}
+
+	var spec EndpointSpec
+	var rootPath string
+
+	switch ws.Runtime.Type {
+	case models.RuntimeTypeLocal:
+		// Local filesystem - no AssetID needed
+		spec = EndpointSpec{}
+		// Expand ~ to home directory for local filesystem
+		rootPath = expandTildePath(ws.Runtime.WorkDirPath)
+
+	case models.RuntimeTypeDockerLocal, models.RuntimeTypeDockerRemote:
+		// Docker (local or remote): use container filesystem via Docker API
+		// Need container ID to access files
+		if ws.Runtime.ContainerID == nil || *ws.Runtime.ContainerID == "" {
+			log.Printf("[RepoMap] Skipping docker workspace %s: no container ID (container may not be running)", ws.Name)
+			return nil
+		}
+
+		// Build endpoint spec for docker container
+		spec = EndpointSpec{
+			ContainerID: *ws.Runtime.ContainerID,
+		}
+		// For remote docker, also need the asset ID
+		if ws.Runtime.Type == models.RuntimeTypeDockerRemote && ws.Runtime.DockerAssetID != nil {
+			spec.AssetID = *ws.Runtime.DockerAssetID
+		}
+
+		// Use container path (WorkDirContainerPath), not host path
+		if ws.Runtime.WorkDirContainerPath != nil && *ws.Runtime.WorkDirContainerPath != "" {
+			rootPath = *ws.Runtime.WorkDirContainerPath
+		} else {
+			// Fallback to WorkDirPath if container path not set
+			rootPath = ws.Runtime.WorkDirPath
+		}
+
+	default:
+		log.Printf("[RepoMap] Skipping workspace %s: unsupported runtime type %s", ws.Name, ws.Runtime.Type)
+		return nil
+	}
+
+	// Open filesystem
+	fsys, err := s.fsRegistry.Open(ctx, spec)
+	if err != nil {
+		return fmt.Errorf("failed to open filesystem: %w", err)
+	}
+
+	// Create adapter with already-expanded path
+	adapter := repomap.NewFSAdapterWithExpandedPath(fsys, rootPath)
+	s.repoMapService.RegisterWorkspace(ws.ID, rootPath, adapter)
+
+	log.Printf("[RepoMap] Registered workspace %s (%s) type=%s", ws.Name, rootPath, ws.Runtime.Type)
+	return nil
+}
+
+// expandTildePath expands ~ to user's home directory
+func expandTildePath(path string) string {
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	} else if path == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+	}
+	return path
+}
+
+// unregisterWorkspaceRepoMap unregisters a workspace from repo map indexing
+func (s *WorkspaceService) unregisterWorkspaceRepoMap(workspaceID string) {
+	if s.repoMapService == nil {
+		return
+	}
+	s.repoMapService.UnregisterWorkspace(workspaceID)
 }
 
 // updateRuntimeContainerInfo updates the container ID and name in the database
@@ -272,6 +414,13 @@ func (s *WorkspaceService) Create(ctx context.Context, req *CreateWorkspaceReque
 	if err != nil {
 		return nil, err
 	}
+
+	// Register workspace for repo map indexing (async, don't block creation)
+	go func() {
+		if regErr := s.registerWorkspaceRepoMap(context.Background(), workspace); regErr != nil {
+			log.Printf("[RepoMap] Failed to register new workspace %s: %v", workspace.ID, regErr)
+		}
+	}()
 
 	return workspace, nil
 }
@@ -508,6 +657,9 @@ func (s *WorkspaceService) Delete(ctx context.Context, id string, force bool) er
 			return err
 		}
 	}
+
+	// Unregister from repo map indexing
+	s.unregisterWorkspaceRepoMap(id)
 
 	// Delete workspace (cascades to related tables)
 	return s.db.Delete(workspace).Error
