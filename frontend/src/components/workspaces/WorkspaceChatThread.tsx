@@ -570,7 +570,7 @@ const AssistantMessage: FC = () => {
           mb: 2,
         }}
       >
-        <Box sx={{ maxWidth: "100%" }}>
+        <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
           {/* Message content */}
           <Paper
             elevation={0}
@@ -580,6 +580,9 @@ const AssistantMessage: FC = () => {
               borderRadius: 2,
               width: "fit-content",
               maxWidth: "100%",
+              overflow: "hidden",
+              wordBreak: "break-word",
+              overflowWrap: "anywhere",
             }}
           >
             <MessagePrimitive.Parts

@@ -213,6 +213,7 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
       runtime: activeWorkspace.runtime,
       assets: activeWorkspace.assets,
       tools: activeWorkspace.tools,
+      agents: activeWorkspace.agents || [],
     };
   }, [activeWorkspace]);
 
@@ -459,7 +460,13 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
       </Box>
 
       {dialogInitialConfig && (
-        <SpaceConfigDialog open={isConfigOpen} onClose={closeConfig} initialConfig={dialogInitialConfig} onSave={handleSaveConfig} />
+        <SpaceConfigDialog
+          open={isConfigOpen}
+          onClose={closeConfig}
+          initialConfig={dialogInitialConfig}
+          onSave={handleSaveConfig}
+          workspaceId={activeWorkspace?.id}
+        />
       )}
       <RoomManagerDialog open={isRoomManagerOpen} onClose={closeRoomManager} />
     </Box>
