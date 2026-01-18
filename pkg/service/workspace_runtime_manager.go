@@ -78,6 +78,28 @@ func (m *RuntimeManager) SetOnContainerCreated(fn func(workspaceID, containerID,
 	m.onContainerCreated = fn
 }
 
+// ensureNetwork ensures the shared choraleia network exists
+func (m *RuntimeManager) ensureNetwork(ctx context.Context, dockerAsset *models.Asset) error {
+	// Check if network exists
+	output, err := m.execDocker(ctx, dockerAsset, "network", "inspect", ChoraNetworkName)
+	if err == nil && output != "" {
+		return nil // Network exists
+	}
+
+	// Create network
+	_, err = m.execDocker(ctx, dockerAsset, "network", "create", "--driver", "bridge", ChoraNetworkName)
+	if err != nil {
+		// Check if it's because network already exists (race condition)
+		if strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		return fmt.Errorf("failed to create docker network: %w", err)
+	}
+
+	m.logger.Debug("Created choraleia network", "network", ChoraNetworkName)
+	return nil
+}
+
 // StartRuntime starts the runtime for a workspace
 func (m *RuntimeManager) StartRuntime(ctx context.Context, workspace *models.Workspace) error {
 	if workspace.Runtime == nil {
@@ -139,7 +161,7 @@ func (m *RuntimeManager) startDockerLocalRuntime(ctx context.Context, workspace 
 
 	// Get container IP address
 	containerIP := ""
-	if ipOutput, ipErr := m.execDocker(ctx, nil, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID); ipErr == nil {
+	if ipOutput, ipErr := m.execDocker(ctx, nil, "inspect", "-f", fmt.Sprintf(`{{(index .NetworkSettings.Networks "%s").IPAddress}}`, ChoraNetworkName), containerID); ipErr == nil {
 		containerIP = strings.TrimSpace(ipOutput)
 	}
 
@@ -226,7 +248,7 @@ func (m *RuntimeManager) startDockerRemoteRuntime(ctx context.Context, workspace
 
 	// Get container IP address
 	containerIP := ""
-	if ipOutput, ipErr := m.execDocker(ctx, dockerAsset, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID); ipErr == nil {
+	if ipOutput, ipErr := m.execDocker(ctx, dockerAsset, "inspect", "-f", fmt.Sprintf(`{{(index .NetworkSettings.Networks "%s").IPAddress}}`, ChoraNetworkName), containerID); ipErr == nil {
 		containerIP = strings.TrimSpace(ipOutput)
 	}
 
@@ -276,6 +298,11 @@ func (m *RuntimeManager) createAndStartContainer(ctx context.Context, workspace 
 		m.statusService.SetProgress(workspace.ID, 10, "Pulling image...")
 	}
 
+	// Ensure shared network exists
+	if err := m.ensureNetwork(ctx, dockerAsset); err != nil {
+		m.logger.Warn("Failed to ensure network exists", "error", err)
+	}
+
 	// Pull image first
 	pullArgs := []string{"pull", image}
 	if _, err := m.execDocker(ctx, dockerAsset, pullArgs...); err != nil {
@@ -315,6 +342,9 @@ func (m *RuntimeManager) createAndStartContainer(ctx context.Context, workspace 
 	createArgs = append(createArgs, "--label", "managed-by=choraleia")
 	createArgs = append(createArgs, "--label", fmt.Sprintf("workspace-id=%s", workspace.ID))
 	createArgs = append(createArgs, "--label", fmt.Sprintf("workspace-name=%s", workspace.Name))
+
+	// Add network - use shared choraleia network for inter-container communication
+	createArgs = append(createArgs, "--network", ChoraNetworkName)
 
 	// Add volume mount for work directory
 	if runtime.WorkDirPath != "" {

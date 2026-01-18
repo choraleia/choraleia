@@ -87,22 +87,22 @@ Best practices:
 				// If file doesn't exist and create flag is set, use patch as content
 				cleanedPatch := removeMarkers(input.Patch)
 				if err := tc.WriteFile(ctx, tc.WorkspaceEndpoint(), input.Path, cleanedPatch); err != nil {
-					return "", fmt.Errorf("failed to create file: %w", err)
+					return fmt.Sprintf("Error: failed to create file '%s': %v", input.Path, err), nil
 				}
 				return fmt.Sprintf("Created new file %s with %d bytes", input.Path, len(cleanedPatch)), nil
 			}
-			return "", fmt.Errorf("failed to read file: %w", err)
+			return fmt.Sprintf("Error: file not found '%s'. Use 'create_if_not_exists: true' to create a new file, or use workspace_fs_write to create the file first", input.Path), nil
 		}
 
 		// Apply patch
 		result, err := applySmartPatch(existingContent, input.Patch)
 		if err != nil {
-			return "", fmt.Errorf("failed to apply patch: %w", err)
+			return fmt.Sprintf("Error: failed to apply patch to '%s': %v", input.Path, err), nil
 		}
 
 		// Write result
 		if err := tc.WriteFile(ctx, tc.WorkspaceEndpoint(), input.Path, result); err != nil {
-			return "", fmt.Errorf("failed to write file: %w", err)
+			return fmt.Sprintf("Error: failed to write patched file '%s': %v", input.Path, err), nil
 		}
 
 		return fmt.Sprintf("Successfully patched %s", input.Path), nil
@@ -156,7 +156,7 @@ func applySmartPatch(existing, patch string) (string, error) {
 	segments := parsePatchSegments(patchLines)
 
 	if len(segments) == 0 {
-		return "", fmt.Errorf("empty patch")
+		return "Error: empty patch - no content to apply", nil
 	}
 
 	// If no special markers, replace entire file
@@ -256,7 +256,7 @@ func applySegmentsV2(existingLines []string, segments []patchSegment) (string, e
 					// Find where this content starts in existing file
 					anchorIdx, err := findContentStart(existingLines, existingIdx, segments[j].lines)
 					if err != nil {
-						return "", err
+						return fmt.Sprintf("Error applying patch: %v", err), nil
 					}
 					if anchorIdx >= 0 {
 						preserveEnd = anchorIdx
@@ -266,7 +266,7 @@ func applySegmentsV2(existingLines []string, segments []patchSegment) (string, e
 					// Find where delete content starts in existing file
 					anchorIdx, err := findContentStart(existingLines, existingIdx, segments[j].lines)
 					if err != nil {
-						return "", err
+						return fmt.Sprintf("Error applying patch: %v", err), nil
 					}
 					if anchorIdx >= 0 {
 						preserveEnd = anchorIdx
@@ -287,7 +287,7 @@ func applySegmentsV2(existingLines []string, segments []patchSegment) (string, e
 				// Find where this content starts
 				startIdx, err := findContentStart(existingLines, existingIdx, seg.lines)
 				if err != nil {
-					return "", err
+					return fmt.Sprintf("Error applying patch: %v", err), nil
 				}
 				if startIdx >= 0 {
 					existingIdx = startIdx

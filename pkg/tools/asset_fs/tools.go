@@ -117,12 +117,12 @@ func NewListTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *ListInput) (string, error) {
 		result, err := tc.ListDir(ctx, tc.AssetEndpoint(input.AssetID), input.Path, input.All)
 		if err != nil {
-			return "", fmt.Errorf("failed to list directory on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to list directory '%s' on %s: %v", input.Path, getAssetName(tc, input.AssetID), err), nil
 		}
 
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf("Asset: %s\n", getAssetName(tc, input.AssetID)))
-		sb.WriteString(fmt.Sprintf("Directory: %s\n", input.Path))
+		sb.WriteString(fmt.Sprintf("Listing: %s\n", input.Path))
 		sb.WriteString(fmt.Sprintf("Total: %d items\n\n", len(result.Entries)))
 
 		for _, entry := range result.Entries {
@@ -158,7 +158,7 @@ func NewReadTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *ReadInput) (string, error) {
 		content, err := tc.ReadFile(ctx, tc.AssetEndpoint(input.AssetID), input.Path)
 		if err != nil {
-			return "", fmt.Errorf("failed to read file on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to read file on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 
 		if input.MaxBytes != nil && len(content) > *input.MaxBytes {
@@ -191,7 +191,7 @@ func NewWriteTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *WriteInput) (string, error) {
 		err := tc.WriteFile(ctx, tc.AssetEndpoint(input.AssetID), input.Path, input.Content)
 		if err != nil {
-			return "", fmt.Errorf("failed to write file on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to write file on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 
 		return fmt.Sprintf("Successfully wrote %d bytes to %s on %s",
@@ -217,7 +217,7 @@ func NewStatTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *StatInput) (string, error) {
 		info, err := tc.Stat(ctx, tc.AssetEndpoint(input.AssetID), input.Path)
 		if err != nil {
-			return "", fmt.Errorf("failed to get file info on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to get file info on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 
 		result := map[string]interface{}{
@@ -252,7 +252,7 @@ func NewMkdirTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *MkdirInput) (string, error) {
 		err := tc.Mkdir(ctx, tc.AssetEndpoint(input.AssetID), input.Path)
 		if err != nil {
-			return "", fmt.Errorf("failed to create directory on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to create directory on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 		return fmt.Sprintf("Successfully created directory %s on %s", input.Path, getAssetName(tc, input.AssetID)), nil
 	})
@@ -276,7 +276,7 @@ func NewRemoveTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *RemoveInput) (string, error) {
 		err := tc.Remove(ctx, tc.AssetEndpoint(input.AssetID), input.Path)
 		if err != nil {
-			return "", fmt.Errorf("failed to remove on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to remove on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 		return fmt.Sprintf("Successfully removed %s on %s", input.Path, getAssetName(tc, input.AssetID)), nil
 	})
@@ -302,7 +302,7 @@ func NewRenameTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *RenameInput) (string, error) {
 		err := tc.Rename(ctx, tc.AssetEndpoint(input.AssetID), input.From, input.To)
 		if err != nil {
-			return "", fmt.Errorf("failed to rename on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to rename on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 		return fmt.Sprintf("Successfully renamed %s to %s on %s", input.From, input.To, getAssetName(tc, input.AssetID)), nil
 	})
@@ -328,7 +328,7 @@ func NewCopyTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *CopyInput) (string, error) {
 		err := tc.Copy(ctx, tc.AssetEndpoint(input.AssetID), input.Source, input.Destination)
 		if err != nil {
-			return "", fmt.Errorf("failed to copy on %s: %w", getAssetName(tc, input.AssetID), err)
+			return fmt.Sprintf("Error: failed to copy on %s: %v", getAssetName(tc, input.AssetID), err), nil
 		}
 		return fmt.Sprintf("Successfully copied %s to %s on %s", input.Source, input.Destination, getAssetName(tc, input.AssetID)), nil
 	})

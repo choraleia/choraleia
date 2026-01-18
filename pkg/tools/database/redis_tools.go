@@ -66,7 +66,7 @@ func NewRedisCommandTool(tc *tools.ToolContext) tool.InvokableTool {
 			if err == redis.Nil {
 				return "(nil)", nil
 			}
-			return "", fmt.Errorf("command failed: %w", err)
+			return fmt.Sprintf("Error: command failed: %v", err), nil
 		}
 
 		// Format result
@@ -125,7 +125,7 @@ func NewRedisKeysTool(tc *tools.ToolContext) tool.InvokableTool {
 			var err error
 			batch, cursor, err = rdb.Scan(ctx, cursor, input.Pattern, int64(limit)).Result()
 			if err != nil {
-				return "", fmt.Errorf("scan failed: %w", err)
+				return fmt.Sprintf("Error: scan failed: %v", err), nil
 			}
 
 			keys = append(keys, batch...)

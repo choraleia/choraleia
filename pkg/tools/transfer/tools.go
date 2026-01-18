@@ -99,10 +99,10 @@ func NewUploadTool(tc *tools.ToolContext) tool.InvokableTool {
 		localSpec := tc.WorkspaceEndpoint()
 		stat, err := tc.Stat(ctx, localSpec, input.LocalPath)
 		if err != nil {
-			return "", fmt.Errorf("local file not found: %w", err)
+			return fmt.Sprintf("Error: local file not found: %v", err), nil
 		}
 		if stat.IsDir {
-			return "", fmt.Errorf("source is a directory, use transfer_sync for directory transfer")
+			return fmt.Sprintf("Error: source is a directory, use transfer_sync for directory transfer"), nil
 		}
 
 		remoteSpec := tc.AssetEndpoint(input.AssetID)
@@ -118,13 +118,13 @@ func NewUploadTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Read local file
 		content, err := tc.ReadFile(ctx, localSpec, input.LocalPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read local file: %w", err)
+			return fmt.Sprintf("Error: failed to read local file: %v", err), nil
 		}
 
 		// Write to remote
 		err = tc.WriteFile(ctx, remoteSpec, input.RemotePath, content)
 		if err != nil {
-			return "", fmt.Errorf("failed to write to remote: %w", err)
+			return fmt.Sprintf("Error: failed to write to remote: %v", err), nil
 		}
 
 		return fmt.Sprintf("Successfully uploaded %s (%d bytes) to %s:%s",
@@ -165,10 +165,10 @@ func NewDownloadTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Get remote file info
 		stat, err := tc.Stat(ctx, remoteSpec, input.RemotePath)
 		if err != nil {
-			return "", fmt.Errorf("remote file not found: %w", err)
+			return fmt.Sprintf("Error: remote file not found: %v", err), nil
 		}
 		if stat.IsDir {
-			return "", fmt.Errorf("source is a directory, use transfer_sync for directory transfer")
+			return fmt.Sprintf("Error: source is a directory, use transfer_sync for directory transfer"), nil
 		}
 
 		// Create parent directory if needed
@@ -182,13 +182,13 @@ func NewDownloadTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Read remote file
 		content, err := tc.ReadFile(ctx, remoteSpec, input.RemotePath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read remote file: %w", err)
+			return fmt.Sprintf("Error: failed to read remote file: %v", err), nil
 		}
 
 		// Write to local
 		err = tc.WriteFile(ctx, localSpec, input.LocalPath, content)
 		if err != nil {
-			return "", fmt.Errorf("failed to write local file: %w", err)
+			return fmt.Sprintf("Error: failed to write local file: %v", err), nil
 		}
 
 		return fmt.Sprintf("Successfully downloaded %s:%s (%d bytes) to %s",
@@ -224,16 +224,16 @@ func NewCopyBetweenAssetsTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Get source file info
 		stat, err := tc.Stat(ctx, sourceSpec, input.SourcePath)
 		if err != nil {
-			return "", fmt.Errorf("source file not found: %w", err)
+			return fmt.Sprintf("Error: source file not found: %v", err), nil
 		}
 		if stat.IsDir {
-			return "", fmt.Errorf("source is a directory, not supported")
+			return fmt.Sprintf("Error: source is a directory, not supported"), nil
 		}
 
 		// Read from source
 		content, err := tc.ReadFile(ctx, sourceSpec, input.SourcePath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read source: %w", err)
+			return fmt.Sprintf("Error: failed to read source: %v", err), nil
 		}
 
 		// Create target parent directory
@@ -245,7 +245,7 @@ func NewCopyBetweenAssetsTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Write to target
 		err = tc.WriteFile(ctx, targetSpec, input.TargetPath, content)
 		if err != nil {
-			return "", fmt.Errorf("failed to write to target: %w", err)
+			return fmt.Sprintf("Error: failed to write to target: %v", err), nil
 		}
 
 		return fmt.Sprintf("Successfully copied %s:%s (%d bytes) to %s:%s",
@@ -302,7 +302,7 @@ func NewSyncTool(tc *tools.ToolContext) tool.InvokableTool {
 		// List source directory
 		sourceList, err := tc.ListDir(ctx, sourceSpec, input.SourcePath, true)
 		if err != nil {
-			return "", fmt.Errorf("failed to list source directory: %w", err)
+			return fmt.Sprintf("Error: failed to list source directory: %v", err), nil
 		}
 
 		// Ensure target directory exists
