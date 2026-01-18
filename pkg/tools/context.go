@@ -163,11 +163,11 @@ func (c *ToolContext) GetWorkspace() (*models.Workspace, error) {
 // ExecInWorkspace executes a command in the workspace runtime
 func (c *ToolContext) ExecInWorkspace(ctx context.Context, cmd []string) (string, error) {
 	if c.WorkspaceExecutor == nil {
-		return "", fmt.Errorf("workspace executor not configured")
+		return fmt.Sprintf("Error: workspace executor not configured"), nil
 	}
 	workspace, err := c.GetWorkspace()
 	if err != nil {
-		return "", err
+		return fmt.Sprintf("Error: failed to get workspace: %v", err), nil
 	}
 	return c.WorkspaceExecutor.Exec(ctx, workspace, cmd)
 }

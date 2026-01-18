@@ -126,7 +126,7 @@ func NewMySQLQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Validate query is read-only
 		queryUpper := strings.ToUpper(strings.TrimSpace(input.Query))
 		if !strings.HasPrefix(queryUpper, "SELECT") && !strings.HasPrefix(queryUpper, "SHOW") && !strings.HasPrefix(queryUpper, "DESCRIBE") && !strings.HasPrefix(queryUpper, "EXPLAIN") {
-			return "", fmt.Errorf("only SELECT, SHOW, DESCRIBE, and EXPLAIN queries are allowed")
+			return fmt.Sprintf("Error: only SELECT, SHOW, DESCRIBE, and EXPLAIN queries are allowed"), nil
 		}
 
 		port := input.Port
@@ -145,7 +145,7 @@ func NewMySQLQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
-			return "", fmt.Errorf("failed to connect: %w", err)
+			return fmt.Sprintf("Error: failed to connect: %v", err), nil
 		}
 		defer db.Close()
 
@@ -160,14 +160,14 @@ func NewMySQLQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
-			return "", fmt.Errorf("query failed: %w", err)
+			return fmt.Sprintf("Error: query failed: %v", err), nil
 		}
 		defer rows.Close()
 
 		// Get column names
 		columns, err := rows.Columns()
 		if err != nil {
-			return "", fmt.Errorf("failed to get columns: %w", err)
+			return fmt.Sprintf("Error: failed to get columns: %v", err), nil
 		}
 
 		// Fetch results
@@ -180,7 +180,7 @@ func NewMySQLQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 			}
 
 			if err := rows.Scan(valuePtrs...); err != nil {
-				return "", fmt.Errorf("failed to scan row: %w", err)
+				return fmt.Sprintf("Error: failed to scan row: %v", err), nil
 			}
 
 			row := make(map[string]interface{})
@@ -241,13 +241,13 @@ func NewMySQLExecuteTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
-			return "", fmt.Errorf("failed to connect: %w", err)
+			return fmt.Sprintf("Error: failed to connect: %v", err), nil
 		}
 		defer db.Close()
 
 		result, err := db.ExecContext(ctx, input.Statement)
 		if err != nil {
-			return "", fmt.Errorf("statement failed: %w", err)
+			return fmt.Sprintf("Error: statement failed: %v", err), nil
 		}
 
 		rowsAffected, _ := result.RowsAffected()
@@ -297,7 +297,7 @@ func NewMySQLSchemaTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		db, err := sql.Open("mysql", dsn)
 		if err != nil {
-			return "", fmt.Errorf("failed to connect: %w", err)
+			return fmt.Sprintf("Error: failed to connect: %v", err), nil
 		}
 		defer db.Close()
 
@@ -310,7 +310,7 @@ func NewMySQLSchemaTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
-			return "", fmt.Errorf("query failed: %w", err)
+			return fmt.Sprintf("Error: query failed: %v", err), nil
 		}
 		defer rows.Close()
 
@@ -382,7 +382,7 @@ func NewPostgresQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 		// Validate query is read-only
 		queryUpper := strings.ToUpper(strings.TrimSpace(input.Query))
 		if !strings.HasPrefix(queryUpper, "SELECT") && !strings.HasPrefix(queryUpper, "SHOW") && !strings.HasPrefix(queryUpper, "EXPLAIN") {
-			return "", fmt.Errorf("only SELECT, SHOW, and EXPLAIN queries are allowed")
+			return fmt.Sprintf("Error: only SELECT, SHOW, and EXPLAIN queries are allowed"), nil
 		}
 
 		port := input.Port
@@ -406,7 +406,7 @@ func NewPostgresQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		db, err := sql.Open("postgres", dsn)
 		if err != nil {
-			return "", fmt.Errorf("failed to connect: %w", err)
+			return fmt.Sprintf("Error: failed to connect: %v", err), nil
 		}
 		defer db.Close()
 
@@ -418,7 +418,7 @@ func NewPostgresQueryTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
-			return "", fmt.Errorf("query failed: %w", err)
+			return fmt.Sprintf("Error: query failed: %v", err), nil
 		}
 		defer rows.Close()
 
@@ -500,13 +500,13 @@ func NewPostgresExecuteTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		db, err := sql.Open("postgres", dsn)
 		if err != nil {
-			return "", fmt.Errorf("failed to connect: %w", err)
+			return fmt.Sprintf("Error: failed to connect: %v", err), nil
 		}
 		defer db.Close()
 
 		result, err := db.ExecContext(ctx, input.Statement)
 		if err != nil {
-			return "", fmt.Errorf("statement failed: %w", err)
+			return fmt.Sprintf("Error: statement failed: %v", err), nil
 		}
 
 		rowsAffected, _ := result.RowsAffected()
@@ -568,7 +568,7 @@ func NewPostgresSchemaTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		db, err := sql.Open("postgres", dsn)
 		if err != nil {
-			return "", fmt.Errorf("failed to connect: %w", err)
+			return fmt.Sprintf("Error: failed to connect: %v", err), nil
 		}
 		defer db.Close()
 
@@ -584,7 +584,7 @@ func NewPostgresSchemaTool(tc *tools.ToolContext) tool.InvokableTool {
 
 		rows, err := db.QueryContext(ctx, query)
 		if err != nil {
-			return "", fmt.Errorf("query failed: %w", err)
+			return fmt.Sprintf("Error: query failed: %v", err), nil
 		}
 		defer rows.Close()
 

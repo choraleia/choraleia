@@ -40,7 +40,8 @@ const (
 	BrowserWindowWidth  = 1280
 	BrowserWindowHeight = 720
 	// BrowserNetworkName is the Docker network for browser containers
-	BrowserNetworkName = "choraleia-browser-net"
+	// BrowserNetworkName is deprecated, use ChoraNetworkName instead
+	BrowserNetworkName = ChoraNetworkName
 	// DefaultActionTimeout is the timeout for browser actions like click, input, etc.
 	DefaultActionTimeout = 5 * time.Second
 	// DefaultNavigationTimeout is the timeout for page navigation (longer due to network latency)

@@ -91,7 +91,7 @@ Tips:
 	}, func(ctx context.Context, input *RepoMapInput) (string, error) {
 		svc := GetRepoMapService()
 		if svc == nil {
-			return "", fmt.Errorf("repo map service not available")
+			return fmt.Sprintf("Error: repo map service not available"), nil
 		}
 
 		maxTokens := input.MaxTokens
@@ -138,11 +138,11 @@ Use this to find specific code elements without scanning the entire repo map.`,
 	}, func(ctx context.Context, input *SearchSymbolInput) (string, error) {
 		svc := GetRepoMapService()
 		if svc == nil {
-			return "", fmt.Errorf("repo map service not available")
+			return fmt.Sprintf("Error: repo map service not available"), nil
 		}
 
 		if input.Query == "" {
-			return "", fmt.Errorf("query is required")
+			return fmt.Sprintf("Error: query is required"), nil
 		}
 
 		limit := input.Limit
@@ -203,11 +203,11 @@ Use this to understand a file's structure before reading its content.`,
 	}, func(ctx context.Context, input *FileOutlineInput) (string, error) {
 		svc := GetRepoMapService()
 		if svc == nil {
-			return "", fmt.Errorf("repo map service not available")
+			return fmt.Sprintf("Error: repo map service not available"), nil
 		}
 
 		if input.Path == "" {
-			return "", fmt.Errorf("path is required")
+			return fmt.Sprintf("Error: path is required"), nil
 		}
 
 		idx := svc.GetIndex(tc.WorkspaceID)
@@ -253,7 +253,7 @@ Optionally filter by directory path.`,
 	}, func(ctx context.Context, input *ListFunctionsInput) (string, error) {
 		svc := GetRepoMapService()
 		if svc == nil {
-			return "", fmt.Errorf("repo map service not available")
+			return fmt.Sprintf("Error: repo map service not available"), nil
 		}
 
 		idx := svc.GetIndex(tc.WorkspaceID)
@@ -359,7 +359,7 @@ func NewIndexStatsTool(tc *tools.ToolContext) tool.InvokableTool {
 	}, func(ctx context.Context, input *IndexStatsInput) (string, error) {
 		svc := GetRepoMapService()
 		if svc == nil {
-			return "", fmt.Errorf("repo map service not available")
+			return fmt.Sprintf("Error: repo map service not available"), nil
 		}
 
 		stats := svc.GetStats(tc.WorkspaceID)

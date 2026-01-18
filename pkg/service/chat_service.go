@@ -16,6 +16,7 @@ import (
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/prebuilt/deep"
+	"github.com/cloudwego/eino/adk/prebuilt/planexecute"
 	"github.com/cloudwego/eino/adk/prebuilt/supervisor"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
@@ -1548,7 +1549,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	var agent adk.Agent
 	if req.AgentID != "" {
 		// Load WorkspaceAgent from database
-		agent, err = s.buildWorkspaceAgent(ctx, req.AgentID, req.WorkspaceID, modelID, baseTools)
+		agent, err = s.buildWorkspaceAgent(ctx, req.AgentID, req.WorkspaceID, conv.ID, modelID, baseTools)
 		if err != nil {
 			return assistantMsg, fmt.Errorf("failed to build workspace agent: %w", err)
 		}
@@ -1645,6 +1646,31 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		if part.AgentName != "" && part.AgentName != currentAgentName {
 			currentAgentName = part.AgentName
 			s.logger.Debug("Agent switched", "agentName", currentAgentName)
+
+			// Send agent switch notification to frontend
+			sendChunk(&models.ChatCompletionChunk{
+				ID:             currentAssistantMsg.ID,
+				Object:         "chat.completion.chunk",
+				Created:        time.Now().Unix(),
+				Model:          modelID,
+				ConversationID: conv.ID,
+				Choices: []models.ChatCompletionChunkChoice{
+					{
+						Index: 0,
+						Delta: models.ChatCompletionChunkDelta{
+							AgentName: currentAgentName,
+						},
+					},
+				},
+			})
+		}
+
+		// Skip events with no output (e.g., transfer actions)
+		if part.Output == nil || part.Output.MessageOutput == nil {
+			s.logger.Debug("Skipping event with no message output",
+				"agentName", part.AgentName,
+				"hasAction", part.Action != nil)
+			continue
 		}
 
 		// Check the role of this message output
@@ -1681,6 +1707,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 							Role:       models.RoleTool,
 							Content:    fullMsg.Content,
 							ToolCallID: fullMsg.ToolCallID,
+							AgentName:  currentAgentName,
 						},
 					},
 				},
@@ -1688,23 +1715,27 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 			// Continue to next iteration - more content may follow
 		} else if msgRole == schema.Assistant {
-			// This is an assistant message - handle streaming content
-			var iterChunks []*schema.Message
-			if part.Output.MessageOutput.MessageStream != nil {
+			// This is an assistant message - handle streaming or non-streaming content
+			var streamedMsg *schema.Message
+			var err error
+
+			// Check if this is a streaming message
+			if part.Output.MessageOutput.IsStreaming && part.Output.MessageOutput.MessageStream != nil {
+				var iterChunks []*schema.Message
 				for {
 					// Check for cancellation during streaming
 					select {
 					case <-ctx.Done():
 						// Concat accumulated chunks and save before returning
 						if len(iterChunks) > 0 {
-							streamedMsg, concatErr := schema.ConcatMessages(iterChunks)
+							concatMsg, concatErr := schema.ConcatMessages(iterChunks)
 							if concatErr == nil {
 								roundIndex := currentAssistantMsg.GetMaxRoundIndex()
-								if streamedMsg.ReasoningContent != "" {
-									currentAssistantMsg.AddReasoningPart(streamedMsg.ReasoningContent, roundIndex)
+								if concatMsg.ReasoningContent != "" {
+									currentAssistantMsg.AddReasoningPart(concatMsg.ReasoningContent, roundIndex)
 								}
-								if streamedMsg.Content != "" {
-									currentAssistantMsg.AddTextPart(streamedMsg.Content, roundIndex)
+								if concatMsg.Content != "" {
+									currentAssistantMsg.AddTextPart(concatMsg.Content, roundIndex)
 								}
 							}
 						}
@@ -1718,23 +1749,23 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					default:
 					}
 
-					chunk, err := part.Output.MessageOutput.MessageStream.Recv()
-					if errors.Is(err, io.EOF) {
+					chunk, recvErr := part.Output.MessageOutput.MessageStream.Recv()
+					if errors.Is(recvErr, io.EOF) {
 						break
 					}
-					if err != nil {
+					if recvErr != nil {
 						// Check if error is due to context cancellation
-						if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+						if ctx.Err() != nil || errors.Is(recvErr, context.Canceled) {
 							// Save accumulated content before returning
 							if len(iterChunks) > 0 {
-								streamedMsg, concatErr := schema.ConcatMessages(iterChunks)
+								concatMsg, concatErr := schema.ConcatMessages(iterChunks)
 								if concatErr == nil {
 									roundIndex := currentAssistantMsg.GetMaxRoundIndex()
-									if streamedMsg.ReasoningContent != "" {
-										currentAssistantMsg.AddReasoningPart(streamedMsg.ReasoningContent, roundIndex)
+									if concatMsg.ReasoningContent != "" {
+										currentAssistantMsg.AddReasoningPart(concatMsg.ReasoningContent, roundIndex)
 									}
-									if streamedMsg.Content != "" {
-										currentAssistantMsg.AddTextPart(streamedMsg.Content, roundIndex)
+									if concatMsg.Content != "" {
+										currentAssistantMsg.AddTextPart(concatMsg.Content, roundIndex)
 									}
 								}
 							}
@@ -1746,8 +1777,8 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 							}
 							return currentAssistantMsg, ctx.Err()
 						}
-						s.logger.Error("Agent stream error", "error", err)
-						return currentAssistantMsg, fmt.Errorf("stream error: %w", err)
+						s.logger.Error("Agent stream error", "error", recvErr)
+						return currentAssistantMsg, fmt.Errorf("stream error: %w", recvErr)
 					}
 
 					iterChunks = append(iterChunks, chunk)
@@ -1790,13 +1821,65 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 						})
 					}
 				}
+
+				// Concat streaming chunks to get the full message
+				if len(iterChunks) > 0 {
+					streamedMsg, err = schema.ConcatMessages(iterChunks)
+					if err != nil {
+						s.logger.Error("Failed to concat messages", "error", err)
+						return currentAssistantMsg, fmt.Errorf("failed to concat messages: %w", err)
+					}
+				}
+			} else {
+				// Non-streaming message - get it directly
+				streamedMsg, err = part.Output.MessageOutput.GetMessage()
+				if err != nil {
+					s.logger.Error("Failed to get message", "error", err)
+					continue
+				}
+
+				// Send non-streaming content to client
+				if streamedMsg.Content != "" {
+					sendChunk(&models.ChatCompletionChunk{
+						ID:             currentAssistantMsg.ID,
+						Object:         "chat.completion.chunk",
+						Created:        time.Now().Unix(),
+						Model:          modelID,
+						ConversationID: conv.ID,
+						Choices: []models.ChatCompletionChunkChoice{
+							{
+								Index: 0,
+								Delta: models.ChatCompletionChunkDelta{
+									Content:   streamedMsg.Content,
+									AgentName: currentAgentName,
+								},
+							},
+						},
+					})
+				}
+				if streamedMsg.ReasoningContent != "" {
+					sendChunk(&models.ChatCompletionChunk{
+						ID:             currentAssistantMsg.ID,
+						Object:         "chat.completion.chunk",
+						Created:        time.Now().Unix(),
+						Model:          modelID,
+						ConversationID: conv.ID,
+						Choices: []models.ChatCompletionChunkChoice{
+							{
+								Index: 0,
+								Delta: models.ChatCompletionChunkDelta{
+									ReasoningContent: streamedMsg.ReasoningContent,
+									AgentName:        currentAgentName,
+								},
+							},
+						},
+					})
+				}
 			}
 
-			// Concat streaming chunks to get the full message
-			streamedMsg, err := schema.ConcatMessages(iterChunks)
-			if err != nil {
-				s.logger.Error("Failed to concat messages", "error", err)
-				return currentAssistantMsg, fmt.Errorf("failed to concat messages: %w", err)
+			// Skip if no message
+			if streamedMsg == nil {
+				continue
 			}
 
 			// Get current round index
@@ -1922,7 +2005,7 @@ func (s *ChatService) ToAPIMessages(messages []models.Message) []models.ChatComp
 }
 
 // buildWorkspaceAgent builds an ADK Agent from a WorkspaceAgent configuration
-func (s *ChatService) buildWorkspaceAgent(ctx context.Context, agentID, workspaceID, defaultModelID string, baseTools []tool.BaseTool) (adk.Agent, error) {
+func (s *ChatService) buildWorkspaceAgent(ctx context.Context, agentID, workspaceID, conversationID, defaultModelID string, baseTools []tool.BaseTool) (adk.Agent, error) {
 	// Load WorkspaceAgent from database
 	var wsAgent models.WorkspaceAgent
 	if err := s.db.First(&wsAgent, "id = ? AND workspace_id = ?", agentID, workspaceID).Error; err != nil {
@@ -1932,14 +2015,35 @@ func (s *ChatService) buildWorkspaceAgent(ctx context.Context, agentID, workspac
 		return nil, fmt.Errorf("failed to load workspace agent: %w", err)
 	}
 
-	// Find the entry agent node (connected from start)
+	// Find the entry agent node (connected from start node)
 	var entryAgent *models.Agent
-	for _, node := range wsAgent.Nodes {
-		if node.Type == "agent" && node.Agent != nil {
-			// For now, use the first agent node as entry
-			// TODO: Support proper entry detection via edges from start node
-			entryAgent = node.Agent
+
+	// First, find the node connected from "start" via edges
+	var entryNodeID string
+	for _, edge := range wsAgent.Edges {
+		if edge.Source == "start" {
+			entryNodeID = edge.Target
 			break
+		}
+	}
+
+	// If found an edge from start, find the corresponding agent node
+	if entryNodeID != "" {
+		for _, node := range wsAgent.Nodes {
+			if node.ID == entryNodeID && node.Type == "agent" && node.Agent != nil {
+				entryAgent = node.Agent
+				break
+			}
+		}
+	}
+
+	// Fallback: if no edge from start found, use the first agent node
+	if entryAgent == nil {
+		for _, node := range wsAgent.Nodes {
+			if node.Type == "agent" && node.Agent != nil {
+				entryAgent = node.Agent
+				break
+			}
 		}
 	}
 
@@ -1948,11 +2052,11 @@ func (s *ChatService) buildWorkspaceAgent(ctx context.Context, agentID, workspac
 	}
 
 	// Build agent based on type
-	return s.buildAgentFromConfig(ctx, entryAgent, defaultModelID, baseTools, &wsAgent)
+	return s.buildAgentFromConfig(ctx, entryAgent, defaultModelID, baseTools, &wsAgent, workspaceID, conversationID)
 }
 
 // buildAgentFromConfig builds an ADK Agent from an Agent configuration
-func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *models.Agent, defaultModelID string, baseTools []tool.BaseTool, wsAgent *models.WorkspaceAgent) (adk.Agent, error) {
+func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *models.Agent, defaultModelID string, baseTools []tool.BaseTool, wsAgent *models.WorkspaceAgent, workspaceID string, conversationID string) (adk.Agent, error) {
 	// Determine model ID
 	modelID := defaultModelID
 	if agentConfig.ModelName != nil && *agentConfig.ModelName != "" {
@@ -1969,6 +2073,26 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 	instruction := ""
 	if agentConfig.Instruction != nil {
 		instruction = *agentConfig.Instruction
+	}
+
+	// Append built-in workspace context to instruction
+	// This ensures workspace info, assets, and browser context are always available
+	if workspaceID != "" {
+		workspaceContext := s.getWorkspaceInfoContext(workspaceID)
+		if workspaceContext != "" {
+			if instruction != "" {
+				instruction += "\n\n"
+			}
+			instruction += workspaceContext
+		}
+
+		assetContext := s.getWorkspaceAssetContext(workspaceID)
+		if assetContext != "" {
+			if instruction != "" {
+				instruction += "\n\n"
+			}
+			instruction += assetContext
+		}
 	}
 
 	// Filter tools based on agent's toolIds
@@ -2010,7 +2134,7 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 
 	case "supervisor":
 		// Build sub-agents
-		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools, workspaceID, conversationID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build sub-agents for supervisor: %w", err)
 		}
@@ -2042,18 +2166,42 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		})
 
 	case "deep":
+		// Build sub-agents if configured
+		var subAgents []adk.Agent
+		if wsAgent != nil {
+			subAgents, err = s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools, workspaceID, conversationID)
+			if err != nil {
+				s.logger.Warn("Failed to build sub-agents for deep agent", "error", err)
+			}
+		}
+
+		// Parse type-specific config
+		withoutWriteTodos := false
+		withoutGeneralSubAgent := false
+		if agentConfig.TypeConfig != nil {
+			if v, ok := agentConfig.TypeConfig["withoutWriteTodos"].(bool); ok {
+				withoutWriteTodos = v
+			}
+			if v, ok := agentConfig.TypeConfig["withoutGeneralSubAgent"].(bool); ok {
+				withoutGeneralSubAgent = v
+			}
+		}
+
 		return deep.New(ctx, &deep.Config{
-			Name:         agentConfig.Name,
-			Description:  ptrToString(agentConfig.Description),
-			Instruction:  instruction,
-			ChatModel:    chatModel,
-			ToolsConfig:  adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
-			MaxIteration: maxIterations,
+			Name:                   agentConfig.Name,
+			Description:            ptrToString(agentConfig.Description),
+			Instruction:            instruction,
+			ChatModel:              chatModel,
+			SubAgents:              subAgents,
+			ToolsConfig:            adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			MaxIteration:           maxIterations,
+			WithoutWriteTodos:      withoutWriteTodos,
+			WithoutGeneralSubAgent: withoutGeneralSubAgent,
 		})
 
 	case "sequential":
 		// Build sub-agents for sequential execution
-		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools, workspaceID, conversationID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build sub-agents for sequential: %w", err)
 		}
@@ -2065,7 +2213,7 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 
 	case "loop":
 		// Build sub-agents for loop execution
-		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools, workspaceID, conversationID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build sub-agents for loop: %w", err)
 		}
@@ -2078,7 +2226,7 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 
 	case "parallel":
 		// Build sub-agents for parallel execution
-		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools, workspaceID, conversationID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build sub-agents for parallel: %w", err)
 		}
@@ -2088,13 +2236,58 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 			SubAgents:   subAgents,
 		})
 
+	case "plan_execute":
+		// Create plan-execute agent with planner, executor, and replanner
+		// The executor uses the provided tools to execute each step
+		toolCallingModel, ok := chatModel.(model.ToolCallingChatModel)
+		if !ok {
+			return nil, fmt.Errorf("plan_execute agent requires a tool-calling capable model")
+		}
+
+		// Create planner agent
+		planner, err := planexecute.NewPlanner(ctx, &planexecute.PlannerConfig{
+			ToolCallingChatModel: toolCallingModel,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create planner: %w", err)
+		}
+
+		// Create executor agent - a ChatModelAgent with tools
+		executor, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+			Name:          agentConfig.Name + "_executor",
+			Description:   "Executes individual steps of the plan",
+			Instruction:   instruction,
+			Model:         chatModel,
+			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			MaxIterations: maxIterations,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create executor: %w", err)
+		}
+
+		// Create replanner agent
+		replanner, err := planexecute.NewReplanner(ctx, &planexecute.ReplannerConfig{
+			ChatModel: toolCallingModel,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create replanner: %w", err)
+		}
+
+		// Create the plan-execute agent
+		return planexecute.New(ctx, &planexecute.Config{
+			Planner:       planner,
+			Executor:      executor,
+			Replanner:     replanner,
+			MaxIterations: maxIterations,
+		})
+
 	default:
 		return nil, fmt.Errorf("unsupported agent type: %s", agentConfig.Type)
 	}
 }
 
 // buildSubAgents builds sub-agents for a supervisor agent based on canvas edges
-func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.WorkspaceAgent, parentAgent *models.Agent, defaultModelID string, baseTools []tool.BaseTool) ([]adk.Agent, error) {
+func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.WorkspaceAgent, parentAgent *models.Agent, defaultModelID string, baseTools []tool.BaseTool, workspaceID string, conversationID string) ([]adk.Agent, error) {
 	if wsAgent == nil {
 		s.logger.Warn("buildSubAgents: wsAgent is nil")
 		return nil, nil
@@ -2150,7 +2343,7 @@ func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.Worksp
 					"agentType", node.Agent.Type,
 					"agentDescription", ptrToString(node.Agent.Description))
 				// Recursively build sub-agent (but pass nil for wsAgent to prevent infinite recursion for supervisor)
-				subAgent, err := s.buildAgentFromConfig(ctx, node.Agent, defaultModelID, baseTools, nil)
+				subAgent, err := s.buildAgentFromConfig(ctx, node.Agent, defaultModelID, baseTools, nil, workspaceID, conversationID)
 				if err != nil {
 					s.logger.Warn("Failed to build sub-agent", "nodeID", nodeID, "error", err)
 					continue
