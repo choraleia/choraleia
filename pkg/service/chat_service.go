@@ -110,7 +110,33 @@ func (s *ChatService) SetAssetService(assetService *AssetService) {
 
 // AutoMigrate creates database tables
 func (s *ChatService) AutoMigrate() error {
-	return s.db.AutoMigrate(&models.Conversation{}, &models.Message{})
+	if err := s.db.AutoMigrate(&models.Conversation{}, &models.Message{}); err != nil {
+		return err
+	}
+	// Clean up stale streaming states on startup
+	s.CleanupStaleStreams()
+	return nil
+}
+
+// CleanupStaleStreams marks any messages with streaming/running status as interrupted
+// This should be called on service startup to handle cases where the service was restarted
+// while messages were still being streamed
+func (s *ChatService) CleanupStaleStreams() {
+	result := s.db.Model(&models.Message{}).
+		Where("status IN ?", []string{
+			string(models.MessageStatusStreaming),
+			string(models.MessageStatusPending),
+		}).
+		Updates(map[string]interface{}{
+			"status":        models.MessageStatusCompleted,
+			"finish_reason": models.FinishReasonInterrupted,
+		})
+
+	if result.Error != nil {
+		s.logger.Error("Failed to cleanup stale streams", "error", result.Error)
+	} else if result.RowsAffected > 0 {
+		s.logger.Info("Cleaned up stale streaming messages on startup", "count", result.RowsAffected)
+	}
 }
 
 // ========== Conversation Management ==========
@@ -1058,6 +1084,12 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 
 		// Create assistant message for this round (if has content or tool calls)
 		if textContent != "" || reasoningContent != "" || len(toolCalls) > 0 {
+			// For models with thinking/reasoning mode (e.g., DeepSeek-R1), all assistant messages
+			// must have reasoning_content. Add a placeholder if missing to ensure compatibility.
+			if reasoningContent == "" && (textContent != "" || len(toolCalls) > 0) {
+				reasoningContent = "..."
+			}
+
 			assistantMsg := &schema.Message{
 				Role:             schema.Assistant,
 				Content:          textContent,
@@ -1562,11 +1594,14 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 		systemPrompt := s.getSystemPrompt(req.WorkspaceID, conv.ID)
 		agent, err = adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:          "Workspace Assistant",
-			Description:   "An AI assistant that helps with coding and development tasks in the workspace",
-			Instruction:   systemPrompt,
-			Model:         chatModel,
-			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: baseTools}},
+			Name:        "Workspace Assistant",
+			Description: "An AI assistant that helps with coding and development tasks in the workspace",
+			Instruction: systemPrompt,
+			Model:       chatModel,
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: baseTools},
+				EmitInternalEvents: true, // Enable streaming from agent tools
+			},
 			MaxIterations: 50,
 		})
 		if err != nil {
@@ -2124,11 +2159,14 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 	switch agentConfig.Type {
 	case "chat_model":
 		return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:          agentConfig.Name,
-			Description:   ptrToString(agentConfig.Description),
-			Instruction:   instruction,
-			Model:         chatModel,
-			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			Name:        agentConfig.Name,
+			Description: ptrToString(agentConfig.Description),
+			Instruction: instruction,
+			Model:       chatModel,
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
+				EmitInternalEvents: true, // Enable streaming from agent tools
+			},
 			MaxIterations: maxIterations,
 		})
 
@@ -2150,11 +2188,14 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		}
 		// Create the supervisor agent itself (a ChatModelAgent)
 		supervisorAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:          agentConfig.Name,
-			Description:   ptrToString(agentConfig.Description),
-			Instruction:   instruction,
-			Model:         chatModel,
-			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			Name:        agentConfig.Name,
+			Description: ptrToString(agentConfig.Description),
+			Instruction: instruction,
+			Model:       chatModel,
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
+				EmitInternalEvents: true, // Enable streaming from sub-agents
+			},
 			MaxIterations: maxIterations,
 		})
 		if err != nil {
@@ -2188,12 +2229,15 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		}
 
 		return deep.New(ctx, &deep.Config{
-			Name:                   agentConfig.Name,
-			Description:            ptrToString(agentConfig.Description),
-			Instruction:            instruction,
-			ChatModel:              chatModel,
-			SubAgents:              subAgents,
-			ToolsConfig:            adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			Name:        agentConfig.Name,
+			Description: ptrToString(agentConfig.Description),
+			Instruction: instruction,
+			ChatModel:   chatModel,
+			SubAgents:   subAgents,
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
+				EmitInternalEvents: true, // Enable streaming from sub-agents
+			},
 			MaxIteration:           maxIterations,
 			WithoutWriteTodos:      withoutWriteTodos,
 			WithoutGeneralSubAgent: withoutGeneralSubAgent,
@@ -2254,11 +2298,14 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 
 		// Create executor agent - a ChatModelAgent with tools
 		executor, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:          agentConfig.Name + "_executor",
-			Description:   "Executes individual steps of the plan",
-			Instruction:   instruction,
-			Model:         chatModel,
-			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			Name:        agentConfig.Name + "_executor",
+			Description: "Executes individual steps of the plan",
+			Instruction: instruction,
+			Model:       chatModel,
+			ToolsConfig: adk.ToolsConfig{
+				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
+				EmitInternalEvents: true, // Enable streaming from agent tools
+			},
 			MaxIterations: maxIterations,
 		})
 		if err != nil {

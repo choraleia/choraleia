@@ -1408,7 +1408,8 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, tools }) => 
         style: { stroke: edgeStyle.stroke, strokeWidth: 2 },
         markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.stroke },
         animated: edgeStyle.animated,
-        label: edge.label || edgeStyle.label,
+        // Always use computed label based on source agent type (don't use saved label which may be outdated)
+        label: edgeStyle.label,
         labelStyle: { fontSize: 10, fill: edgeStyle.stroke },
         labelBgStyle: { fill: "white", fillOpacity: 0.8 },
       };

@@ -277,8 +277,9 @@ const (
 	FinishReasonToolCalls     = "tool_calls"
 	FinishReasonLength        = "length"
 	FinishReasonContentFilter = "content_filter"
-	FinishReasonError         = "error"     // Extended
-	FinishReasonCancelled     = "cancelled" // Extended
+	FinishReasonError         = "error"       // Extended
+	FinishReasonCancelled     = "cancelled"   // Extended: user cancelled
+	FinishReasonInterrupted   = "interrupted" // Extended: service restart/unexpected termination
 )
 
 // ========== Conversation API types ==========
