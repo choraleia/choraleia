@@ -69,10 +69,6 @@ import {
   PRESET_DOCKER_IMAGES,
   isValidWorkspaceName,
   sanitizeWorkspaceName,
-  AgentConfig,
-  AgentType,
-  AGENT_TYPE_INFO,
-  PRESET_AGENTS,
 } from "../../state/workspaces";
 import { listAssets, AssetLike, AssetType } from "../assets/api/assets";
 import { listBuiltinTools, BuiltinToolDefinition } from "../../api/builtin-tools";
@@ -3416,18 +3412,19 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
           <Box sx={{ height: "calc(90vh - 200px)", minHeight: 500 }}>
             <AgentDesigner
               workspaceId={workspaceId || ""}
-              agents={state.agents || []}
               tools={state.tools || []}
-              onChange={(agents) => handleChange({ agents })}
             />
           </Box>
         )}
       </DialogContent>
       <DialogActions sx={{ px: 2, py: 1.5 }}>
         <Button onClick={onClose} size="small">Cancel</Button>
-        <Button variant="contained" onClick={handleSave} size="small" disabled={!canSave}>
-          Save
-        </Button>
+        {/* Hide Save button on Agents tab - agents have their own save mechanism */}
+        {tab !== 3 && (
+          <Button variant="contained" onClick={handleSave} size="small" disabled={!canSave}>
+            Save
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );

@@ -240,6 +240,7 @@ func (s *WorkspaceService) AutoMigrate() error {
 		&models.WorkspaceRuntime{},
 		&models.WorkspaceAssetRef{},
 		&models.WorkspaceTool{},
+		&models.WorkspaceAgent{},
 		&models.Room{},
 	)
 }

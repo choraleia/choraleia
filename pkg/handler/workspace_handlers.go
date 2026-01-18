@@ -60,6 +60,14 @@ func (h *WorkspaceHandler) RegisterRoutes(r *gin.RouterGroup) {
 		workspaces.DELETE("/:id/tools/:toolId", h.RemoveTool)
 		workspaces.POST("/:id/tools/:toolId/toggle", h.ToggleTool)
 		workspaces.POST("/:id/tools/:toolId/test", h.TestTool)
+
+		// Agents
+		workspaces.GET("/:id/agents", h.ListAgents)
+		workspaces.POST("/:id/agents", h.CreateAgent)
+		workspaces.GET("/:id/agents/:agentId", h.GetAgent)
+		workspaces.PUT("/:id/agents/:agentId", h.UpdateAgent)
+		workspaces.DELETE("/:id/agents/:agentId", h.DeleteAgent)
+		workspaces.POST("/:id/agents/:agentId/toggle", h.ToggleAgent)
 	}
 }
 

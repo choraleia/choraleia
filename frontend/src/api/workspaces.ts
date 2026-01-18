@@ -39,23 +39,6 @@ export interface WorkspaceTool {
   updated_at: string;
 }
 
-export interface WorkspaceAgent {
-  id: string;
-  name: string;
-  type: string;
-  description?: string;
-  enabled: boolean;
-  model_id?: string;
-  instruction?: string;
-  tool_ids?: string[];
-  sub_agent_ids?: string[];
-  type_config?: Record<string, unknown>;
-  max_iterations?: number;
-  ai_hint?: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface Room {
   id: string;
   workspace_id: string;
@@ -78,7 +61,6 @@ export interface Workspace {
   runtime?: WorkspaceRuntime;
   assets?: WorkspaceAssetRef[];
   tools?: WorkspaceTool[];
-  agents?: WorkspaceAgent[];
   rooms?: Room[];
   created_at: string;
   updated_at: string;
@@ -491,38 +473,203 @@ export async function testWorkspaceTool(workspaceId: string, toolId: string): Pr
   return res.json();
 }
 
-// =====================
-// Agent API Functions
-// =====================
+// =====================================
+// Agent Types (Single Agent Configuration)
+// =====================================
 
+// Agent types supported by ADK
+export type AgentType =
+  | "chat_model"
+  | "supervisor"
+  | "deep"
+  | "plan_execute"
+  | "sequential"
+  | "loop"
+  | "parallel";
+
+// Agent type display info
+export const AGENT_TYPE_INFO: Record<AgentType, { label: string; description: string }> = {
+  chat_model: {
+    label: "Chat Model",
+    description: "Basic agent with a chat model"
+  },
+  supervisor: {
+    label: "Supervisor",
+    description: "Coordinates sub-agents to accomplish tasks"
+  },
+  deep: {
+    label: "Deep Agent",
+    description: "Advanced reasoning with planning capabilities"
+  },
+  plan_execute: {
+    label: "Plan & Execute",
+    description: "Plans then executes with separate agents"
+  },
+  sequential: {
+    label: "Sequential Workflow",
+    description: "Executes sub-agents in sequence"
+  },
+  loop: {
+    label: "Loop Workflow",
+    description: "Repeats sub-agents until exit condition"
+  },
+  parallel: {
+    label: "Parallel Workflow",
+    description: "Executes sub-agents in parallel"
+  }
+};
+
+// Type-specific configurations
+export interface DeepAgentTypeConfig {
+  withoutWriteTodos?: boolean;
+  withoutGeneralSubAgent?: boolean;
+}
+
+export interface PlanExecuteSubAgentConfig {
+  modelId?: string;
+  instruction?: string;
+  toolIds?: string[];
+}
+
+export interface PlanExecuteAgentTypeConfig {
+  planner?: PlanExecuteSubAgentConfig;
+  executor?: PlanExecuteSubAgentConfig;
+  replanner?: PlanExecuteSubAgentConfig;
+}
+
+export interface LoopAgentTypeConfig {
+  maxIterations?: number;
+  breakCondition?: string;
+}
+
+export interface ParallelAgentTypeConfig {
+  mergeStrategy?: "first" | "all" | "any";
+}
+
+// Union type for all agent type configs
+export type AgentTypeConfig =
+  | ({ type: "chat_model" })
+  | ({ type: "supervisor" })
+  | ({ type: "deep" } & DeepAgentTypeConfig)
+  | ({ type: "plan_execute" } & PlanExecuteAgentTypeConfig)
+  | ({ type: "sequential" })
+  | ({ type: "loop" } & LoopAgentTypeConfig)
+  | ({ type: "parallel" } & ParallelAgentTypeConfig);
+
+// Agent - single agent configuration
+export interface Agent {
+  id: string;
+  name: string;
+  type: AgentType;
+  description?: string;
+  enabled?: boolean;
+  modelId?: string;
+  instruction?: string;
+  toolIds?: string[];
+  subAgentIds?: string[];
+  typeConfig?: AgentTypeConfig;
+  maxIterations?: number;
+  aiHint?: string;
+}
+
+// =====================================
+// WorkspaceAgent API (Canvas Composition)
+// =====================================
+
+// Position for nodes on canvas
+export interface WorkspaceAgentNodePosition {
+  x: number;
+  y: number;
+}
+
+// Node in the workspace agent canvas
+export interface WorkspaceAgentNode {
+  id: string;
+  type: "agent" | "start";
+  agent_id?: string;  // Reference to Agent.id
+  agent?: Agent;      // Optional: embedded agent config (for convenience)
+  position: WorkspaceAgentNodePosition;
+}
+
+// Edge connecting nodes
+export interface WorkspaceAgentEdge {
+  id: string;
+  source: string;
+  target: string;
+  source_handle?: string;
+  target_handle?: string;
+  label?: string;
+  order: number;
+}
+
+// Viewport state
+export interface WorkspaceAgentViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+// WorkspaceAgent - canvas layout for composing agents
+export interface WorkspaceAgent {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+  nodes: WorkspaceAgentNode[];
+  edges: WorkspaceAgentEdge[];
+  viewport?: WorkspaceAgentViewport;
+  entry_node_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorkspaceAgentRequest {
+  name: string;
+  description?: string;
+  nodes?: WorkspaceAgentNode[];
+  edges?: WorkspaceAgentEdge[];
+  viewport?: WorkspaceAgentViewport;
+  entry_node_id?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateWorkspaceAgentRequest {
+  name?: string;
+  description?: string;
+  nodes?: WorkspaceAgentNode[];
+  edges?: WorkspaceAgentEdge[];
+  viewport?: WorkspaceAgentViewport;
+  entry_node_id?: string;
+  enabled?: boolean;
+}
+
+// List all workspace agents
 export async function listWorkspaceAgents(workspaceId: string): Promise<WorkspaceAgent[]> {
   const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/agents`);
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to list agents: ${res.statusText}`);
+    throw new Error(err.error || `Failed to list workspace agents: ${res.statusText}`);
   }
   const data = await res.json();
-  return data.agents || [];
+  return data.data || [];
 }
 
-// Agent input type for API calls
-export type AgentInput = {
-  name: string;
-  type: string;
-  description?: string;
-  enabled?: boolean;
-  model_id?: string;
-  instruction?: string;
-  tool_ids?: string[];
-  sub_agent_ids?: string[];
-  type_config?: Record<string, unknown>;
-  max_iterations?: number;
-  ai_hint?: string;
-};
+// Get a single workspace agent
+export async function getWorkspaceAgent(workspaceId: string, agentId: string): Promise<WorkspaceAgent> {
+  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/agents/${agentId}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to get workspace agent: ${res.statusText}`);
+  }
+  const data = await res.json();
+  return data.data;
+}
 
-export async function addWorkspaceAgent(
+// Create a new workspace agent
+export async function createWorkspaceAgent(
   workspaceId: string,
-  agent: AgentInput
+  agent: CreateWorkspaceAgentRequest
 ): Promise<WorkspaceAgent> {
   const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/agents`, {
     method: "POST",
@@ -531,15 +678,17 @@ export async function addWorkspaceAgent(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to add agent: ${res.statusText}`);
+    throw new Error(err.error || `Failed to create workspace agent: ${res.statusText}`);
   }
-  return res.json();
+  const data = await res.json();
+  return data.data;
 }
 
+// Update a workspace agent
 export async function updateWorkspaceAgent(
   workspaceId: string,
   agentId: string,
-  updates: Partial<AgentInput>
+  updates: UpdateWorkspaceAgentRequest
 ): Promise<WorkspaceAgent> {
   const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/agents/${agentId}`, {
     method: "PUT",
@@ -548,21 +697,24 @@ export async function updateWorkspaceAgent(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to update agent: ${res.statusText}`);
+    throw new Error(err.error || `Failed to update workspace agent: ${res.statusText}`);
   }
-  return res.json();
+  const data = await res.json();
+  return data.data;
 }
 
-export async function removeWorkspaceAgent(workspaceId: string, agentId: string): Promise<void> {
+// Delete a workspace agent
+export async function deleteWorkspaceAgent(workspaceId: string, agentId: string): Promise<void> {
   const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/agents/${agentId}`, {
     method: "DELETE",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to remove agent: ${res.statusText}`);
+    throw new Error(err.error || `Failed to delete workspace agent: ${res.statusText}`);
   }
 }
 
+// Toggle workspace agent enabled state
 export async function toggleWorkspaceAgent(
   workspaceId: string,
   agentId: string,
@@ -575,180 +727,9 @@ export async function toggleWorkspaceAgent(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to toggle agent: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-// Test agent by running a simple query
-export async function testWorkspaceAgent(
-  workspaceId: string,
-  agentId: string,
-  query?: string
-): Promise<{
-  success: boolean;
-  message?: string;
-  response?: string;
-  execution_time_ms?: number;
-}> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/agents/${agentId}/test`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: query || "Hello, are you working?" }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to test agent: ${res.statusText}`);
-  }
-  return res.json();
-}
-
-// =====================================
-// Agent Composition API
-// =====================================
-
-// Node in the agent composition graph
-export interface CompositionNode {
-  id: string;
-  type: "agent" | "start";
-  agent_id?: string;
-  position: { x: number; y: number };
-}
-
-// Edge connecting nodes in the composition
-export interface CompositionEdge {
-  id: string;
-  source: string;
-  target: string;
-  source_handle?: string;
-  target_handle?: string;
-  label?: string;
-}
-
-// AgentComposition - represents a composed agent graph
-export interface AgentComposition {
-  id: string;
-  workspace_id: string;
-  name: string;
-  description?: string;
-  entry_agent_id?: string;
-  nodes: CompositionNode[];
-  edges: CompositionEdge[];
-  viewport?: {
-    x: number;
-    y: number;
-    zoom: number;
-  };
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateAgentCompositionRequest {
-  name: string;
-  description?: string;
-  entry_agent_id?: string;
-  nodes?: CompositionNode[];
-  edges?: CompositionEdge[];
-  viewport?: { x: number; y: number; zoom: number };
-  enabled?: boolean;
-}
-
-export interface UpdateAgentCompositionRequest {
-  name?: string;
-  description?: string;
-  entry_agent_id?: string;
-  nodes?: CompositionNode[];
-  edges?: CompositionEdge[];
-  viewport?: { x: number; y: number; zoom: number };
-  enabled?: boolean;
-}
-
-// List all agent compositions for a workspace
-export async function listAgentCompositions(workspaceId: string): Promise<AgentComposition[]> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/compositions`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to list compositions: ${res.statusText}`);
-  }
-  const data = await res.json();
-  return data.data || [];
-}
-
-// Get a single agent composition
-export async function getAgentComposition(workspaceId: string, compositionId: string): Promise<AgentComposition> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/compositions/${compositionId}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to get composition: ${res.statusText}`);
+    throw new Error(err.error || `Failed to toggle workspace agent: ${res.statusText}`);
   }
   const data = await res.json();
   return data.data;
 }
 
-// Create a new agent composition
-export async function createAgentComposition(
-  workspaceId: string,
-  composition: CreateAgentCompositionRequest
-): Promise<AgentComposition> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/compositions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(composition),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to create composition: ${res.statusText}`);
-  }
-  const data = await res.json();
-  return data.data;
-}
-
-// Update an agent composition
-export async function updateAgentComposition(
-  workspaceId: string,
-  compositionId: string,
-  updates: UpdateAgentCompositionRequest
-): Promise<AgentComposition> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/compositions/${compositionId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(updates),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to update composition: ${res.statusText}`);
-  }
-  const data = await res.json();
-  return data.data;
-}
-
-// Delete an agent composition
-export async function deleteAgentComposition(workspaceId: string, compositionId: string): Promise<void> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/compositions/${compositionId}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to delete composition: ${res.statusText}`);
-  }
-}
-
-// Toggle composition enabled state
-export async function toggleAgentComposition(
-  workspaceId: string,
-  compositionId: string,
-  enabled: boolean
-): Promise<AgentComposition> {
-  const res = await fetch(`${baseUrl}/api/workspaces/${workspaceId}/compositions/${compositionId}/toggle`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Failed to toggle composition: ${res.statusText}`);
-  }
-  const data = await res.json();
-  return data.data;
-}
