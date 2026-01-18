@@ -114,12 +114,23 @@ func NewListTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedPath := tc.ResolvePath(input.Path)
 		result, err := tc.ListDir(ctx, tc.WorkspaceEndpoint(), resolvedPath, input.All)
 		if err != nil {
-			return "", fmt.Errorf("failed to list directory: %w", err)
+			return fmt.Sprintf("Error: failed to list directory '%s': %v", resolvedPath, err), nil
 		}
 
 		// Format output
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Directory: %s\n", resolvedPath))
+		// Show working directory info so agent knows the context
+		workDir := tc.GetWorkspaceWorkDir()
+		if workDir == "" {
+			// Try to get working directory via pwd command
+			if pwdOutput, pwdErr := tc.ExecInWorkspace(ctx, []string{"pwd"}); pwdErr == nil {
+				workDir = strings.TrimSpace(pwdOutput)
+			}
+		}
+		if workDir != "" {
+			sb.WriteString(fmt.Sprintf("Working Directory: %s\n", workDir))
+		}
+		sb.WriteString(fmt.Sprintf("Listing: %s\n", resolvedPath))
 		sb.WriteString(fmt.Sprintf("Total: %d items\n\n", len(result.Entries)))
 
 		for _, entry := range result.Entries {
@@ -165,7 +176,7 @@ Supports reading specific line ranges for efficient reading of large files.`
 		resolvedPath := tc.ResolvePath(input.Path)
 		content, err := tc.ReadFile(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to read file: %w", err)
+			return fmt.Sprintf("Error: failed to read file '%s': %v", resolvedPath, err), nil
 		}
 
 		// Handle line range if specified
@@ -252,7 +263,7 @@ func NewWriteTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedPath := tc.ResolvePath(input.Path)
 		err := tc.WriteFile(ctx, tc.WorkspaceEndpoint(), resolvedPath, input.Content)
 		if err != nil {
-			return "", fmt.Errorf("failed to write file: %w", err)
+			return fmt.Sprintf("Error: failed to write file '%s': %v", resolvedPath, err), nil
 		}
 
 		return fmt.Sprintf("Successfully wrote %d bytes to %s", len(input.Content), resolvedPath), nil
@@ -282,7 +293,7 @@ func NewStatTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedPath := tc.ResolvePath(input.Path)
 		info, err := tc.Stat(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to get file info: %w", err)
+			return fmt.Sprintf("Error: failed to get file info for '%s': %v", resolvedPath, err), nil
 		}
 
 		result := map[string]interface{}{
@@ -321,7 +332,7 @@ func NewMkdirTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedPath := tc.ResolvePath(input.Path)
 		err := tc.Mkdir(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to create directory: %w", err)
+			return fmt.Sprintf("Error: failed to create directory '%s': %v", resolvedPath, err), nil
 		}
 		return fmt.Sprintf("Successfully created directory: %s", resolvedPath), nil
 	})
@@ -350,7 +361,7 @@ func NewRemoveTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedPath := tc.ResolvePath(input.Path)
 		err := tc.Remove(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
-			return "", fmt.Errorf("failed to remove: %w", err)
+			return fmt.Sprintf("Error: failed to remove '%s': %v", resolvedPath, err), nil
 		}
 		return fmt.Sprintf("Successfully removed: %s", resolvedPath), nil
 	})
@@ -382,7 +393,7 @@ func NewRenameTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedTo := tc.ResolvePath(input.To)
 		err := tc.Rename(ctx, tc.WorkspaceEndpoint(), resolvedFrom, resolvedTo)
 		if err != nil {
-			return "", fmt.Errorf("failed to rename: %w", err)
+			return fmt.Sprintf("Error: failed to rename '%s' to '%s': %v", resolvedFrom, resolvedTo, err), nil
 		}
 		return fmt.Sprintf("Successfully renamed %s to %s", resolvedFrom, resolvedTo), nil
 	})
@@ -414,7 +425,7 @@ func NewCopyTool(tc *tools.ToolContext) tool.InvokableTool {
 		resolvedDst := tc.ResolvePath(input.Destination)
 		err := tc.Copy(ctx, tc.WorkspaceEndpoint(), resolvedSrc, resolvedDst)
 		if err != nil {
-			return "", fmt.Errorf("failed to copy: %w", err)
+			return fmt.Sprintf("Error: failed to copy '%s' to '%s': %v", resolvedSrc, resolvedDst, err), nil
 		}
 		return fmt.Sprintf("Successfully copied %s to %s", resolvedSrc, resolvedDst), nil
 	})

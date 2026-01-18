@@ -435,7 +435,10 @@ Use professional and friendly language in responses.`
 		Description: "An agent that can solve terminal and command line related issues",
 		Instruction: systemPrompt,
 		Model:       model,
-		ToolsConfig: adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools}},
+		ToolsConfig: adk.ToolsConfig{
+			ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: tools},
+			EmitInternalEvents: true, // Enable streaming from agent tools
+		},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create chat model agent: %w", err)

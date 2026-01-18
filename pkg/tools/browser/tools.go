@@ -240,8 +240,12 @@ type BrowserStartInput struct{}
 
 func NewBrowserStartTool(tc *tools.ToolContext) tool.InvokableTool {
 	return utils.NewTool(&schema.ToolInfo{
-		Name:        "browser_start",
-		Desc:        "Start a new browser instance in a Docker container. Returns the browser_id which must be used for all subsequent browser operations. The browser will automatically close after 10 minutes of inactivity.",
+		Name: "browser_start",
+		Desc: `Start a new browser instance in a Docker container. Returns a browser_id which MUST be used for all subsequent browser operations.
+
+IMPORTANT: You must call this tool FIRST and WAIT for its result before calling any other browser tools. Do NOT call browser_start in parallel with browser_go_to_url or other browser operations - you need the browser_id from this tool's response first.
+
+The browser will automatically close after 10 minutes of inactivity.`,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}, func(ctx context.Context, input *BrowserStartInput) (string, error) {
 		if tc.BrowserService == nil {
@@ -292,8 +296,15 @@ type BrowserListInput struct{}
 
 func NewBrowserListTool(tc *tools.ToolContext) tool.InvokableTool {
 	return utils.NewTool(&schema.ToolInfo{
-		Name:        "browser_list",
-		Desc:        "List all active browser instances in the current conversation. Use this to check which browsers are running and their current state before performing browser operations.",
+		Name: "browser_list",
+		Desc: `List all active browser instances in the current conversation. 
+
+Call this FIRST before any browser operation to:
+1. Check if you already have a browser running (reuse its browser_id)
+2. Get the correct browser_id for subsequent operations
+3. See the current URL and state of each browser
+
+If no browsers exist, call browser_start to create one.`,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{}),
 	}, func(ctx context.Context, input *BrowserListInput) (string, error) {
 		if tc.BrowserService == nil {
@@ -340,9 +351,11 @@ func NewBrowserGoToURLTool(tc *tools.ToolContext) tool.InvokableTool {
 		Name: "browser_go_to_url",
 		Desc: `Navigate the browser to a specified URL and wait for the page to load.
 
-IMPORTANT for container workspaces: If you started a web server in a Docker container, use the container's IP address (provided in workspace context as container_ip), NOT localhost. The server must bind to 0.0.0.0 to accept external connections.`,
+IMPORTANT: 
+1. The browser_id MUST be from a browser_start call in THIS conversation. If you just called browser_start, use the browser_id from its response.
+2. For container workspaces: If you started a web server in a Docker container, use the container's IP address (provided in workspace context as container_ip), NOT localhost. The server must bind to 0.0.0.0 to accept external connections.`,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
+			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID from browser_start. Must be a valid ID from the current conversation."},
 			"url":        {Type: schema.String, Required: true, Desc: "The URL to navigate to. For container workspaces, use http://CONTAINER_IP:PORT instead of localhost"},
 		}),
 	}, func(ctx context.Context, input *BrowserGoToURLInput) (string, error) {

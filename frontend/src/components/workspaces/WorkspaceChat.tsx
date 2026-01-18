@@ -179,8 +179,28 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   const [groupedModelOptions, setGroupedModelOptions] = useState<Record<string, ModelConfig[]>>({});
 
   // Agent state - workspace agents loaded from API
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  // Initialize from localStorage with workspace-specific key
+  const [selectedAgentId, setSelectedAgentId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(`workspace_${workspaceId}_selectedAgentId`) || "";
+    } catch {
+      return "";
+    }
+  });
   const [workspaceAgents, setWorkspaceAgents] = useState<Array<{ id: string; name: string; description?: string; enabled: boolean }>>([]);
+
+  // Persist selectedAgentId to localStorage when it changes
+  useEffect(() => {
+    try {
+      if (selectedAgentId) {
+        localStorage.setItem(`workspace_${workspaceId}_selectedAgentId`, selectedAgentId);
+      } else {
+        localStorage.removeItem(`workspace_${workspaceId}_selectedAgentId`);
+      }
+    } catch (e) {
+      console.warn("Failed to persist selectedAgentId:", e);
+    }
+  }, [workspaceId, selectedAgentId]);
 
   // Refs
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -325,11 +345,19 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           enabled: a.enabled !== false,
         }));
         setWorkspaceAgents(agents);
+
+        // Validate selectedAgentId - reset if the agent no longer exists or is disabled
+        if (selectedAgentId) {
+          const agentExists = agents.some((a: any) => a.id === selectedAgentId && a.enabled);
+          if (!agentExists) {
+            setSelectedAgentId("");
+          }
+        }
       }
     } catch (error) {
       console.error("Failed to load workspace agents:", error);
     }
-  }, [workspaceId]);
+  }, [workspaceId, selectedAgentId]);
 
   // Load conversations list
   // silent: if true, don't set isLoading state (used after creating new conversation)
