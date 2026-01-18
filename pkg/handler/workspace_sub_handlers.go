@@ -396,7 +396,7 @@ func (h *WorkspaceHandler) UpdateTool(c *gin.Context) {
 	c.JSON(http.StatusOK, tool)
 }
 
-// RemoveTool removes a tool from a workspace
+// RemoveTool removes a workspace tool
 func (h *WorkspaceHandler) RemoveTool(c *gin.Context) {
 	workspaceID := c.Param("id")
 	toolID := c.Param("toolId")
@@ -463,4 +463,208 @@ func (h *WorkspaceHandler) TestTool(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, result)
+}
+
+// =====================================
+// Workspace Agent Handlers (Canvas Composition)
+// =====================================
+
+// ListAgents lists all workspace agents (canvas compositions)
+func (h *WorkspaceHandler) ListAgents(c *gin.Context) {
+	workspaceID := c.Param("id")
+
+	var agents []models.WorkspaceAgent
+	if err := h.workspaceService.DB().Where("workspace_id = ?", workspaceID).Order("created_at ASC").Find(&agents).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": agents})
+}
+
+// GetAgent retrieves a single workspace agent
+func (h *WorkspaceHandler) GetAgent(c *gin.Context) {
+	workspaceID := c.Param("id")
+	agentID := c.Param("agentId")
+
+	var agent models.WorkspaceAgent
+	if err := h.workspaceService.DB().First(&agent, "id = ? AND workspace_id = ?", agentID, workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace agent not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": agent})
+}
+
+// CreateAgent creates a new workspace agent (canvas composition)
+func (h *WorkspaceHandler) CreateAgent(c *gin.Context) {
+	workspaceID := c.Param("id")
+
+	var req struct {
+		Name        string                         `json:"name" binding:"required"`
+		Description *string                        `json:"description"`
+		Enabled     *bool                          `json:"enabled"`
+		Nodes       models.WorkspaceAgentNodes     `json:"nodes"`
+		Edges       models.WorkspaceAgentEdges     `json:"edges"`
+		Viewport    *models.WorkspaceAgentViewport `json:"viewport"`
+		EntryNodeID *string                        `json:"entry_node_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Verify workspace exists
+	var ws models.Workspace
+	if err := h.workspaceService.DB().First(&ws, "id = ?", workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	agent := models.WorkspaceAgent{
+		ID:          uuid.New().String(),
+		WorkspaceID: workspaceID,
+		Name:        req.Name,
+		Description: req.Description,
+		Enabled:     enabled,
+		Nodes:       req.Nodes,
+		Edges:       req.Edges,
+		Viewport:    req.Viewport,
+		EntryNodeID: req.EntryNodeID,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+
+	if agent.Nodes == nil {
+		agent.Nodes = models.WorkspaceAgentNodes{}
+	}
+	if agent.Edges == nil {
+		agent.Edges = models.WorkspaceAgentEdges{}
+	}
+
+	if err := h.workspaceService.DB().Create(&agent).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"data": agent})
+}
+
+// UpdateAgent updates a workspace agent
+func (h *WorkspaceHandler) UpdateAgent(c *gin.Context) {
+	workspaceID := c.Param("id")
+	agentID := c.Param("agentId")
+
+	var agent models.WorkspaceAgent
+	if err := h.workspaceService.DB().First(&agent, "id = ? AND workspace_id = ?", agentID, workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace agent not found"})
+		return
+	}
+
+	var req struct {
+		Name        *string                        `json:"name"`
+		Description *string                        `json:"description"`
+		Enabled     *bool                          `json:"enabled"`
+		Nodes       models.WorkspaceAgentNodes     `json:"nodes"`
+		Edges       models.WorkspaceAgentEdges     `json:"edges"`
+		Viewport    *models.WorkspaceAgentViewport `json:"viewport"`
+		EntryNodeID *string                        `json:"entry_node_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	updates := map[string]interface{}{
+		"updated_at": time.Now(),
+	}
+
+	if req.Name != nil {
+		updates["name"] = *req.Name
+	}
+	if req.Description != nil {
+		updates["description"] = req.Description
+	}
+	if req.Enabled != nil {
+		updates["enabled"] = *req.Enabled
+	}
+	if req.Nodes != nil {
+		updates["nodes"] = req.Nodes
+	}
+	if req.Edges != nil {
+		updates["edges"] = req.Edges
+	}
+	if req.Viewport != nil {
+		updates["viewport"] = req.Viewport
+	}
+	if req.EntryNodeID != nil {
+		updates["entry_node_id"] = req.EntryNodeID
+	}
+
+	if err := h.workspaceService.DB().Model(&agent).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Reload agent to get updated values
+	if err := h.workspaceService.DB().First(&agent, "id = ?", agentID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": agent})
+}
+
+// DeleteAgent deletes a workspace agent
+func (h *WorkspaceHandler) DeleteAgent(c *gin.Context) {
+	workspaceID := c.Param("id")
+	agentID := c.Param("agentId")
+
+	result := h.workspaceService.DB().Delete(&models.WorkspaceAgent{}, "id = ? AND workspace_id = ?", agentID, workspaceID)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace agent not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ToggleAgent enables/disables a workspace agent
+func (h *WorkspaceHandler) ToggleAgent(c *gin.Context) {
+	workspaceID := c.Param("id")
+	agentID := c.Param("agentId")
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var agent models.WorkspaceAgent
+	if err := h.workspaceService.DB().First(&agent, "id = ? AND workspace_id = ?", agentID, workspaceID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "agent not found"})
+		return
+	}
+
+	if err := h.workspaceService.DB().Model(&agent).Updates(map[string]interface{}{
+		"enabled":    req.Enabled,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	agent.Enabled = req.Enabled
+	c.JSON(http.StatusOK, gin.H{"data": agent})
 }

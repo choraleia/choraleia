@@ -438,222 +438,25 @@ export type ToolConfig = {
 // ============================================
 
 // Agent types supported by ADK
-export type AgentType =
-  | "chat_model"     // Basic ChatModelAgent
-  | "supervisor"     // Supervisor pattern (coordinates sub-agents)
-  | "deep"          // Deep task orchestration
-  | "plan_execute"  // Plan-Execute-Replan pattern
-  | "sequential"    // Sequential workflow
-  | "loop"          // Loop workflow
-  | "parallel";     // Parallel workflow
-
-// Agent type display information
-export const AGENT_TYPE_INFO: Record<AgentType, { label: string; description: string }> = {
-  chat_model: {
-    label: "Chat Model Agent",
-    description: "Basic agent with tools, powered by a chat model"
-  },
-  supervisor: {
-    label: "Supervisor Agent",
-    description: "Coordinates multiple sub-agents, delegates tasks"
-  },
-  deep: {
-    label: "Deep Agent",
-    description: "Deep task orchestration with TODO management"
-  },
-  plan_execute: {
-    label: "Plan-Execute Agent",
-    description: "Creates plans, executes steps, and replans as needed"
-  },
-  sequential: {
-    label: "Sequential Workflow",
-    description: "Executes sub-agents in sequence"
-  },
-  loop: {
-    label: "Loop Workflow",
-    description: "Repeats sub-agents until exit condition"
-  },
-  parallel: {
-    label: "Parallel Workflow",
-    description: "Executes sub-agents in parallel"
-  }
-};
-
-// Chat Model Agent specific configuration
-export type ChatModelAgentTypeConfig = {
-  // No additional config needed beyond base
-};
-
-// Supervisor Agent specific configuration
-export type SupervisorAgentTypeConfig = {
-  supervisorAgentId?: string;  // The agent that acts as supervisor
-};
-
-// Deep Agent specific configuration
-export type DeepAgentTypeConfig = {
-  withoutWriteTodos?: boolean;       // Disable built-in write_todos tool
-  withoutGeneralSubAgent?: boolean;  // Disable general-purpose subagent
-};
-
-// Plan-Execute Agent sub-agent configuration
-export type PlanExecuteSubAgentConfig = {
-  modelId?: string;           // Model for this sub-agent
-  instruction?: string;       // System instruction
-  toolIds?: string[];         // Tools available to this sub-agent
-};
-
-// Plan-Execute Agent specific configuration
-export type PlanExecuteAgentTypeConfig = {
-  planner?: PlanExecuteSubAgentConfig;    // Planner agent config
-  executor?: PlanExecuteSubAgentConfig;   // Executor agent config
-  replanner?: PlanExecuteSubAgentConfig;  // Replanner agent config
-};
-
-// Loop Agent specific configuration
-export type LoopAgentTypeConfig = {
-  maxIterations?: number;     // Max loop iterations (default: 10)
-  breakCondition?: string;    // Optional break condition expression
-};
-
-// Parallel Agent specific configuration
-export type ParallelAgentTypeConfig = {
-  mergeStrategy?: "first" | "all" | "any";  // How to merge results
-};
-
-// Union type for all agent type configs
-export type AgentTypeConfig =
-  | ({ type: "chat_model" } & ChatModelAgentTypeConfig)
-  | ({ type: "supervisor" } & SupervisorAgentTypeConfig)
-  | ({ type: "deep" } & DeepAgentTypeConfig)
-  | ({ type: "plan_execute" } & PlanExecuteAgentTypeConfig)
-  | ({ type: "sequential" })
-  | ({ type: "loop" } & LoopAgentTypeConfig)
-  | ({ type: "parallel" } & ParallelAgentTypeConfig);
-
-// Agent configuration
-export type AgentConfig = {
-  id: string;
-  name: string;
-  type: AgentType;
-  description?: string;
-  enabled?: boolean;          // Enable/disable without removing
-
-  // Model configuration
-  modelId?: string;           // Primary model ID
-
-  // Instruction/system prompt
-  instruction?: string;
-
-  // Tools available to this agent (tool IDs from workspace tools)
-  toolIds?: string[];
-
-  // Sub-agents (agent IDs for composite agents)
-  subAgentIds?: string[];
-
-  // Type-specific configuration
-  typeConfig?: AgentTypeConfig;
-
-  // Max iterations for agent execution
-  maxIterations?: number;
-
-  // AI hint for this agent
-  aiHint?: string;
-
-  // Visual layout (for AgentDesigner)
-  position?: { x: number; y: number };
-  size?: { width: number; height: number };
-  containerId?: string;  // Parent container ID if inside a container
-};
-
 // =====================================
-// AgentComposition - A composed agent graph
-// This represents a complete agent composition shown in the left sidebar
-// The canvas is a visual editor for this JSON structure
+// Agent Types - Re-exported from api/workspaces.ts
 // =====================================
+export type {
+  AgentType,
+  AgentTypeConfig,
+  DeepAgentTypeConfig,
+  PlanExecuteSubAgentConfig,
+  PlanExecuteAgentTypeConfig,
+  LoopAgentTypeConfig,
+  ParallelAgentTypeConfig,
+  Agent,
+  WorkspaceAgent,
+  WorkspaceAgentNode,
+  WorkspaceAgentEdge,
+  WorkspaceAgentViewport,
+} from "../api/workspaces";
 
-// Node in the agent composition graph
-export type CompositionNode = {
-  id: string;
-  type: "agent" | "start";
-  agentId?: string;             // Reference to AgentConfig.id (only for agent nodes)
-  position: { x: number; y: number };
-};
-
-// Edge connecting nodes in the composition
-export type CompositionEdge = {
-  id: string;
-  source: string;               // Source node id
-  target: string;               // Target node id
-  sourceHandle?: string;        // Which handle on source
-  targetHandle?: string;        // Which handle on target
-  label?: string;
-};
-
-// AgentComposition - represents a composed agent graph shown in left sidebar
-export type AgentComposition = {
-  id: string;
-  workspace_id: string;
-  name: string;
-  description?: string;
-
-  // The entry point agent of this composition
-  entryAgentId?: string;
-
-  // All nodes in the composition canvas
-  nodes: CompositionNode[];
-
-  // All edges connecting nodes
-  edges: CompositionEdge[];
-
-  // Canvas viewport state
-  viewport?: {
-    x: number;
-    y: number;
-    zoom: number;
-  };
-
-  enabled?: boolean;
-  created_at?: string;
-  updated_at?: string;
-};
-
-// Preset agent templates for quick creation
-export const PRESET_AGENTS: Array<{
-  id: string;
-  name: string;
-  description: string;
-  type: AgentType;
-  instruction?: string;
-}> = [
-  {
-    id: "coding_assistant",
-    name: "Coding Assistant",
-    description: "Helps with coding tasks, file editing, and terminal commands",
-    type: "chat_model",
-    instruction: "You are a coding assistant. Help users with programming tasks, file operations, and terminal commands."
-  },
-  {
-    id: "researcher",
-    name: "Researcher",
-    description: "Researches topics and gathers information from various sources",
-    type: "chat_model",
-    instruction: "You are a researcher. Help users find and synthesize information on various topics."
-  },
-  {
-    id: "task_planner",
-    name: "Task Planner",
-    description: "Plans and executes complex multi-step tasks",
-    type: "plan_execute",
-    instruction: "You are a task planner. Break down complex tasks into steps and execute them systematically."
-  },
-  {
-    id: "team_lead",
-    name: "Team Lead",
-    description: "Coordinates multiple specialized agents to accomplish goals",
-    type: "supervisor",
-    instruction: "You are a team lead. Coordinate sub-agents to accomplish complex tasks efficiently."
-  }
-];
+export { AGENT_TYPE_INFO } from "../api/workspaces";
 
 export type SpaceConfigInput = {
   name: string;
@@ -661,7 +464,7 @@ export type SpaceConfigInput = {
   runtime: WorkspaceRuntime;
   assets: SpaceAssetsConfig;
   tools: ToolConfig[];
-  agents: AgentConfig[];
+  agents: workspacesApi.WorkspaceAgent[];
 };
 
 // Validate workspace name for K8s/DNS compatibility
@@ -1064,7 +867,7 @@ export type Workspace = {
   // Associated assets for this workspace
   assets: SpaceAssetsConfig;
   tools: ToolConfig[];
-  agents: AgentConfig[];
+  agents: workspacesApi.WorkspaceAgent[];
   rooms: Room[];
   activeRoomId: string;
   // File tree loaded from runtime environment (not persisted)
@@ -1387,20 +1190,8 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
         builtin: t.type === "builtin" ? (config.builtin || config) as BuiltinConfig : undefined,
       };
     }),
-    agents: (ws.agents || []).map((a: any) => ({
-      id: a.id,
-      name: a.name,
-      type: a.type as AgentType,
-      description: a.description,
-      enabled: a.enabled,
-      modelId: a.model_id,
-      instruction: a.instruction,
-      toolIds: a.tool_ids,
-      subAgentIds: a.sub_agent_ids,
-      typeConfig: a.type_config,
-      maxIterations: a.max_iterations,
-      aiHint: a.ai_hint,
-    })),
+    // Note: Agents (WorkspaceAgent) are now loaded separately via listWorkspaceAgents API
+    agents: [],
     rooms,
     activeRoomId: ws.active_room_id || rooms[0]?.id || "",
     workMode: "chat",  // Default to chat mode
@@ -1449,19 +1240,7 @@ const convertToBackendRequest = (ws: Workspace): workspacesApi.CreateWorkspaceRe
         ...(t.builtin && { builtin: t.builtin }),
       },
     })),
-    agents: (ws.agents || []).map((a) => ({
-      name: a.name,
-      type: a.type,
-      description: a.description,
-      enabled: a.enabled,
-      model_id: a.modelId,
-      instruction: a.instruction,
-      tool_ids: a.toolIds,
-      sub_agent_ids: a.subAgentIds,
-      type_config: a.typeConfig,
-      max_iterations: a.maxIterations,
-      ai_hint: a.aiHint,
-    })),
+    // Note: agents are managed separately via WorkspaceAgent API
   };
 };
 

@@ -60,24 +60,24 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MarkdownEditDialog from "./MarkdownEditDialog";
 import {
-  AgentConfig,
+  ToolConfig,
+} from "../../state/workspaces";
+import { getApiBase } from "../../api/base";
+import {
+  Agent,
   AgentType,
   AGENT_TYPE_INFO,
-  ToolConfig,
   DeepAgentTypeConfig,
   PlanExecuteAgentTypeConfig,
   PlanExecuteSubAgentConfig,
   LoopAgentTypeConfig,
-} from "../../state/workspaces";
-import { getApiBase } from "../../api/base";
-import {
-  AgentComposition,
-  CompositionNode,
-  CompositionEdge,
-  listAgentCompositions,
-  createAgentComposition,
-  updateAgentComposition,
-  deleteAgentComposition,
+  WorkspaceAgent,
+  WorkspaceAgentNode,
+  WorkspaceAgentEdge,
+  listWorkspaceAgents,
+  createWorkspaceAgent,
+  updateWorkspaceAgent,
+  deleteWorkspaceAgent,
 } from "../../api/workspaces";
 
 // =====================================
@@ -152,9 +152,9 @@ const getEdgeStyle = (sourceType: AgentType): { stroke: string; animated: boolea
 // =====================================
 
 interface AgentNodeData {
-  agent: AgentConfig;
+  agent: Agent;
   tools: ToolConfig[];
-  allAgents: AgentConfig[];
+  allAgents: Agent[];
   edges?: Edge[]; // Canvas edges to compute sub-agents
   allNodes?: Node[]; // All nodes to map edge targets to agents
   models?: Array<{ id: string; name: string; provider: string }>; // Available models
@@ -162,6 +162,26 @@ interface AgentNodeData {
 
 const AgentNode: React.FC<NodeProps<AgentNodeData>> = ({ id, data, selected }) => {
   const { agent, tools, edges = [], allNodes = [], models = [] } = data;
+
+  // Handle case when agent is undefined
+  if (!agent) {
+    return (
+      <Box sx={{
+        p: 1,
+        border: "1px dashed #ccc",
+        borderRadius: 1,
+        bgcolor: "#f5f5f5",
+        minWidth: 150
+      }}>
+        <Typography variant="caption" color="text.secondary">
+          Agent not configured
+        </Typography>
+        <Handle type="target" position={Position.Left} style={{ background: "#ccc" }} />
+        <Handle type="source" position={Position.Right} style={{ background: "#ccc" }} />
+      </Box>
+    );
+  }
+
   const typeInfo = AGENT_TYPE_INFO[agent.type];
   const color = AGENT_TYPE_COLORS[agent.type];
   const connectedTools = tools.filter((t) => agent.toolIds?.includes(t.id));
@@ -181,7 +201,7 @@ const AgentNode: React.FC<NodeProps<AgentNodeData>> = ({ id, data, selected }) =
       }
       return null;
     })
-    .filter(Boolean) as AgentConfig[];
+    .filter(Boolean) as Agent[];
 
   const hasSubAgents = connectedSubAgents.length > 0;
   const showWarning = needsSubAgents && !hasSubAgents;
@@ -560,22 +580,22 @@ const nodeTypes = {
 // Agent Config Panel (Right Sidebar)
 // =====================================
 
-interface AgentConfigPanelProps {
-  agent: AgentConfig | null;
+interface AgentPanelProps {
+  agent: Agent | null;
   nodeId: string | null; // The node ID of the agent being edited
-  allAgents: AgentConfig[];
+  allAgents: Agent[];
   tools: ToolConfig[];
   models: Array<{ id: string; name: string; provider: string }>;
   loadingModels: boolean;
   edges: Edge[];
   nodes: Node[];
   onClose: () => void;
-  onSave: (agent: AgentConfig) => void;
+  onSave: (agent: Agent) => void;
   onDelete: (id: string) => void;
   onReorderEdges: (nodeId: string, newEdgeOrder: string[]) => void; // Callback to reorder edges
 }
 
-const AgentConfigPanel: React.FC<AgentConfigPanelProps> = ({
+const AgentPanel: React.FC<AgentPanelProps> = ({
   agent,
   nodeId,
   allAgents,
@@ -589,7 +609,7 @@ const AgentConfigPanel: React.FC<AgentConfigPanelProps> = ({
   onDelete,
   onReorderEdges,
 }) => {
-  const [editedAgent, setEditedAgent] = useState<AgentConfig | null>(null);
+  const [editedAgent, setEditedAgent] = useState<Agent | null>(null);
   const [panelWidth, setPanelWidth] = useState(380);
   const [isResizing, setIsResizing] = useState(false);
   const startXRef = useRef(0);
@@ -659,7 +679,7 @@ const AgentConfigPanel: React.FC<AgentConfigPanelProps> = ({
   // Check if order matters for this agent type
   const orderMatters = ["sequential", "loop"].includes(editedAgent.type);
 
-  const handleChange = (field: keyof AgentConfig, value: any) => {
+  const handleChange = (field: keyof Agent, value: any) => {
     const updated = { ...editedAgent, [field]: value };
     setEditedAgent(updated);
     // Auto-save on change
@@ -1228,14 +1248,12 @@ const AgentConfigPanel: React.FC<AgentConfigPanelProps> = ({
 
 interface AgentDesignerProps {
   workspaceId: string;
-  agents: AgentConfig[];
   tools: ToolConfig[];
-  onChange: (agents: AgentConfig[]) => void;
 }
 
-const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tools, onChange }) => {
+const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, tools }) => {
   // Agent Compositions (left sidebar)
-  const [compositions, setCompositions] = useState<AgentComposition[]>([]);
+  const [compositions, setCompositions] = useState<WorkspaceAgent[]>([]);
   const [loadingCompositions, setLoadingCompositions] = useState(true);
   const [selectedCompositionId, setSelectedCompositionId] = useState<string | null>(null);
 
@@ -1253,7 +1271,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
 
   // UI state
   const [canvasAddMenuAnchor, setCanvasAddMenuAnchor] = useState<HTMLElement | null>(null);
-  const [editingAgent, setEditingAgent] = useState<AgentConfig | null>(null);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -1268,7 +1286,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     }
 
     setLoadingCompositions(true);
-    listAgentCompositions(workspaceId)
+    listWorkspaceAgents(workspaceId)
       .then(data => {
         setCompositions(data);
         // Auto-select first composition
@@ -1310,12 +1328,11 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
           data: {},
         };
       }
-      const agent = agents.find(a => a.id === node.agent_id);
       return {
         id: node.id,
         type: "agent",
         position: node.position,
-        data: { agent, tools, allAgents: agents },
+        data: { agent: node.agent, tools, allAgents: compositions.flatMap(c => c.nodes.filter(n => n.agent).map(n => n.agent!)) },
       };
     });
 
@@ -1327,7 +1344,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     // Convert composition edges to ReactFlow edges
     const flowEdges: Edge[] = selectedComposition.edges.map(edge => {
       const sourceNode = selectedComposition.nodes.find(n => n.id === edge.source);
-      const sourceAgent = sourceNode?.agent_id ? agents.find(a => a.id === sourceNode.agent_id) : null;
+      const sourceAgent = sourceNode?.agent;
       const edgeStyle = sourceAgent ? getEdgeStyle(sourceAgent.type) : { stroke: "#8b5cf6", animated: false, label: "" };
 
       return {
@@ -1347,19 +1364,23 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
 
     setNodes(flowNodes);
     setEdges(flowEdges);
-  }, [selectedComposition]); // Only rebuild when composition changes, not when agents change
+  }, [selectedComposition]); // Only rebuild when composition changes
 
-  // Update node data when agents, tools, or edges change (without rebuilding entire canvas)
+  // Update node data when tools or edges change (without rebuilding entire canvas)
   useEffect(() => {
+    if (!selectedComposition) return;
+
+    // Get all agents from current composition
+    const allAgents = selectedComposition.nodes.filter(n => n.agent).map(n => n.agent!);
+
     setNodes(nds => {
       const updatedNodes = nds.map(node => {
         if (node.type === "agent") {
-          const agentId = (node.data as AgentNodeData)?.agent?.id;
-          const agent = agents.find(a => a.id === agentId);
-          if (agent) {
+          const nodeData = node.data as AgentNodeData;
+          if (nodeData?.agent) {
             return {
               ...node,
-              data: { agent, tools, allAgents: agents, edges, allNodes: nds, models },
+              data: { ...nodeData, tools, allAgents, edges, allNodes: nds, models },
             };
           }
         }
@@ -1367,7 +1388,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
       });
       return updatedNodes;
     });
-  }, [agents, tools, edges, models]);
+  }, [selectedComposition, tools, edges, models]);
 
   // Fetch models
   useEffect(() => {
@@ -1388,27 +1409,39 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     if (!selectedComposition) return;
 
     // Convert ReactFlow nodes/edges back to composition format
-    const compositionNodes: CompositionNode[] = nodes.map(node => ({
-      id: node.id,
-      type: node.type as "agent" | "start",
-      agent_id: node.type === "agent" ? (node.data as AgentNodeData)?.agent?.id : undefined,
-      position: node.position,
-    }));
+    // Include full agent config in nodes, not just agent_id
+    const compositionNodes: WorkspaceAgentNode[] = nodes.map(node => {
+      if (node.type === "start") {
+        return {
+          id: node.id,
+          type: "start" as const,
+          position: node.position,
+        };
+      }
+      const agentData = node.data as AgentNodeData;
+      return {
+        id: node.id,
+        type: "agent" as const,
+        agent: agentData?.agent,  // Include full agent config
+        position: node.position,
+      };
+    });
 
-    const compositionEdges: CompositionEdge[] = edges.map(edge => ({
+    const compositionEdges: WorkspaceAgentEdge[] = edges.map((edge, index) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
       source_handle: edge.sourceHandle || undefined,
       target_handle: edge.targetHandle || undefined,
       label: edge.label as string | undefined,
+      order: index,
     }));
 
     // Skip the next rebuild since we're just saving current state
     skipNextRebuild.current = true;
 
     // Update local state first
-    const updatedComposition: AgentComposition = {
+    const updatedComposition: WorkspaceAgent = {
       ...selectedComposition,
       nodes: compositionNodes,
       edges: compositionEdges,
@@ -1419,7 +1452,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     // Try to save to backend
     if (workspaceId) {
       try {
-        await updateAgentComposition(workspaceId, selectedComposition.id, {
+        await updateWorkspaceAgent(workspaceId, selectedComposition.id, {
           nodes: compositionNodes,
           edges: compositionEdges,
         });
@@ -1430,21 +1463,22 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
   }, [workspaceId, selectedComposition, nodes, edges]);
 
   // Add agent to canvas
-  const handleAddAgentToCanvas = (agent: AgentConfig) => {
+  const handleAddAgentToCanvas = (agent: Agent) => {
     // Check if already on canvas
     const existingNode = nodes.find(n =>
       n.type === "agent" && (n.data as AgentNodeData)?.agent?.id === agent.id
     );
-    if (existingNode) {
+    if (existingNode || !selectedComposition) {
       setCanvasAddMenuAnchor(null);
       return;
     }
 
+    const allAgents = [...selectedComposition.nodes.filter(n => n.agent).map(n => n.agent!), agent];
     const newNode: Node = {
       id: `node_${crypto.randomUUID()}`,
       type: "agent",
       position: { x: 400 + Math.random() * 100, y: 100 + Math.random() * 100 },
-      data: { agent, tools, allAgents: agents },
+      data: { agent, tools, allAgents },
     };
     setNodes((nds) => [...nds, newNode]);
     setCanvasAddMenuAnchor(null);
@@ -1461,7 +1495,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     }
 
     // Create a new agent configuration
-    const newAgent: AgentConfig = {
+    const newAgent: Agent = {
       id: crypto.randomUUID(),
       name: `New ${AGENT_TYPE_INFO[type].label}`,
       type,
@@ -1470,17 +1504,14 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
       subAgentIds: [],
     };
 
-    // Add to workspace agents
-    const updatedAgents = [...agents, newAgent];
-    onChange(updatedAgents);
-
-    // Add node to canvas
+    // Add node to canvas with embedded agent
     const nodeId = `node_${crypto.randomUUID()}`;
+    const allAgents = [...selectedComposition.nodes.filter(n => n.agent).map(n => n.agent!), newAgent];
     const newNode: Node = {
       id: nodeId,
       type: "agent",
       position: { x: 300 + Math.random() * 100, y: 100 + Math.random() * 100 },
-      data: { agent: newAgent, tools, allAgents: updatedAgents },
+      data: { agent: newAgent, tools, allAgents },
     };
 
     setNodes((nds) => {
@@ -1497,7 +1528,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
 
   // Create new composition
   const handleCreateComposition = async () => {
-    const newComposition: AgentComposition = {
+    const newComposition: WorkspaceAgent = {
       id: crypto.randomUUID(),
       workspace_id: workspaceId,
       name: `Composition ${compositions.length + 1}`,
@@ -1511,7 +1542,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     // Try to save to backend, but continue even if it fails
     if (workspaceId) {
       try {
-        const savedComposition = await createAgentComposition(workspaceId, {
+        const savedComposition = await createWorkspaceAgent(workspaceId, {
           name: newComposition.name,
           nodes: newComposition.nodes,
           edges: newComposition.edges,
@@ -1536,7 +1567,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     // Try to delete from backend
     if (workspaceId) {
       try {
-        await deleteAgentComposition(workspaceId, compositionId);
+        await deleteWorkspaceAgent(workspaceId, compositionId);
       } catch (err) {
         console.warn("Backend API not available, using local state:", err);
       }
@@ -1555,7 +1586,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     if (!selectedComposition || !name.trim()) return;
 
     try {
-      const updated = await updateAgentComposition(workspaceId, selectedComposition.id, { name });
+      const updated = await updateWorkspaceAgent(workspaceId, selectedComposition.id, { name });
       setCompositions(prev => prev.map(c => c.id === updated.id ? updated : c));
     } catch (err) {
       console.error("Failed to update composition name:", err);
@@ -1701,19 +1732,28 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
     setTimeout(saveComposition, 100);
   };
 
-  // Save edited agent (update in workspace agents list)
-  const handleSaveAgent = (updatedAgent: AgentConfig) => {
-    const updatedAgents = agents.map((a) => (a.id === updatedAgent.id ? updatedAgent : a));
-    // Update node data
-    setNodes((nds) =>
-      nds.map((n) => {
+  // Save edited agent (update in node data)
+  const handleSaveAgent = (updatedAgent: Agent) => {
+    // Update node data with new agent
+    setNodes((nds) => {
+      const allAgents = nds
+        .filter(n => n.type === "agent")
+        .map(n => {
+          const nodeAgent = (n.data as AgentNodeData)?.agent;
+          return nodeAgent?.id === updatedAgent.id ? updatedAgent : nodeAgent;
+        })
+        .filter(Boolean) as Agent[];
+
+      return nds.map((n) => {
         if (n.type === "agent" && (n.data as AgentNodeData)?.agent?.id === updatedAgent.id) {
-          return { ...n, data: { agent: updatedAgent, tools, allAgents: updatedAgents } };
+          return { ...n, data: { agent: updatedAgent, tools, allAgents } };
         }
         return n;
-      })
-    );
-    onChange(updatedAgents);
+      });
+    });
+
+    // Auto-save composition
+    setTimeout(saveComposition, 100);
   };
 
   // Handle edge reordering for sub-agent order
@@ -1809,18 +1849,59 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
                   borderLeftColor: selectedCompositionId === comp.id
                     ? "primary.main"
                     : "transparent",
-                  opacity: comp.enabled === false ? 0.5 : 1,
+                  opacity: !comp.enabled ? 0.5 : 1,
                 }}
               >
                 <ListItemIcon sx={{ minWidth: 24, color: "primary.main" }}>
                   <AccountTreeIcon fontSize="small" />
                 </ListItemIcon>
-                <ListItemText
-                  primary={comp.name}
-                  secondary={`${comp.nodes.filter(n => n.type === "agent").length} agents`}
-                  primaryTypographyProps={{ variant: "body2", noWrap: true, fontSize: "0.8rem" }}
-                  secondaryTypographyProps={{ variant: "caption", fontSize: "0.65rem" }}
-                />
+                {/* Inline editing for name */}
+                {isEditingName && selectedCompositionId === comp.id ? (
+                  <TextField
+                    size="small"
+                    value={compositionNameInput}
+                    onChange={(e) => setCompositionNameInput(e.target.value)}
+                    onBlur={() => {
+                      if (compositionNameInput.trim()) {
+                        handleUpdateCompositionName(compositionNameInput);
+                      } else {
+                        setIsEditingName(false);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        if (compositionNameInput.trim()) {
+                          handleUpdateCompositionName(compositionNameInput);
+                        }
+                      } else if (e.key === "Escape") {
+                        setIsEditingName(false);
+                      }
+                    }}
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                    sx={{
+                      flex: 1,
+                      "& .MuiInputBase-input": {
+                        fontSize: "0.8rem",
+                        py: 0.25,
+                        px: 0.5
+                      }
+                    }}
+                  />
+                ) : (
+                  <ListItemText
+                    primary={comp.name}
+                    secondary={`${comp.nodes.filter(n => n.type === "agent").length} agents`}
+                    primaryTypographyProps={{ variant: "body2", noWrap: true, fontSize: "0.8rem" }}
+                    secondaryTypographyProps={{ variant: "caption", fontSize: "0.65rem" }}
+                    onDoubleClick={(e) => {
+                      e.stopPropagation();
+                      setCompositionNameInput(comp.name);
+                      setIsEditingName(true);
+                    }}
+                    sx={{ cursor: "text" }}
+                  />
+                )}
                 <IconButton
                   size="small"
                   onClick={(e) => {
@@ -1942,37 +2023,6 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
                   />
                 </MenuItem>
               ))}
-
-              {/* Divider and existing workspace agents */}
-              {agents.length > 0 && (
-                <>
-                  <Divider sx={{ my: 0.5 }} />
-                  <Typography variant="caption" color="text.secondary" sx={{ px: 2, py: 0.5, display: "block", fontWeight: 600 }}>
-                    From Workspace
-                  </Typography>
-                  {agents.map((agent) => {
-                    const alreadyOnCanvas = nodes.some(n =>
-                      n.type === "agent" && (n.data as AgentNodeData)?.agent?.id === agent.id
-                    );
-                    return (
-                      <MenuItem
-                        key={agent.id}
-                        onClick={() => handleAddAgentToCanvas(agent)}
-                        disabled={alreadyOnCanvas}
-                      >
-                        <ListItemIcon sx={{ color: AGENT_TYPE_COLORS[agent.type] }}>
-                          {AGENT_TYPE_ICONS[agent.type]}
-                        </ListItemIcon>
-                        <ListItemText
-                          primary={agent.name}
-                          secondary={alreadyOnCanvas ? "Already on canvas" : AGENT_TYPE_INFO[agent.type].label}
-                          secondaryTypographyProps={{ variant: "caption" }}
-                        />
-                      </MenuItem>
-                    );
-                  })}
-                </>
-              )}
             </Menu>
           </Box>
         )}
@@ -2007,10 +2057,10 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, agents, tool
         <Legend />
 
         {/* Right Config Panel - floats over canvas */}
-        <AgentConfigPanel
+        <AgentPanel
           agent={editingAgent}
           nodeId={editingNodeId}
-          allAgents={agents}
+          allAgents={selectedComposition?.nodes.filter(n => n.agent).map(n => n.agent!) || []}
           tools={tools}
           models={models}
           loadingModels={loadingModels}
