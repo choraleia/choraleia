@@ -72,6 +72,7 @@ type ChatCompletionRequest struct {
 	ConversationID string `json:"conversation_id,omitempty"` // Existing conversation to continue
 	WorkspaceID    string `json:"workspace_id,omitempty"`    // Workspace context
 	RoomID         string `json:"room_id,omitempty"`         // Optional room context
+	AgentID        string `json:"agent_id,omitempty"`        // WorkspaceAgent ID to use (empty = default chat model agent)
 
 	// Branch support
 	ParentID string `json:"parent_id,omitempty"` // Parent message ID for branching
@@ -257,6 +258,7 @@ type ChatCompletionChunkDelta struct {
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 	Refusal          string     `json:"refusal,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"` // Extended
+	AgentName        string     `json:"agent_name,omitempty"`        // Extended: current agent name
 }
 
 // ========== Constants ==========

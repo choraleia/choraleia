@@ -503,7 +503,7 @@ func (m *ModelService) CreateChatModel(ctx context.Context, config *models.Model
 	}
 }
 
-// GetModelConfig get specified model config (match by name or model field)
+// GetModelConfig get specified model config (match by id, name or model field)
 func (m *ModelService) GetModelConfig(modelName string) (*models.ModelConfig, error) {
 	currentModels, err := models.LoadModels()
 	if err != nil {
@@ -511,7 +511,7 @@ func (m *ModelService) GetModelConfig(modelName string) (*models.ModelConfig, er
 	}
 	for _, mm := range currentModels {
 		mm.Normalize()
-		if mm.Name == modelName || mm.Model == modelName {
+		if mm.ID == modelName || mm.Name == modelName || mm.Model == modelName {
 			return mm, nil
 		}
 	}

@@ -297,32 +297,37 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
 
   const toggleFolder = useCallback((path: string) => {
+    // Check if folder needs lazy loading before updating state
+    const findNode = (nodes: FileNode[]): FileNode | undefined => {
+      for (const node of nodes) {
+        if (node.path === path) return node;
+        if (node.children) {
+          const found = findNode(node.children);
+          if (found) return found;
+        }
+      }
+      return undefined;
+    };
+
+    const node = findNode(fileTree);
+    const isExpanded = expandedFolders.has(path);
+
+    // If expanding and folder hasn't been loaded yet, trigger load
+    if (!isExpanded && node && node.type === "folder" && !node.childrenLoaded) {
+      loadDirectoryChildren(path);
+    }
+
+    // Toggle the expanded state
     setExpandedFolders((prev) => {
       const next = new Set(prev);
       if (next.has(path)) {
         next.delete(path);
       } else {
         next.add(path);
-        // Check if this folder needs lazy loading (has empty children array)
-        const findNode = (nodes: FileNode[]): FileNode | undefined => {
-          for (const node of nodes) {
-            if (node.path === path) return node;
-            if (node.children) {
-              const found = findNode(node.children);
-              if (found) return found;
-            }
-          }
-          return undefined;
-        };
-        const node = findNode(fileTree);
-        if (node && node.type === "folder" && node.children && node.children.length === 0) {
-          // Lazy load children
-          loadDirectoryChildren(path);
-        }
       }
       return next;
     });
-  }, [fileTree, loadDirectoryChildren]);
+  }, [fileTree, expandedFolders, loadDirectoryChildren]);
 
   const expandAllFolders = useCallback(() => {
     const allFolderPaths = new Set<string>();
@@ -466,7 +471,8 @@ const WorkspaceExplorer: React.FC<WorkspaceExplorerProps> = () => {
 
   const handleRefreshClick = (event: React.MouseEvent) => {
     event.stopPropagation();
-    refreshFileTree();
+    // Pass expanded folders to refresh, so it loads all needed directories at once
+    refreshFileTree(expandedFolders);
   };
 
   const assetItems = useMemo(

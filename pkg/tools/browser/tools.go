@@ -338,10 +338,12 @@ type BrowserGoToURLInput struct {
 func NewBrowserGoToURLTool(tc *tools.ToolContext) tool.InvokableTool {
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "browser_go_to_url",
-		Desc: "Navigate the browser to a specified URL and wait for the page to load.",
+		Desc: `Navigate the browser to a specified URL and wait for the page to load.
+
+IMPORTANT for container workspaces: If you started a web server in a Docker container, use the container's IP address (provided in workspace context as container_ip), NOT localhost. The server must bind to 0.0.0.0 to accept external connections.`,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"browser_id": {Type: schema.String, Required: true, Desc: "The browser instance ID"},
-			"url":        {Type: schema.String, Required: true, Desc: "The URL to navigate to (e.g., 'https://example.com')"},
+			"url":        {Type: schema.String, Required: true, Desc: "The URL to navigate to. For container workspaces, use http://CONTAINER_IP:PORT instead of localhost"},
 		}),
 	}, func(ctx context.Context, input *BrowserGoToURLInput) (string, error) {
 		if tc.BrowserService == nil {

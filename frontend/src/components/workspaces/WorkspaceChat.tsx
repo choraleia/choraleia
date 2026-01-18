@@ -14,7 +14,7 @@ import { Box, CircularProgress, IconButton, Tooltip, Typography } from "@mui/mat
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import AddIcon from "@mui/icons-material/Add";
 import { v4 as uuidv4 } from "uuid";
-import { WorkspaceChatThread, ModelConfig, AgentMode } from "./WorkspaceChatThread";
+import { WorkspaceChatThread, ModelConfig, WorkspaceAgentOption } from "./WorkspaceChatThread";
 import { ThreadList } from "./chat/thread-list";
 import "./chat/globals.css";
 import { useWorkspaces } from "../../state/workspaces";
@@ -57,6 +57,7 @@ type UIMessage = {
   createdAt: Date;
   parentId: string | null;
   status?: "running" | "complete" | "error" | "cancelled";
+  agentName?: string; // Name of the agent that generated this message
 };
 
 // Convert MessagePart to UI content format
@@ -177,8 +178,9 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   const [selectedModel, setSelectedModel] = useState<string>("");
   const [groupedModelOptions, setGroupedModelOptions] = useState<Record<string, ModelConfig[]>>({});
 
-  // Agent mode state
-  const [agentMode, setAgentMode] = useState<AgentMode>("tools");
+  // Agent state - workspace agents loaded from API
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [workspaceAgents, setWorkspaceAgents] = useState<Array<{ id: string; name: string; description?: string; enabled: boolean }>>([]);
 
   // Refs
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -256,7 +258,9 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           unstable_annotations: undefined,
           unstable_data: undefined,
           steps: undefined,
-          custom: {},
+          custom: {
+            agentName: msg.agentName,
+          },
         },
       } as ThreadMessageLike,
       parentId: msg.parentId,
@@ -307,6 +311,25 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
       console.error("Failed to load models:", error);
     }
   }, [selectedModel]);
+
+  // Load workspace agents list
+  const loadWorkspaceAgents = useCallback(async () => {
+    try {
+      const resp = await fetch(getApiUrl(`/api/workspaces/${workspaceId}/agents`));
+      if (resp.ok) {
+        const data = await resp.json();
+        const agents = (data.data || []).map((a: any) => ({
+          id: a.id,
+          name: a.name,
+          description: a.description,
+          enabled: a.enabled !== false,
+        }));
+        setWorkspaceAgents(agents);
+      }
+    } catch (error) {
+      console.error("Failed to load workspace agents:", error);
+    }
+  }, [workspaceId]);
 
   // Load conversations list
   // silent: if true, don't set isLoading state (used after creating new conversation)
@@ -485,6 +508,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   // Initial load - only run once on mount
   useEffect(() => {
     loadModels();
+    loadWorkspaceAgents();
     loadThreads();
     // If there's a persisted conversation ID, load its messages
     if (activeRoom?.currentConversationId) {
@@ -541,6 +565,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
       workspace_id: workspaceId,
       conversation_id: threadId,
       model: selectedModel,
+      agent_id: selectedAgentId || undefined,
       messages: request.messages,
       stream: true,
       action: request.action,
@@ -549,6 +574,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
     const contentParts: any[] = [];
     let finishReason: string | undefined;
+    let currentAgentName: string | undefined;
 
     for await (const chunk of stream) {
 
@@ -559,6 +585,18 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         if (choice.finish_reason) {
           finishReason = choice.finish_reason;
           continue;
+        }
+
+        // Track agent name changes and insert agent-switch marker as text
+        if (choice.delta.agent_name && choice.delta.agent_name !== currentAgentName) {
+          // If we already had an agent and it's changing, insert a switch marker as text
+          if (currentAgentName && contentParts.length > 0) {
+            contentParts.push({
+              type: "text",
+              text: `\n\n---\n🤖 **Switched to ${choice.delta.agent_name}**\n\n`
+            });
+          }
+          currentAgentName = choice.delta.agent_name;
         }
 
         // New assistant round marker - skip
@@ -625,7 +663,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         }
       }
 
-      // Update UI
+      // Update UI with content and agent name
       const newContent = contentParts.filter(p =>
         (p.type === "text" && p.text.length > 0) ||
         (p.type === "reasoning" && p.text.length > 0) ||
@@ -634,14 +672,14 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
       if (newContent.length === 0) newContent.push({ type: "text", text: "" });
 
       setAllMessages((prev) =>
-        prev.map((msg) => msg.id === assistantMessageId ? { ...msg, content: [...newContent] } : msg)
+        prev.map((msg) => msg.id === assistantMessageId ? { ...msg, content: [...newContent], agentName: currentAgentName } : msg)
       );
     }
 
     // Determine final status based on finish reason
     const finalStatus = finishReason === "cancelled" ? "cancelled" : "complete";
 
-    // Mark message with final status
+    // Mark message with final status (keep agentName)
     setAllMessages((prev) =>
       prev.map((msg) =>
         msg.id === assistantMessageId
@@ -649,7 +687,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           : msg
       )
     );
-  }, [workspaceId, selectedModel]);
+  }, [workspaceId, selectedModel, selectedAgentId]);
 
   // Send message handler
   const onNew = useCallback(async (appendMessage: AppendMessage) => {
@@ -854,8 +892,8 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   }, [currentThreadId, allMessages, streamChat]);
 
 
-  // Thread list adapter
-  const threadList: ExternalStoreThreadListAdapter = {
+  // Thread list adapter - memoized to prevent unnecessary runtime resets
+  const threadList: ExternalStoreThreadListAdapter = useMemo(() => ({
     threadId: currentThreadId,
     threads: threads
       .filter((t) => t.status === "regular")
@@ -905,7 +943,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     },
     onArchive: async () => {},
     onUnarchive: async () => {},
-  };
+  }), [currentThreadId, threads, isLoading, setCurrentThreadId, loadMessages, loadThreads]);
 
   // Wrapper for setMessages to enable branch switching
   // When user switches to a different branch, this callback receives the new message path
@@ -1067,8 +1105,9 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
                 setSelectedModel={setSelectedModel}
                 groupedModelOptions={groupedModelOptions}
                 isLoading={isLoading}
-                agentMode={agentMode}
-                setAgentMode={setAgentMode}
+                selectedAgentId={selectedAgentId}
+                setSelectedAgentId={setSelectedAgentId}
+                workspaceAgents={workspaceAgents}
               />
             )}
           </Box>

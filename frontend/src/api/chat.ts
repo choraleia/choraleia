@@ -135,6 +135,7 @@ export interface ChatCompletionRequest {
   conversation_id?: string;
   workspace_id?: string;
   room_id?: string;
+  agent_id?: string; // WorkspaceAgent ID to use
   temperature?: number;
   max_tokens?: number;
   // Branch support
@@ -171,6 +172,7 @@ export interface ChatCompletionChunk {
       tool_calls?: ToolCall[];
       tool_call_id?: string;
       reasoning_content?: string;
+      agent_name?: string;
     };
     finish_reason?: string;
   }>;

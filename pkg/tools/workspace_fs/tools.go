@@ -97,22 +97,29 @@ type ListInput struct {
 }
 
 func NewListTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "List directory contents in the workspace. Returns file names, sizes, and types."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s. Relative paths are resolved from this directory.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_list",
-		Desc: "List directory contents in the workspace (local filesystem). Returns file names, sizes, and types.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path": {Type: schema.String, Required: true, Desc: "Directory path to list"},
+			"path": {Type: schema.String, Required: true, Desc: "Directory path to list (relative to working directory or absolute)"},
 			"all":  {Type: schema.Boolean, Required: false, Desc: "Include hidden files (default: false)"},
 		}),
 	}, func(ctx context.Context, input *ListInput) (string, error) {
-		result, err := tc.ListDir(ctx, tc.WorkspaceEndpoint(), input.Path, input.All)
+		resolvedPath := tc.ResolvePath(input.Path)
+		result, err := tc.ListDir(ctx, tc.WorkspaceEndpoint(), resolvedPath, input.All)
 		if err != nil {
 			return "", fmt.Errorf("failed to list directory: %w", err)
 		}
 
 		// Format output
 		var sb strings.Builder
-		sb.WriteString(fmt.Sprintf("Directory: %s\n", input.Path))
+		sb.WriteString(fmt.Sprintf("Directory: %s\n", resolvedPath))
 		sb.WriteString(fmt.Sprintf("Total: %d items\n\n", len(result.Entries)))
 
 		for _, entry := range result.Entries {
@@ -138,18 +145,25 @@ type ReadInput struct {
 }
 
 func NewReadTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := `Read the content of a file in the workspace. Use for viewing configuration files, logs, or source code.
+Supports reading specific line ranges for efficient reading of large files.`
+	if workDir != "" {
+		desc += fmt.Sprintf("\nWorking directory: %s. Relative paths are resolved from this directory.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_read",
-		Desc: `Read the content of a file in the workspace. Use for viewing configuration files, logs, or source code.
-Supports reading specific line ranges for efficient reading of large files.`,
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path":       {Type: schema.String, Required: true, Desc: "File path to read"},
+			"path":       {Type: schema.String, Required: true, Desc: "File path to read (relative to working directory or absolute)"},
 			"start_line": {Type: schema.Integer, Required: false, Desc: "Start line number (1-based, inclusive). If omitted, starts from beginning."},
 			"end_line":   {Type: schema.Integer, Required: false, Desc: "End line number (1-based, inclusive). If omitted, reads to end."},
 			"max_bytes":  {Type: schema.Integer, Required: false, Desc: "Maximum bytes to read (default: no limit)"},
 		}),
 	}, func(ctx context.Context, input *ReadInput) (string, error) {
-		content, err := tc.ReadFile(ctx, tc.WorkspaceEndpoint(), input.Path)
+		resolvedPath := tc.ResolvePath(input.Path)
+		content, err := tc.ReadFile(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to read file: %w", err)
 		}
@@ -220,21 +234,28 @@ type WriteInput struct {
 }
 
 func NewWriteTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "Write content to a file in the workspace. Creates the file if it doesn't exist."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s. Relative paths are resolved from this directory.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_write",
-		Desc: "Write content to a file in the workspace. Creates the file if it doesn't exist.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path":      {Type: schema.String, Required: true, Desc: "File path to write"},
+			"path":      {Type: schema.String, Required: true, Desc: "File path to write (relative to working directory or absolute)"},
 			"content":   {Type: schema.String, Required: true, Desc: "Content to write"},
 			"overwrite": {Type: schema.Boolean, Required: false, Desc: "Overwrite existing file (default: true)"},
 		}),
 	}, func(ctx context.Context, input *WriteInput) (string, error) {
-		err := tc.WriteFile(ctx, tc.WorkspaceEndpoint(), input.Path, input.Content)
+		resolvedPath := tc.ResolvePath(input.Path)
+		err := tc.WriteFile(ctx, tc.WorkspaceEndpoint(), resolvedPath, input.Content)
 		if err != nil {
 			return "", fmt.Errorf("failed to write file: %w", err)
 		}
 
-		return fmt.Sprintf("Successfully wrote %d bytes to %s", len(input.Content), input.Path), nil
+		return fmt.Sprintf("Successfully wrote %d bytes to %s", len(input.Content), resolvedPath), nil
 	})
 }
 
@@ -245,21 +266,28 @@ type StatInput struct {
 }
 
 func NewStatTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "Get detailed information about a file or directory in the workspace."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_stat",
-		Desc: "Get detailed information about a file or directory in the workspace.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path": {Type: schema.String, Required: true, Desc: "File or directory path"},
+			"path": {Type: schema.String, Required: true, Desc: "File or directory path (relative to working directory or absolute)"},
 		}),
 	}, func(ctx context.Context, input *StatInput) (string, error) {
-		info, err := tc.Stat(ctx, tc.WorkspaceEndpoint(), input.Path)
+		resolvedPath := tc.ResolvePath(input.Path)
+		info, err := tc.Stat(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to get file info: %w", err)
 		}
 
 		result := map[string]interface{}{
 			"name":     info.Name,
-			"path":     input.Path,
+			"path":     resolvedPath,
 			"size":     info.Size,
 			"is_dir":   info.IsDir,
 			"mod_time": info.ModTime.Format("2006-01-02 15:04:05"),
@@ -277,18 +305,25 @@ type MkdirInput struct {
 }
 
 func NewMkdirTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "Create a directory in the workspace. Creates parent directories if needed."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_mkdir",
-		Desc: "Create a directory in the workspace. Creates parent directories if needed.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path": {Type: schema.String, Required: true, Desc: "Directory path to create"},
+			"path": {Type: schema.String, Required: true, Desc: "Directory path to create (relative to working directory or absolute)"},
 		}),
 	}, func(ctx context.Context, input *MkdirInput) (string, error) {
-		err := tc.Mkdir(ctx, tc.WorkspaceEndpoint(), input.Path)
+		resolvedPath := tc.ResolvePath(input.Path)
+		err := tc.Mkdir(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to create directory: %w", err)
 		}
-		return fmt.Sprintf("Successfully created directory: %s", input.Path), nil
+		return fmt.Sprintf("Successfully created directory: %s", resolvedPath), nil
 	})
 }
 
@@ -299,18 +334,25 @@ type RemoveInput struct {
 }
 
 func NewRemoveTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "Remove a file or directory in the workspace. Use with caution."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_remove",
-		Desc: "Remove a file or directory in the workspace. Use with caution.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"path": {Type: schema.String, Required: true, Desc: "File or directory path to remove"},
+			"path": {Type: schema.String, Required: true, Desc: "File or directory path to remove (relative to working directory or absolute)"},
 		}),
 	}, func(ctx context.Context, input *RemoveInput) (string, error) {
-		err := tc.Remove(ctx, tc.WorkspaceEndpoint(), input.Path)
+		resolvedPath := tc.ResolvePath(input.Path)
+		err := tc.Remove(ctx, tc.WorkspaceEndpoint(), resolvedPath)
 		if err != nil {
 			return "", fmt.Errorf("failed to remove: %w", err)
 		}
-		return fmt.Sprintf("Successfully removed: %s", input.Path), nil
+		return fmt.Sprintf("Successfully removed: %s", resolvedPath), nil
 	})
 }
 
@@ -322,19 +364,27 @@ type RenameInput struct {
 }
 
 func NewRenameTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "Rename or move a file/directory in the workspace."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_rename",
-		Desc: "Rename or move a file/directory in the workspace.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"from": {Type: schema.String, Required: true, Desc: "Source path"},
-			"to":   {Type: schema.String, Required: true, Desc: "Destination path"},
+			"from": {Type: schema.String, Required: true, Desc: "Source path (relative to working directory or absolute)"},
+			"to":   {Type: schema.String, Required: true, Desc: "Destination path (relative to working directory or absolute)"},
 		}),
 	}, func(ctx context.Context, input *RenameInput) (string, error) {
-		err := tc.Rename(ctx, tc.WorkspaceEndpoint(), input.From, input.To)
+		resolvedFrom := tc.ResolvePath(input.From)
+		resolvedTo := tc.ResolvePath(input.To)
+		err := tc.Rename(ctx, tc.WorkspaceEndpoint(), resolvedFrom, resolvedTo)
 		if err != nil {
 			return "", fmt.Errorf("failed to rename: %w", err)
 		}
-		return fmt.Sprintf("Successfully renamed %s to %s", input.From, input.To), nil
+		return fmt.Sprintf("Successfully renamed %s to %s", resolvedFrom, resolvedTo), nil
 	})
 }
 
@@ -346,18 +396,26 @@ type CopyInput struct {
 }
 
 func NewCopyTool(tc *tools.ToolContext) tool.InvokableTool {
+	workDir := tc.GetWorkspaceWorkDir()
+	desc := "Copy a file in the workspace."
+	if workDir != "" {
+		desc += fmt.Sprintf(" Working directory: %s.", workDir)
+	}
+
 	return utils.NewTool(&schema.ToolInfo{
 		Name: "workspace_fs_copy",
-		Desc: "Copy a file in the workspace.",
+		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
-			"source":      {Type: schema.String, Required: true, Desc: "Source file path"},
-			"destination": {Type: schema.String, Required: true, Desc: "Destination file path"},
+			"source":      {Type: schema.String, Required: true, Desc: "Source file path (relative to working directory or absolute)"},
+			"destination": {Type: schema.String, Required: true, Desc: "Destination file path (relative to working directory or absolute)"},
 		}),
 	}, func(ctx context.Context, input *CopyInput) (string, error) {
-		err := tc.Copy(ctx, tc.WorkspaceEndpoint(), input.Source, input.Destination)
+		resolvedSrc := tc.ResolvePath(input.Source)
+		resolvedDst := tc.ResolvePath(input.Destination)
+		err := tc.Copy(ctx, tc.WorkspaceEndpoint(), resolvedSrc, resolvedDst)
 		if err != nil {
 			return "", fmt.Errorf("failed to copy: %w", err)
 		}
-		return fmt.Sprintf("Successfully copied %s to %s", input.Source, input.Destination), nil
+		return fmt.Sprintf("Successfully copied %s to %s", resolvedSrc, resolvedDst), nil
 	})
 }

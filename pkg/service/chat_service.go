@@ -15,6 +15,8 @@ import (
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/cloudwego/eino/adk"
+	"github.com/cloudwego/eino/adk/prebuilt/deep"
+	"github.com/cloudwego/eino/adk/prebuilt/supervisor"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
@@ -29,6 +31,7 @@ var (
 	ErrStreamCancelled      = errors.New("stream cancelled")
 	ErrNoMessages           = errors.New("no messages provided")
 	ErrModelNotConfigured   = errors.New("model not configured")
+	ErrAgentNotFound        = errors.New("agent not found")
 )
 
 // ToolLoader interface for loading tools (implemented by tools package)
@@ -966,10 +969,13 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 	result := make([]*schema.Message, 0)
 
 	// First, build a map of tool_call_id -> tool_result for validation
+	// Skip transfer_to_agent as it's internal ADK mechanism
 	toolResultMap := make(map[string]*db.ToolResultPart)
 	for _, part := range msg.Parts {
 		if part.Type == db.PartTypeToolResult && part.ToolResult != nil {
-			toolResultMap[part.ToolResult.ToolCallID] = part.ToolResult
+			if part.ToolResult.Name != "transfer_to_agent" {
+				toolResultMap[part.ToolResult.ToolCallID] = part.ToolResult
+			}
 		}
 	}
 
@@ -1009,7 +1015,13 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 				}
 			case db.PartTypeToolCall:
 				// Only include tool_call if we have a corresponding tool_result
+				// Skip transfer_to_agent tool calls as they are internal ADK mechanism
 				if part.ToolCall != nil {
+					if part.ToolCall.Name == "transfer_to_agent" {
+						s.logger.Debug("Skipping transfer_to_agent tool_call",
+							"toolCallID", part.ToolCall.ID)
+						continue
+					}
 					if _, hasResult := toolResultMap[part.ToolCall.ID]; hasResult {
 						toolCalls = append(toolCalls, schema.ToolCall{
 							ID:   part.ToolCall.ID,
@@ -1026,7 +1038,13 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 					}
 				}
 			case db.PartTypeToolResult:
+				// Skip transfer_to_agent tool results as they are internal ADK mechanism
 				if part.ToolResult != nil {
+					if part.ToolResult.Name == "transfer_to_agent" {
+						s.logger.Debug("Skipping transfer_to_agent tool_result",
+							"toolCallID", part.ToolResult.ToolCallID)
+						continue
+					}
 					toolResults = append(toolResults, &schema.Message{
 						Role:       schema.Tool,
 						ToolCallID: part.ToolResult.ToolCallID,
@@ -1084,6 +1102,7 @@ func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string
 	}
 
 	tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, conversationID, workspace.Tools)
+	//tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, conversationID, nil)
 	if err != nil {
 		s.logger.Error("toolLoader.LoadWorkspaceTools failed", "error", err)
 		return nil, err
@@ -1276,6 +1295,16 @@ func (s *ChatService) getWorkspaceInfoContext(workspaceID string) string {
 
 		if workspace.Runtime.ContainerName != nil && *workspace.Runtime.ContainerName != "" {
 			sb.WriteString(fmt.Sprintf("container_name: %s\n", *workspace.Runtime.ContainerName))
+		}
+
+		// Add container IP if available (for docker workspaces)
+		if workspace.Runtime.ContainerIP != nil && *workspace.Runtime.ContainerIP != "" {
+			sb.WriteString(fmt.Sprintf("container_ip: %s\n", *workspace.Runtime.ContainerIP))
+			sb.WriteString("\n--- IMPORTANT: Browser Access in Container ---\n")
+			sb.WriteString("When you start a web server in this container and want to view it with the browser:\n")
+			sb.WriteString(fmt.Sprintf("- Use container IP: %s (NOT localhost or 127.0.0.1)\n", *workspace.Runtime.ContainerIP))
+			sb.WriteString("- Server must bind to 0.0.0.0 (not 127.0.0.1)\n")
+			sb.WriteString(fmt.Sprintf("- Example: browser_go_to_url with http://%s:PORT\n", *workspace.Runtime.ContainerIP))
 		}
 	}
 
@@ -1481,7 +1510,8 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	s.logger.Debug("runStreamingAgent started",
 		"workspaceID", req.WorkspaceID,
 		"conversationID", conv.ID,
-		"modelID", req.Model)
+		"modelID", req.Model,
+		"agentID", req.AgentID)
 
 	// Load workspace tools
 	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID, conv.ID)
@@ -1508,32 +1538,39 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		return assistantMsg, ErrModelNotConfigured
 	}
 
-	// Get the chat model
-	chatModel, err := s.getChatModel(ctx, modelID)
-	if err != nil {
-		return assistantMsg, fmt.Errorf("failed to get chat model: %w", err)
-	}
-
 	// Convert []tool.InvokableTool to []tool.BaseTool
 	baseTools := make([]tool.BaseTool, len(workspaceTools))
 	for i, t := range workspaceTools {
 		baseTools[i] = t
 	}
 
-	// Get system prompt
-	systemPrompt := s.getSystemPrompt(req.WorkspaceID, conv.ID)
+	// Build agent based on AgentID
+	var agent adk.Agent
+	if req.AgentID != "" {
+		// Load WorkspaceAgent from database
+		agent, err = s.buildWorkspaceAgent(ctx, req.AgentID, req.WorkspaceID, modelID, baseTools)
+		if err != nil {
+			return assistantMsg, fmt.Errorf("failed to build workspace agent: %w", err)
+		}
+	} else {
+		// Default: create simple ChatModelAgent
+		chatModel, err := s.getChatModel(ctx, modelID)
+		if err != nil {
+			return assistantMsg, fmt.Errorf("failed to get chat model: %w", err)
+		}
 
-	// Create agent with tools
-	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-		Name:          "Workspace Assistant",
-		Description:   "An AI assistant that helps with coding and development tasks in the workspace",
-		Instruction:   systemPrompt,
-		Model:         chatModel,
-		ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: baseTools}},
-		MaxIterations: 50,
-	})
-	if err != nil {
-		return assistantMsg, fmt.Errorf("failed to create agent: %w", err)
+		systemPrompt := s.getSystemPrompt(req.WorkspaceID, conv.ID)
+		agent, err = adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+			Name:          "Workspace Assistant",
+			Description:   "An AI assistant that helps with coding and development tasks in the workspace",
+			Instruction:   systemPrompt,
+			Model:         chatModel,
+			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: baseTools}},
+			MaxIterations: 50,
+		})
+		if err != nil {
+			return assistantMsg, fmt.Errorf("failed to create agent: %w", err)
+		}
 	}
 
 	// Helper to send chunk and update buffer
@@ -1562,11 +1599,14 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Run agent with streaming
 	iter := agent.Run(ctx, &adk.AgentInput{Messages: history, EnableStreaming: true})
 
-	// Track current assistant message
+	// Track current assistantMsg
 	currentAssistantMsg := assistantMsg
 
 	// Track if we've already handled cancellation (to avoid double save)
 	cancelled := false
+
+	// Track current agent name for display
+	currentAgentName := ""
 
 	for {
 		// Check for cancellation before getting next part
@@ -1599,6 +1639,12 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			}
 			s.logger.Error("Agent iteration error", "error", part.Err)
 			return currentAssistantMsg, fmt.Errorf("agent error: %w", part.Err)
+		}
+
+		// Update current agent name if changed
+		if part.AgentName != "" && part.AgentName != currentAgentName {
+			currentAgentName = part.AgentName
+			s.logger.Debug("Agent switched", "agentName", currentAgentName)
 		}
 
 		// Check the role of this message output
@@ -1718,7 +1764,8 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 								{
 									Index: 0,
 									Delta: models.ChatCompletionChunkDelta{
-										Content: chunk.Content,
+										Content:   chunk.Content,
+										AgentName: currentAgentName,
 									},
 								},
 							},
@@ -1736,6 +1783,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 									Index: 0,
 									Delta: models.ChatCompletionChunkDelta{
 										ReasoningContent: chunk.ReasoningContent,
+										AgentName:        currentAgentName,
 									},
 								},
 							},
@@ -1780,6 +1828,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 							{
 								Index: 0,
 								Delta: models.ChatCompletionChunkDelta{
+									AgentName: currentAgentName,
 									ToolCalls: []models.ToolCall{{
 										Index: &tcIndex,
 										ID:    tc.ID,
@@ -1870,4 +1919,255 @@ func (s *ChatService) ToAPIMessages(messages []models.Message) []models.ChatComp
 		result[i] = s.ToAPIMessage(&msg)
 	}
 	return result
+}
+
+// buildWorkspaceAgent builds an ADK Agent from a WorkspaceAgent configuration
+func (s *ChatService) buildWorkspaceAgent(ctx context.Context, agentID, workspaceID, defaultModelID string, baseTools []tool.BaseTool) (adk.Agent, error) {
+	// Load WorkspaceAgent from database
+	var wsAgent models.WorkspaceAgent
+	if err := s.db.First(&wsAgent, "id = ? AND workspace_id = ?", agentID, workspaceID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrAgentNotFound
+		}
+		return nil, fmt.Errorf("failed to load workspace agent: %w", err)
+	}
+
+	// Find the entry agent node (connected from start)
+	var entryAgent *models.Agent
+	for _, node := range wsAgent.Nodes {
+		if node.Type == "agent" && node.Agent != nil {
+			// For now, use the first agent node as entry
+			// TODO: Support proper entry detection via edges from start node
+			entryAgent = node.Agent
+			break
+		}
+	}
+
+	if entryAgent == nil {
+		return nil, fmt.Errorf("no agent node found in workspace agent %s", agentID)
+	}
+
+	// Build agent based on type
+	return s.buildAgentFromConfig(ctx, entryAgent, defaultModelID, baseTools, &wsAgent)
+}
+
+// buildAgentFromConfig builds an ADK Agent from an Agent configuration
+func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *models.Agent, defaultModelID string, baseTools []tool.BaseTool, wsAgent *models.WorkspaceAgent) (adk.Agent, error) {
+	// Determine model ID
+	modelID := defaultModelID
+	if agentConfig.ModelName != nil && *agentConfig.ModelName != "" {
+		modelID = *agentConfig.ModelName
+	}
+
+	// Get chat model
+	chatModel, err := s.getChatModel(ctx, modelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get chat model for agent %s: %w", agentConfig.Name, err)
+	}
+
+	// Build instruction
+	instruction := ""
+	if agentConfig.Instruction != nil {
+		instruction = *agentConfig.Instruction
+	}
+
+	// Filter tools based on agent's toolIds
+	agentTools := baseTools
+	if len(agentConfig.ToolIDs) > 0 {
+		toolSet := make(map[string]bool)
+		for _, id := range agentConfig.ToolIDs {
+			toolSet[id] = true
+		}
+		filtered := make([]tool.BaseTool, 0)
+		for _, t := range baseTools {
+			info, _ := t.Info(ctx)
+			if info != nil && toolSet[info.Name] {
+				filtered = append(filtered, t)
+			}
+		}
+		if len(filtered) > 0 {
+			agentTools = filtered
+		}
+	}
+
+	// Get max iterations
+	maxIterations := 50
+	if agentConfig.MaxIterations != nil && *agentConfig.MaxIterations > 0 {
+		maxIterations = *agentConfig.MaxIterations
+	}
+
+	// Build agent based on type
+	switch agentConfig.Type {
+	case "chat_model":
+		return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+			Name:          agentConfig.Name,
+			Description:   ptrToString(agentConfig.Description),
+			Instruction:   instruction,
+			Model:         chatModel,
+			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			MaxIterations: maxIterations,
+		})
+
+	case "supervisor":
+		// Build sub-agents
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build sub-agents for supervisor: %w", err)
+		}
+		s.logger.Info("Building supervisor agent",
+			"name", agentConfig.Name,
+			"description", ptrToString(agentConfig.Description),
+			"subAgentCount", len(subAgents))
+		for i, sa := range subAgents {
+			s.logger.Info("Sub-agent info",
+				"index", i,
+				"name", sa.Name(ctx),
+				"description", sa.Description(ctx))
+		}
+		// Create the supervisor agent itself (a ChatModelAgent)
+		supervisorAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
+			Name:          agentConfig.Name,
+			Description:   ptrToString(agentConfig.Description),
+			Instruction:   instruction,
+			Model:         chatModel,
+			ToolsConfig:   adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			MaxIterations: maxIterations,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create supervisor agent: %w", err)
+		}
+		return supervisor.New(ctx, &supervisor.Config{
+			Supervisor: supervisorAgent,
+			SubAgents:  subAgents,
+		})
+
+	case "deep":
+		return deep.New(ctx, &deep.Config{
+			Name:         agentConfig.Name,
+			Description:  ptrToString(agentConfig.Description),
+			Instruction:  instruction,
+			ChatModel:    chatModel,
+			ToolsConfig:  adk.ToolsConfig{ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools}},
+			MaxIteration: maxIterations,
+		})
+
+	case "sequential":
+		// Build sub-agents for sequential execution
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build sub-agents for sequential: %w", err)
+		}
+		return adk.NewSequentialAgent(ctx, &adk.SequentialAgentConfig{
+			Name:        agentConfig.Name,
+			Description: ptrToString(agentConfig.Description),
+			SubAgents:   subAgents,
+		})
+
+	case "loop":
+		// Build sub-agents for loop execution
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build sub-agents for loop: %w", err)
+		}
+		return adk.NewLoopAgent(ctx, &adk.LoopAgentConfig{
+			Name:          agentConfig.Name,
+			Description:   ptrToString(agentConfig.Description),
+			SubAgents:     subAgents,
+			MaxIterations: maxIterations,
+		})
+
+	case "parallel":
+		// Build sub-agents for parallel execution
+		subAgents, err := s.buildSubAgents(ctx, wsAgent, agentConfig, defaultModelID, baseTools)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build sub-agents for parallel: %w", err)
+		}
+		return adk.NewParallelAgent(ctx, &adk.ParallelAgentConfig{
+			Name:        agentConfig.Name,
+			Description: ptrToString(agentConfig.Description),
+			SubAgents:   subAgents,
+		})
+
+	default:
+		return nil, fmt.Errorf("unsupported agent type: %s", agentConfig.Type)
+	}
+}
+
+// buildSubAgents builds sub-agents for a supervisor agent based on canvas edges
+func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.WorkspaceAgent, parentAgent *models.Agent, defaultModelID string, baseTools []tool.BaseTool) ([]adk.Agent, error) {
+	if wsAgent == nil {
+		s.logger.Warn("buildSubAgents: wsAgent is nil")
+		return nil, nil
+	}
+
+	s.logger.Info("buildSubAgents: starting",
+		"parentAgentID", parentAgent.ID,
+		"parentAgentName", parentAgent.Name,
+		"nodesCount", len(wsAgent.Nodes),
+		"edgesCount", len(wsAgent.Edges))
+
+	// Find the parent node
+	var parentNodeID string
+	for _, node := range wsAgent.Nodes {
+		s.logger.Debug("buildSubAgents: checking node",
+			"nodeID", node.ID,
+			"nodeType", node.Type,
+			"hasAgent", node.Agent != nil)
+		if node.Agent != nil && node.Agent.ID == parentAgent.ID {
+			parentNodeID = node.ID
+			break
+		}
+	}
+
+	if parentNodeID == "" {
+		s.logger.Warn("buildSubAgents: parent node not found")
+		return nil, nil
+	}
+
+	s.logger.Info("buildSubAgents: found parent node", "parentNodeID", parentNodeID)
+
+	// Find connected sub-agent nodes via edges
+	subAgentNodeIDs := make([]string, 0)
+	for _, edge := range wsAgent.Edges {
+		s.logger.Debug("buildSubAgents: checking edge",
+			"source", edge.Source,
+			"target", edge.Target)
+		if edge.Source == parentNodeID && edge.Target != "start" {
+			subAgentNodeIDs = append(subAgentNodeIDs, edge.Target)
+		}
+	}
+
+	s.logger.Info("buildSubAgents: found sub-agent node IDs", "subAgentNodeIDs", subAgentNodeIDs)
+
+	// Build sub-agents
+	subAgents := make([]adk.Agent, 0, len(subAgentNodeIDs))
+	for _, nodeID := range subAgentNodeIDs {
+		for _, node := range wsAgent.Nodes {
+			if node.ID == nodeID && node.Agent != nil {
+				s.logger.Info("buildSubAgents: building sub-agent",
+					"nodeID", nodeID,
+					"agentName", node.Agent.Name,
+					"agentType", node.Agent.Type,
+					"agentDescription", ptrToString(node.Agent.Description))
+				// Recursively build sub-agent (but pass nil for wsAgent to prevent infinite recursion for supervisor)
+				subAgent, err := s.buildAgentFromConfig(ctx, node.Agent, defaultModelID, baseTools, nil)
+				if err != nil {
+					s.logger.Warn("Failed to build sub-agent", "nodeID", nodeID, "error", err)
+					continue
+				}
+				subAgents = append(subAgents, subAgent)
+			}
+		}
+	}
+
+	s.logger.Info("buildSubAgents: completed", "subAgentCount", len(subAgents))
+	return subAgents, nil
+}
+
+// ptrToString safely converts *string to string
+func ptrToString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

@@ -7,6 +7,7 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useMessage,
 } from "@assistant-ui/react";
 import {
   Box,
@@ -29,7 +30,6 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import KeyboardArrowLeftIcon from "@mui/icons-material/KeyboardArrowLeft";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
-import BuildIcon from "@mui/icons-material/Build";
 import { MarkdownText } from "./chat/markdown-text";
 import { ReasoningContent } from "./chat/reasoning-content";
 import { ToolFallback } from "./chat/tool-fallback";
@@ -46,16 +46,22 @@ export interface ModelConfig {
   extra: Record<string, any>;
 }
 
-// Agent mode type
-export type AgentMode = "tools" | "react";
+// WorkspaceAgent for agent selection
+export interface WorkspaceAgentOption {
+  id: string;
+  name: string;
+  description?: string;
+  enabled: boolean;
+}
 
 interface WorkspaceChatThreadProps {
   selectedModel: string;
   setSelectedModel: (model: string) => void;
   groupedModelOptions: Record<string, ModelConfig[]>;
   isLoading: boolean;
-  agentMode: AgentMode;
-  setAgentMode: (mode: AgentMode) => void;
+  selectedAgentId: string;
+  setSelectedAgentId: (id: string) => void;
+  workspaceAgents: WorkspaceAgentOption[];
 }
 
 export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
@@ -63,8 +69,9 @@ export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
   setSelectedModel,
   groupedModelOptions,
   isLoading,
-  agentMode,
-  setAgentMode,
+  selectedAgentId,
+  setSelectedAgentId,
+  workspaceAgents,
 }) => {
   const isDisabled = isLoading;
 
@@ -143,8 +150,9 @@ export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
               selectedModel={selectedModel}
               setSelectedModel={setSelectedModel}
               groupedModelOptions={groupedModelOptions}
-              agentMode={agentMode}
-              setAgentMode={setAgentMode}
+              selectedAgentId={selectedAgentId}
+              setSelectedAgentId={setSelectedAgentId}
+              workspaceAgents={workspaceAgents}
               isLoading={isLoading}
               disabled={isDisabled}
             />
@@ -160,8 +168,9 @@ interface ComposerWithToolbarProps {
   selectedModel: string;
   setSelectedModel: (model: string) => void;
   groupedModelOptions: Record<string, ModelConfig[]>;
-  agentMode: AgentMode;
-  setAgentMode: (mode: AgentMode) => void;
+  selectedAgentId: string;
+  setSelectedAgentId: (id: string) => void;
+  workspaceAgents: WorkspaceAgentOption[];
   isLoading: boolean;
   disabled: boolean;
 }
@@ -170,8 +179,9 @@ const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
   selectedModel,
   setSelectedModel,
   groupedModelOptions,
-  agentMode,
-  setAgentMode,
+  selectedAgentId,
+  setSelectedAgentId,
+  workspaceAgents,
   isLoading,
   disabled,
 }) => {
@@ -245,16 +255,18 @@ const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
             }}
           >
             <Stack direction="row" spacing={0.5} alignItems="center">
-              {/* Agent mode selector */}
+              {/* Agent selector */}
               <Select
                 size="small"
-                value={agentMode}
-                onChange={(e) => setAgentMode(e.target.value as AgentMode)}
+                value={selectedAgentId}
+                onChange={(e) => setSelectedAgentId(e.target.value)}
                 disabled={isLoading || disabled}
                 variant="standard"
                 disableUnderline
+                displayEmpty
                 sx={{
                   fontSize: 12,
+                  minWidth: 80,
                   "& .MuiSelect-select": {
                     py: 0.25,
                     px: 0.5,
@@ -264,29 +276,35 @@ const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
                     fontSize: 12,
                   },
                 }}
-                renderValue={(value) => (
-                  <Stack direction="row" alignItems="center" spacing={0.5}>
-                    {value === "tools" ? (
-                      <BuildIcon sx={{ fontSize: 14 }} />
-                    ) : (
+                renderValue={(value) => {
+                  const agent = workspaceAgents.find(a => a.id === value);
+                  return (
+                    <Stack direction="row" alignItems="center" spacing={0.5}>
                       <SmartToyIcon sx={{ fontSize: 14 }} />
-                    )}
-                    <Typography sx={{ fontSize: 12 }}>{value === "tools" ? "Tools" : "ReAct"}</Typography>
-                  </Stack>
-                )}
+                      <Typography sx={{ fontSize: 12 }}>{agent?.name || "default"}</Typography>
+                    </Stack>
+                  );
+                }}
               >
-                <MenuItem value="tools" sx={{ fontSize: 12 }}>
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <BuildIcon sx={{ fontSize: 14 }} />
-                    <span>Tools</span>
-                  </Stack>
-                </MenuItem>
-                <MenuItem value="react" sx={{ fontSize: 12 }}>
+                <MenuItem value="" sx={{ fontSize: 12 }}>
                   <Stack direction="row" alignItems="center" spacing={1}>
                     <SmartToyIcon sx={{ fontSize: 14 }} />
-                    <span>ReAct</span>
+                    <span>default</span>
                   </Stack>
                 </MenuItem>
+                {workspaceAgents.filter(a => a.enabled).map((agent) => (
+                  <MenuItem key={agent.id} value={agent.id} sx={{ fontSize: 12 }}>
+                    <Stack direction="row" alignItems="center" spacing={1}>
+                      <SmartToyIcon sx={{ fontSize: 14 }} />
+                      <Box>
+                        <Typography sx={{ fontSize: 12 }}>{agent.name}</Typography>
+                        {agent.description && (
+                          <Typography sx={{ fontSize: 10, color: "text.secondary" }}>{agent.description}</Typography>
+                        )}
+                      </Box>
+                    </Stack>
+                  </MenuItem>
+                ))}
               </Select>
 
               {/* Model selector */}
@@ -460,16 +478,6 @@ const ComposerAction: FC<{ disabled?: boolean }> = ({ disabled }) => {
   );
 };
 
-// BottomToolbar - deprecated, merged into ComposerWithToolbar
-const BottomToolbar: FC<{
-  selectedModel: string;
-  setSelectedModel: (model: string) => void;
-  groupedModelOptions: Record<string, ModelConfig[]>;
-  agentMode: AgentMode;
-  setAgentMode: (mode: AgentMode) => void;
-  isLoading: boolean;
-  disabled: boolean;
-}> = () => null;
 
 // User message component
 const UserMessage: FC = () => {
@@ -560,6 +568,9 @@ const EditComposer: FC = () => {
 
 // Assistant message component
 const AssistantMessage: FC = () => {
+  const message = useMessage();
+  const agentName = (message?.metadata?.custom as any)?.agentName;
+
   return (
     <MessagePrimitive.Root>
       <Box
@@ -571,6 +582,28 @@ const AssistantMessage: FC = () => {
         }}
       >
         <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
+          {/* Agent name badge */}
+          {agentName && (
+            <Typography
+              variant="caption"
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.5,
+                mb: 0.5,
+                px: 1,
+                py: 0.25,
+                bgcolor: "primary.main",
+                color: "primary.contrastText",
+                borderRadius: 1,
+                fontSize: 11,
+                fontWeight: 500,
+              }}
+            >
+              <SmartToyIcon sx={{ fontSize: 12 }} />
+              {agentName}
+            </Typography>
+          )}
           {/* Message content */}
           <Paper
             elevation={0}
