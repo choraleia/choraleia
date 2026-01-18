@@ -267,6 +267,52 @@ func (c *ToolContext) Rename(ctx context.Context, spec service.EndpointSpec, fro
 	return c.FSService.Rename(ctx, spec, from, to)
 }
 
+// GetWorkspaceWorkDir returns the working directory for the workspace
+// For docker runtime, returns the container path; for local, returns the host path
+func (c *ToolContext) GetWorkspaceWorkDir() string {
+	if c.WorkspaceID == "" || c.WorkspaceGetter == nil {
+		return ""
+	}
+
+	workspace, err := c.WorkspaceGetter.GetWorkspace(c.WorkspaceID)
+	if err != nil || workspace == nil || workspace.Runtime == nil {
+		return ""
+	}
+
+	// For docker runtime, prefer container path
+	if workspace.Runtime.Type == models.RuntimeTypeDockerLocal || workspace.Runtime.Type == models.RuntimeTypeDockerRemote {
+		if workspace.Runtime.WorkDirContainerPath != nil && *workspace.Runtime.WorkDirContainerPath != "" {
+			return *workspace.Runtime.WorkDirContainerPath
+		}
+	}
+
+	// Fallback to work dir path
+	return workspace.Runtime.WorkDirPath
+}
+
+// ResolvePath resolves a path relative to workspace work directory
+// If path is absolute (starts with /), returns it as-is
+// If path is relative, prepends workspace work directory
+func (c *ToolContext) ResolvePath(p string) string {
+	if p == "" {
+		return c.GetWorkspaceWorkDir()
+	}
+	// If absolute path, return as-is
+	if len(p) > 0 && p[0] == '/' {
+		return p
+	}
+	// Relative path - prepend work directory
+	workDir := c.GetWorkspaceWorkDir()
+	if workDir == "" {
+		return "/" + p // Default to root if no work dir
+	}
+	// Join paths
+	if workDir[len(workDir)-1] == '/' {
+		return workDir + p
+	}
+	return workDir + "/" + p
+}
+
 // Copy copies file or directory
 func (c *ToolContext) Copy(ctx context.Context, spec service.EndpointSpec, src, dst string) error {
 	return c.FSService.Copy(ctx, spec, src, dst)

@@ -526,7 +526,8 @@ export interface DeepAgentTypeConfig {
 }
 
 export interface PlanExecuteSubAgentConfig {
-  modelId?: string;
+  modelName?: string;
+  modelProvider?: string;
   instruction?: string;
   toolIds?: string[];
 }
@@ -563,7 +564,8 @@ export interface Agent {
   type: AgentType;
   description?: string;
   enabled?: boolean;
-  modelId?: string;
+  modelName?: string;
+  modelProvider?: string;
   instruction?: string;
   toolIds?: string[];
   subAgentIds?: string[];

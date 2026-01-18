@@ -66,7 +66,8 @@ type Agent struct {
 	Type          string   `json:"type"` // chat_model, supervisor, deep, plan_execute, sequential, loop, parallel
 	Description   *string  `json:"description,omitempty"`
 	Enabled       *bool    `json:"enabled,omitempty"`
-	ModelID       *string  `json:"modelId,omitempty"`
+	ModelName     *string  `json:"modelName,omitempty"`
+	ModelProvider *string  `json:"modelProvider,omitempty"`
 	Instruction   *string  `json:"instruction,omitempty"`
 	ToolIDs       []string `json:"toolIds,omitempty"`
 	SubAgentIDs   []string `json:"subAgentIds,omitempty"`

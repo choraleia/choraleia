@@ -93,6 +93,7 @@ type WorkspaceRuntime struct {
 	ContainerMode *ContainerMode `json:"container_mode,omitempty" gorm:"size:20"`
 	ContainerID   *string        `json:"container_id,omitempty" gorm:"size:100"`
 	ContainerName *string        `json:"container_name,omitempty" gorm:"size:100"` // Actual container name used at runtime
+	ContainerIP   *string        `json:"container_ip,omitempty" gorm:"size:45"`    // Container IP address for network access
 
 	// New container configuration
 	NewContainerImage *string `json:"new_container_image,omitempty" gorm:"size:200"`

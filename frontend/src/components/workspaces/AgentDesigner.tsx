@@ -29,6 +29,7 @@ import {
   MenuItem,
   ListItemIcon,
   ListItemText,
+  ListSubheader,
   TextField,
   FormControl,
   Select,
@@ -157,7 +158,7 @@ interface AgentNodeData {
   allAgents: Agent[];
   edges?: Edge[]; // Canvas edges to compute sub-agents
   allNodes?: Node[]; // All nodes to map edge targets to agents
-  models?: Array<{ id: string; name: string; provider: string }>; // Available models
+  models?: Array<{ id: string; name: string; model: string; provider: string }>; // Available models
 }
 
 const AgentNode: React.FC<NodeProps<AgentNodeData>> = ({ id, data, selected }) => {
@@ -184,11 +185,11 @@ const AgentNode: React.FC<NodeProps<AgentNodeData>> = ({ id, data, selected }) =
 
   const typeInfo = AGENT_TYPE_INFO[agent.type];
   const color = AGENT_TYPE_COLORS[agent.type];
-  const connectedTools = tools.filter((t) => agent.toolIds?.includes(t.id));
+  const connectedTools = tools.filter((t) => agent.toolIds?.includes(t.name));
   const needsSubAgents = requiresSubAgents(agent.type);
 
   // Get configured model name
-  const configuredModel = agent.modelId ? models.find(m => m.id === agent.modelId) : null;
+  const configuredModel = agent.modelName ? models.find(m => m.model === agent.modelName && (!agent.modelProvider || m.provider === agent.modelProvider)) : null;
 
   // Compute sub-agents from canvas edges (edges where this node is the source)
   const connectedSubAgents = edges
@@ -585,7 +586,7 @@ interface AgentPanelProps {
   nodeId: string | null; // The node ID of the agent being edited
   allAgents: Agent[];
   tools: ToolConfig[];
-  models: Array<{ id: string; name: string; provider: string }>;
+  models: Array<{ id: string; name: string; model: string; provider: string }>;
   loadingModels: boolean;
   edges: Edge[];
   nodes: Node[];
@@ -686,11 +687,11 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
     onSave(updated);
   };
 
-  const handleToolToggle = (toolId: string) => {
+  const handleToolToggle = (toolName: string) => {
     const current = editedAgent.toolIds || [];
-    const newTools = current.includes(toolId)
-      ? current.filter((id) => id !== toolId)
-      : [...current, toolId];
+    const newTools = current.includes(toolName)
+      ? current.filter((name) => name !== toolName)
+      : [...current, toolName];
     handleChange("toolIds", newTools);
   };
 
@@ -820,8 +821,19 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                 Model
               </Typography>
               <Select
-                value={editedAgent.modelId || ""}
-                onChange={(e) => handleChange("modelId", e.target.value || undefined)}
+                value={editedAgent.modelName ? `${editedAgent.modelName}|${editedAgent.modelProvider || ""}` : ""}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  let updated: Agent;
+                  if (!value) {
+                    updated = { ...editedAgent, modelName: undefined, modelProvider: undefined };
+                  } else {
+                    const [model, provider] = value.split("|");
+                    updated = { ...editedAgent, modelName: model, modelProvider: provider || undefined };
+                  }
+                  setEditedAgent(updated);
+                  onSave(updated);
+                }}
                 displayEmpty
               >
                 {loadingModels ? (
@@ -834,11 +846,24 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                     <em>No models available</em>
                   </MenuItem>
                 ) : (
-                  models.map((m) => (
-                    <MenuItem key={m.id} value={m.id}>
-                      {m.name} ({m.provider})
-                    </MenuItem>
-                  ))
+                  // Group models by provider
+                  Object.entries(
+                    models.reduce((acc, m) => {
+                      const provider = m.provider || "Other";
+                      if (!acc[provider]) acc[provider] = [];
+                      acc[provider].push(m);
+                      return acc;
+                    }, {} as Record<string, typeof models>)
+                  ).flatMap(([provider, providerModels]) => [
+                    <ListSubheader key={`header-${provider}`} sx={{ bgcolor: "background.paper", lineHeight: "32px", fontSize: "0.75rem" }}>
+                      {provider}
+                    </ListSubheader>,
+                    ...providerModels.map((m) => (
+                      <MenuItem key={m.id} value={`${m.model}|${m.provider}`} sx={{ pl: 3, fontSize: 12 }}>
+                        {m.name}
+                      </MenuItem>
+                    ))
+                  ])
                 )}
               </Select>
             </FormControl>
@@ -899,8 +924,8 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                       key={tool.id}
                       label={tool.name}
                       size="small"
-                      color={(editedAgent.toolIds || []).includes(tool.id) ? "primary" : "default"}
-                      onClick={() => handleToolToggle(tool.id)}
+                      color={(editedAgent.toolIds || []).includes(tool.name) ? "primary" : "default"}
+                      onClick={() => handleToolToggle(tool.name)}
                       sx={{ cursor: "pointer" }}
                     />
                   ))
@@ -957,15 +982,24 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                     <FormControl size="small" fullWidth>
                       <Typography variant="caption" color="text.secondary" mb={0.5}>Model</Typography>
                       <Select
-                        value={(editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.planner?.modelId || ""}
+                        value={(() => {
+                          const cfg = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.planner;
+                          return cfg?.modelName ? `${cfg.modelName}|${cfg.modelProvider || ""}` : "";
+                        })()}
                         onChange={(e) => {
                           const current = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.planner || {};
-                          handleTypeConfigChange("planner", { ...current, modelId: e.target.value || undefined });
+                          const value = e.target.value;
+                          if (!value) {
+                            handleTypeConfigChange("planner", { ...current, modelName: undefined, modelProvider: undefined });
+                          } else {
+                            const [model, provider] = value.split("|");
+                            handleTypeConfigChange("planner", { ...current, modelName: model, modelProvider: provider || undefined });
+                          }
                         }}
                         displayEmpty
                       >
                         <MenuItem value=""><em>Same as primary</em></MenuItem>
-                        {models.map((m) => <MenuItem key={m.id} value={m.id}>{m.name}</MenuItem>)}
+                        {models.map((m) => <MenuItem key={m.id} value={`${m.model}|${m.provider}`}>{m.name} ({m.provider})</MenuItem>)}
                       </Select>
                     </FormControl>
                     <TextField
@@ -994,15 +1028,24 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                     <FormControl size="small" fullWidth>
                       <Typography variant="caption" color="text.secondary" mb={0.5}>Model</Typography>
                       <Select
-                        value={(editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.executor?.modelId || ""}
+                        value={(() => {
+                          const cfg = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.executor;
+                          return cfg?.modelName ? `${cfg.modelName}|${cfg.modelProvider || ""}` : "";
+                        })()}
                         onChange={(e) => {
                           const current = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.executor || {};
-                          handleTypeConfigChange("executor", { ...current, modelId: e.target.value || undefined });
+                          const value = e.target.value;
+                          if (!value) {
+                            handleTypeConfigChange("executor", { ...current, modelName: undefined, modelProvider: undefined });
+                          } else {
+                            const [model, provider] = value.split("|");
+                            handleTypeConfigChange("executor", { ...current, modelName: model, modelProvider: provider || undefined });
+                          }
                         }}
                         displayEmpty
                       >
                         <MenuItem value=""><em>Same as primary</em></MenuItem>
-                        {models.map((m) => <MenuItem key={m.id} value={m.id}>{m.name}</MenuItem>)}
+                        {models.map((m) => <MenuItem key={m.id} value={`${m.model}|${m.provider}`}>{m.name} ({m.provider})</MenuItem>)}
                       </Select>
                     </FormControl>
                     <TextField
@@ -1022,7 +1065,7 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                       <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
                         {tools.map((tool) => {
                           const executorTools = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.executor?.toolIds || [];
-                          const isSelected = executorTools.includes(tool.id);
+                          const isSelected = executorTools.includes(tool.name);
                           return (
                             <Chip
                               key={tool.id}
@@ -1033,8 +1076,8 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                                 const current = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.executor || {};
                                 const currentTools = current.toolIds || [];
                                 const newTools = isSelected
-                                  ? currentTools.filter(id => id !== tool.id)
-                                  : [...currentTools, tool.id];
+                                  ? currentTools.filter(name => name !== tool.name)
+                                  : [...currentTools, tool.name];
                                 handleTypeConfigChange("executor", { ...current, toolIds: newTools });
                               }}
                               sx={{ cursor: "pointer", height: 24, fontSize: "0.7rem" }}
@@ -1057,15 +1100,24 @@ const AgentPanel: React.FC<AgentPanelProps> = ({
                     <FormControl size="small" fullWidth>
                       <Typography variant="caption" color="text.secondary" mb={0.5}>Model</Typography>
                       <Select
-                        value={(editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.replanner?.modelId || ""}
+                        value={(() => {
+                          const cfg = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.replanner;
+                          return cfg?.modelName ? `${cfg.modelName}|${cfg.modelProvider || ""}` : "";
+                        })()}
                         onChange={(e) => {
                           const current = (editedAgent.typeConfig as PlanExecuteAgentTypeConfig)?.replanner || {};
-                          handleTypeConfigChange("replanner", { ...current, modelId: e.target.value || undefined });
+                          const value = e.target.value;
+                          if (!value) {
+                            handleTypeConfigChange("replanner", { ...current, modelName: undefined, modelProvider: undefined });
+                          } else {
+                            const [model, provider] = value.split("|");
+                            handleTypeConfigChange("replanner", { ...current, modelName: model, modelProvider: provider || undefined });
+                          }
                         }}
                         displayEmpty
                       >
                         <MenuItem value=""><em>Same as primary</em></MenuItem>
-                        {models.map((m) => <MenuItem key={m.id} value={m.id}>{m.name}</MenuItem>)}
+                        {models.map((m) => <MenuItem key={m.id} value={`${m.model}|${m.provider}`}>{m.name} ({m.provider})</MenuItem>)}
                       </Select>
                     </FormControl>
                     <TextField
@@ -1273,7 +1325,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, tools }) => 
   const [canvasAddMenuAnchor, setCanvasAddMenuAnchor] = useState<HTMLElement | null>(null);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
-  const [models, setModels] = useState<Array<{ id: string; name: string; provider: string }>>([]);
+  const [models, setModels] = useState<Array<{ id: string; name: string; model: string; provider: string }>>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [compositionNameInput, setCompositionNameInput] = useState("");
   const [isEditingName, setIsEditingName] = useState(false);
@@ -1397,7 +1449,7 @@ const AgentDesigner: React.FC<AgentDesignerProps> = ({ workspaceId, tools }) => 
       .then((res) => res.json())
       .then((data) => {
         if (data.code === 200 && Array.isArray(data.data)) {
-          setModels(data.data.map((m: any) => ({ id: m.id, name: m.name || m.model, provider: m.provider })));
+          setModels(data.data.map((m: any) => ({ id: m.id, name: m.name || m.model, model: m.model, provider: m.provider })));
         }
       })
       .catch(console.error)

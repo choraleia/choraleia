@@ -27,8 +27,8 @@ type RuntimeManager struct {
 	containers    map[string]*ContainerInfo
 	mu            sync.RWMutex
 	logger        *slog.Logger
-	// Callback to update container ID/name in database
-	onContainerCreated func(workspaceID, containerID, containerName string) error
+	// Callback to update container ID/name/IP in database
+	onContainerCreated func(workspaceID, containerID, containerName, containerIP string) error
 }
 
 // ContainerInfo stores information about a running container
@@ -74,7 +74,7 @@ func (m *RuntimeManager) SetStatusService(ss *RuntimeStatusService) {
 }
 
 // SetOnContainerCreated sets the callback for when a container is created
-func (m *RuntimeManager) SetOnContainerCreated(fn func(workspaceID, containerID, containerName string) error) {
+func (m *RuntimeManager) SetOnContainerCreated(fn func(workspaceID, containerID, containerName, containerIP string) error) {
 	m.onContainerCreated = fn
 }
 
@@ -137,6 +137,12 @@ func (m *RuntimeManager) startDockerLocalRuntime(ctx context.Context, workspace 
 		return err
 	}
 
+	// Get container IP address
+	containerIP := ""
+	if ipOutput, ipErr := m.execDocker(ctx, nil, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID); ipErr == nil {
+		containerIP = strings.TrimSpace(ipOutput)
+	}
+
 	// Store container info
 	m.mu.Lock()
 	m.containers[workspace.ID] = &ContainerInfo{
@@ -150,9 +156,9 @@ func (m *RuntimeManager) startDockerLocalRuntime(ctx context.Context, workspace 
 	}
 	m.mu.Unlock()
 
-	// Save container ID and name to database (for new containers)
+	// Save container ID, name and IP to database (for new containers)
 	if m.onContainerCreated != nil && runtime.ContainerMode != nil && *runtime.ContainerMode == models.ContainerModeNew {
-		if err := m.onContainerCreated(workspace.ID, containerID, containerName); err != nil {
+		if err := m.onContainerCreated(workspace.ID, containerID, containerName, containerIP); err != nil {
 			m.logger.Warn("Failed to save container info to database", "error", err)
 		}
 	}
@@ -218,6 +224,12 @@ func (m *RuntimeManager) startDockerRemoteRuntime(ctx context.Context, workspace
 		return err
 	}
 
+	// Get container IP address
+	containerIP := ""
+	if ipOutput, ipErr := m.execDocker(ctx, dockerAsset, "inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", containerID); ipErr == nil {
+		containerIP = strings.TrimSpace(ipOutput)
+	}
+
 	// Store container info
 	m.mu.Lock()
 	m.containers[workspace.ID] = &ContainerInfo{
@@ -231,9 +243,9 @@ func (m *RuntimeManager) startDockerRemoteRuntime(ctx context.Context, workspace
 	}
 	m.mu.Unlock()
 
-	// Save container ID and name to database (for new containers)
+	// Save container ID, name and IP to database (for new containers)
 	if m.onContainerCreated != nil && runtime.ContainerMode != nil && *runtime.ContainerMode == models.ContainerModeNew {
-		if err := m.onContainerCreated(workspace.ID, containerID, containerName); err != nil {
+		if err := m.onContainerCreated(workspace.ID, containerID, containerName, containerIP); err != nil {
 			m.logger.Warn("Failed to save container info to database", "error", err)
 		}
 	}

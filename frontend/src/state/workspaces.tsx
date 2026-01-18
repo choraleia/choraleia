@@ -17,6 +17,7 @@ export type FileNode = {
   path: string;
   type: "file" | "folder";
   children?: FileNode[];
+  childrenLoaded?: boolean; // true if children have been loaded (distinguishes empty dir from not-loaded)
   content?: string;
 };
 
@@ -883,8 +884,9 @@ export interface WorkspaceContextValue {
   // File tree from active workspace runtime
   fileTree: FileNode[];
   fileTreeLoading: boolean;
-  refreshFileTree: () => Promise<void>;
+  refreshFileTree: (expandedPaths?: Set<string>) => Promise<void>;
   loadDirectoryChildren: (path: string) => Promise<void>;
+  loadMultipleDirectories: (paths: string[]) => Promise<void>;
   selectWorkspace: (id: string) => void;
   createWorkspace: () => void;
   renameWorkspace: (workspaceId: string, name: string) => void;
@@ -1316,15 +1318,18 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
   const fileTreeLoading = useMemo(() => activeWorkspace?.fileTreeLoading || false, [activeWorkspace]);
 
   // Helper: Convert FSEntry to FileNode
-  const fsEntryToFileNode = useCallback((entry: FSEntry, children?: FileNode[]): FileNode => ({
+  // If children is provided, mark as loaded; if undefined for a dir, mark as not loaded
+  const fsEntryToFileNode = useCallback((entry: FSEntry, children?: FileNode[], childrenLoaded = false): FileNode => ({
     id: uuid(),
     name: entry.name,
     path: entry.path,
     type: entry.is_dir ? "folder" : "file",
-    children: entry.is_dir ? children || [] : undefined,
+    children: entry.is_dir ? (children || []) : undefined,
+    childrenLoaded: entry.is_dir ? childrenLoaded : undefined,
   }), []);
 
-  // Helper: Load directory tree recursively (max 2 levels deep for performance)
+  // Helper: Load directory tree recursively
+  // maxDepth=0 means only load direct children, maxDepth=1 means load children and grandchildren
   const loadDirectoryTree = useCallback(async (
     basePath: string,
     depth: number,
@@ -1341,21 +1346,40 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
       });
 
       const nodes: FileNode[] = [];
-      for (const entry of result.entries) {
+
+      // If we need to load deeper, collect directories for parallel loading
+      const dirsToLoad: { entry: typeof result.entries[0]; index: number }[] = [];
+
+      for (let i = 0; i < result.entries.length; i++) {
+        const entry = result.entries[i];
         if (entry.is_dir && depth < maxDepth) {
-          // Recursively load subdirectory
-          const children = await loadDirectoryTree(
-            entry.path,
-            depth + 1,
-            maxDepth,
-            assetId,
-            containerId,
-          );
-          nodes.push(fsEntryToFileNode(entry, children));
+          dirsToLoad.push({ entry, index: i });
+          nodes.push(fsEntryToFileNode(entry, [], false)); // Placeholder, not yet loaded
+        } else if (entry.is_dir) {
+          // At max depth, mark as not loaded so it will be lazy loaded on expand
+          nodes.push(fsEntryToFileNode(entry, [], false));
         } else {
           nodes.push(fsEntryToFileNode(entry));
         }
       }
+
+      // Load subdirectories in parallel (if any)
+      if (dirsToLoad.length > 0) {
+        const childResults = await Promise.all(
+          dirsToLoad.map(({ entry }) =>
+            loadDirectoryTree(entry.path, depth + 1, maxDepth, assetId, containerId)
+          )
+        );
+
+        // Update nodes with loaded children
+        dirsToLoad.forEach(({ entry }, i) => {
+          const nodeIndex = nodes.findIndex(n => n.path === entry.path);
+          if (nodeIndex !== -1) {
+            nodes[nodeIndex] = fsEntryToFileNode(entry, childResults[i], true); // Mark as loaded
+          }
+        });
+      }
+
       return nodes;
     } catch (err) {
       console.warn(`Failed to load directory ${basePath}:`, err);
@@ -1395,8 +1419,8 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         basePath = runtime.workDir.containerPath || runtime.workDir.path || "/";
       }
 
-      // Load file tree (max 2 levels deep, deeper levels loaded on demand)
-      const tree = await loadDirectoryTree(basePath, 0, 2, assetId, containerIdentifier);
+      // Load file tree (only 1 level deep initially, deeper levels loaded on expand)
+      const tree = await loadDirectoryTree(basePath, 0, 1, assetId, containerIdentifier);
 
       // Update workspace with file tree
       setWorkspaces((prev) =>
@@ -1417,19 +1441,124 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
   }, [loadDirectoryTree]);
 
   // Refresh file tree for active workspace
-  const refreshFileTree = useCallback(async () => {
-    if (activeWorkspace) {
-      // Clear the loaded flag to allow fresh load
-      setLoadedWorkspaceIds((prev) => {
-        const next = new Set(prev);
-        next.delete(activeWorkspace.id);
-        return next;
-      });
-      await loadFileTreeForWorkspace(activeWorkspace);
+  // If expandedPaths is provided, also load children for those directories
+  const refreshFileTree = useCallback(async (expandedPaths?: Set<string>) => {
+    if (!activeWorkspace) return;
+
+    const { runtime } = activeWorkspace;
+
+    // Clear the loaded flag to allow fresh load
+    setLoadedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      next.delete(activeWorkspace.id);
+      return next;
+    });
+
+    // Set loading state
+    setWorkspaces((prev) =>
+      prev.map((ws) =>
+        ws.id === activeWorkspace.id ? { ...ws, fileTreeLoading: true } : ws
+      )
+    );
+
+    try {
+      let assetId: string | undefined;
+      let containerIdentifier: string | undefined;
+      let basePath = runtime.workDir.path;
+
+      if (runtime.type === "local") {
+        if (basePath.startsWith("~")) {
+          basePath = basePath.replace("~", "/home");
+        }
+      } else if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
+        assetId = runtime.dockerAssetId;
+        containerIdentifier = runtime.containerName || runtime.containerId ||
+          (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
+        basePath = runtime.workDir.containerPath || runtime.workDir.path || "/";
+      }
+
+      // Load initial tree (1 level deep)
+      let tree = await loadDirectoryTree(basePath, 0, 1, assetId, containerIdentifier);
+
+      // If there are expanded paths, load their children too
+      if (expandedPaths && expandedPaths.size > 0) {
+        // Helper to find node and check if it needs loading
+        const findUnloadedExpandedDirs = (nodes: FileNode[], paths: Set<string>): string[] => {
+          const result: string[] = [];
+          for (const node of nodes) {
+            if (node.type === "folder" && paths.has(node.path) && !node.childrenLoaded) {
+              result.push(node.path);
+            }
+            if (node.children) {
+              result.push(...findUnloadedExpandedDirs(node.children, paths));
+            }
+          }
+          return result;
+        };
+
+        // Iteratively load expanded directories until all are loaded
+        // This handles nested expanded directories
+        let maxIterations = 10; // Prevent infinite loop
+        while (maxIterations > 0) {
+          const dirsToLoad = findUnloadedExpandedDirs(tree, expandedPaths);
+          if (dirsToLoad.length === 0) break;
+
+          // Load all directories in parallel
+          const results = await Promise.all(
+            dirsToLoad.map(async (dirPath) => {
+              try {
+                const children = await loadDirectoryTree(dirPath, 0, 1, assetId, containerIdentifier);
+                return { dirPath, children, success: true };
+              } catch {
+                return { dirPath, children: [] as FileNode[], success: false };
+              }
+            })
+          );
+
+          // Build a map for quick lookup
+          const childrenMap = new Map<string, FileNode[]>();
+          results.forEach(({ dirPath, children, success }) => {
+            if (success) childrenMap.set(dirPath, children);
+          });
+
+          // Update tree with loaded children
+          const updateTree = (nodes: FileNode[]): FileNode[] => {
+            return nodes.map((node) => {
+              const newChildren = childrenMap.get(node.path);
+              if (newChildren !== undefined) {
+                return { ...node, children: newChildren, childrenLoaded: true };
+              }
+              if (node.children) {
+                return { ...node, children: updateTree(node.children) };
+              }
+              return node;
+            });
+          };
+          tree = updateTree(tree);
+          maxIterations--;
+        }
+      }
+
+      // Single state update with complete tree
+      setWorkspaces((prev) =>
+        prev.map((ws) =>
+          ws.id === activeWorkspace.id
+            ? { ...ws, fileTree: tree, fileTreeLoading: false }
+            : ws
+        )
+      );
+
       // Mark as loaded again
       setLoadedWorkspaceIds((prev) => new Set(prev).add(activeWorkspace.id));
+    } catch (err) {
+      console.error("Failed to refresh file tree:", err);
+      setWorkspaces((prev) =>
+        prev.map((ws) =>
+          ws.id === activeWorkspace.id ? { ...ws, fileTree: [], fileTreeLoading: false } : ws
+        )
+      );
     }
-  }, [activeWorkspace, loadFileTreeForWorkspace]);
+  }, [activeWorkspace, loadDirectoryTree]);
 
   // Lazy load children for a directory when expanded
   const loadDirectoryChildren = useCallback(async (dirPath: string) => {
@@ -1448,8 +1577,8 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
     }
 
     try {
-      // Load children for this directory (2 levels deep from this point)
-      const children = await loadDirectoryTree(dirPath, 0, 2, assetId, containerIdentifier);
+      // Load only direct children for this directory (1 level deep)
+      const children = await loadDirectoryTree(dirPath, 0, 1, assetId, containerIdentifier);
 
       // Update the file tree with the new children
       setWorkspaces((prev) =>
@@ -1460,9 +1589,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           const updateNode = (nodes: FileNode[]): FileNode[] => {
             return nodes.map((node) => {
               if (node.path === dirPath) {
-                return { ...node, children };
+                return { ...node, children, childrenLoaded: true };
               }
-              if (node.children && node.children.length > 0) {
+              // Recursively search in children (even if empty, to handle all cases)
+              if (node.children) {
                 return { ...node, children: updateNode(node.children) };
               }
               return node;
@@ -1474,6 +1604,67 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
       );
     } catch (err) {
       console.error(`Failed to load children for ${dirPath}:`, err);
+    }
+  }, [activeWorkspace, loadDirectoryTree]);
+
+  // Batch load multiple directories at once (avoids multiple state updates)
+  const loadMultipleDirectories = useCallback(async (dirPaths: string[]) => {
+    if (!activeWorkspace || dirPaths.length === 0) return;
+
+    const { runtime } = activeWorkspace;
+
+    let assetId: string | undefined;
+    let containerIdentifier: string | undefined;
+
+    if (runtime.type === "docker-local" || runtime.type === "docker-remote") {
+      assetId = runtime.dockerAssetId;
+      containerIdentifier = runtime.containerName || runtime.containerId ||
+        (runtime.containerMode === "new" ? `choraleia-${activeWorkspace.name}` : undefined);
+    }
+
+    try {
+      // Load all directories in parallel
+      const results = await Promise.all(
+        dirPaths.map(async (dirPath) => {
+          try {
+            const children = await loadDirectoryTree(dirPath, 0, 1, assetId, containerIdentifier);
+            return { dirPath, children, success: true };
+          } catch {
+            return { dirPath, children: [] as FileNode[], success: false };
+          }
+        })
+      );
+
+      // Single state update with all results
+      setWorkspaces((prev) =>
+        prev.map((ws) => {
+          if (ws.id !== activeWorkspace.id) return ws;
+
+          // Build a map of path -> children for quick lookup
+          const childrenMap = new Map<string, FileNode[]>();
+          results.forEach(({ dirPath, children, success }) => {
+            if (success) childrenMap.set(dirPath, children);
+          });
+
+          // Helper to recursively update the tree
+          const updateNode = (nodes: FileNode[]): FileNode[] => {
+            return nodes.map((node) => {
+              const newChildren = childrenMap.get(node.path);
+              if (newChildren !== undefined) {
+                return { ...node, children: newChildren, childrenLoaded: true };
+              }
+              if (node.children) {
+                return { ...node, children: updateNode(node.children) };
+              }
+              return node;
+            });
+          };
+
+          return { ...ws, fileTree: updateNode(ws.fileTree) };
+        })
+      );
+    } catch (err) {
+      console.error(`Failed to load directories:`, err);
     }
   }, [activeWorkspace, loadDirectoryTree]);
 
@@ -2644,6 +2835,7 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         fileTreeLoading,
         refreshFileTree,
         loadDirectoryChildren,
+        loadMultipleDirectories,
         selectWorkspace,
         createWorkspace: createWorkspaceHandler,
         createWorkspaceWithConfig,

@@ -362,6 +362,10 @@ func (d *DockerTarFileSystem) OpenRead(ctx context.Context, p string) (io.ReadCl
 	_, err = tr.Next()
 	if err != nil {
 		tarStream.Close()
+		// If we got EOF, the file likely doesn't exist
+		if err == io.EOF {
+			return nil, fmt.Errorf("file not found: %s", cp)
+		}
 		return nil, fmt.Errorf("failed to read tar header: %w", err)
 	}
 

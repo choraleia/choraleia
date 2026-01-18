@@ -223,14 +223,18 @@ func (s *WorkspaceService) unregisterWorkspaceRepoMap(workspaceID string) {
 	s.repoMapService.UnregisterWorkspace(workspaceID)
 }
 
-// updateRuntimeContainerInfo updates the container ID and name in the database
-func (s *WorkspaceService) updateRuntimeContainerInfo(workspaceID, containerID, containerName string) error {
+// updateRuntimeContainerInfo updates the container ID, name, and IP in the database
+func (s *WorkspaceService) updateRuntimeContainerInfo(workspaceID, containerID, containerName, containerIP string) error {
+	updates := map[string]interface{}{
+		"container_id":   containerID,
+		"container_name": containerName,
+	}
+	if containerIP != "" {
+		updates["container_ip"] = containerIP
+	}
 	return s.db.Model(&models.WorkspaceRuntime{}).
 		Where("workspace_id = ?", workspaceID).
-		Updates(map[string]interface{}{
-			"container_id":   containerID,
-			"container_name": containerName,
-		}).Error
+		Updates(updates).Error
 }
 
 // AutoMigrate creates database tables
