@@ -28,6 +28,11 @@ type Message struct {
 	FinishReason string     `json:"finish_reason,omitempty" gorm:"size:20"`    // stop, tool_calls, length, error
 	Usage        TokenUsage `json:"usage,omitempty" gorm:"type:text"`          // JSON
 
+	// Compression-related fields
+	IsCompressed bool    `json:"is_compressed" gorm:"default:false"`
+	SnapshotID   *string `json:"snapshot_id,omitempty" gorm:"index;size:36"`
+	TokenCount   int     `json:"token_count,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

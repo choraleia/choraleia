@@ -105,6 +105,12 @@ export interface Conversation {
   title: string;
   model_id?: string;
   status: "active" | "archived";
+  // Compression fields
+  compressed_at?: string;
+  compression_count?: number;
+  summary?: string;
+  key_topics?: string[];
+  key_decisions?: string[];
   created_at: string;
   updated_at: string;
 }
@@ -122,6 +128,10 @@ export interface Message {
   status: "pending" | "streaming" | "completed" | "error";
   finish_reason?: string;
   usage?: TokenUsage;
+  // Compression fields
+  is_compressed?: boolean;
+  snapshot_id?: string;
+  token_count?: number;
   created_at: string;
   updated_at: string;
 }
@@ -158,6 +168,13 @@ export interface ChatCompletionResponse {
   usage?: TokenUsage;
 }
 
+// System event for compression notifications, etc.
+export interface SystemEvent {
+  type: string;
+  message?: string;
+  data?: Record<string, unknown>;
+}
+
 export interface ChatCompletionChunk {
   id: string;
   object: "chat.completion.chunk";
@@ -173,6 +190,7 @@ export interface ChatCompletionChunk {
       tool_call_id?: string;
       reasoning_content?: string;
       agent_name?: string;
+      system_event?: SystemEvent;
     };
     finish_reason?: string;
   }>;

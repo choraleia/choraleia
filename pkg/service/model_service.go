@@ -5,10 +5,17 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/utils"
+	arkEmbed "github.com/cloudwego/eino-ext/components/embedding/ark"
+	dashscopeEmbed "github.com/cloudwego/eino-ext/components/embedding/dashscope"
+	geminiEmbed "github.com/cloudwego/eino-ext/components/embedding/gemini"
+	ollamaEmbed "github.com/cloudwego/eino-ext/components/embedding/ollama"
+	openaiEmbed "github.com/cloudwego/eino-ext/components/embedding/openai"
+	qianfanEmbed "github.com/cloudwego/eino-ext/components/embedding/qianfan"
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino-ext/components/model/claude"
 	"github.com/cloudwego/eino-ext/components/model/deepseek"
@@ -17,6 +24,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino-ext/components/model/qianfan"
 	"github.com/cloudwego/eino-ext/components/model/qwen"
+	"github.com/cloudwego/eino/components/embedding"
 	einoModel "github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
@@ -210,24 +218,47 @@ func (m *ModelService) TestModelConnection(c *gin.Context) {
 		return
 	}
 
-	// For non-chat task types, skip actual API test
+	// Check task types to determine test method
 	hasChat := false
+	hasEmbedding := false
 	for _, t := range req.TaskTypes {
 		if t == models.TaskTypeChat {
 			hasChat = true
-			break
+		}
+		if t == models.TaskTypeTextEmbedding {
+			hasEmbedding = true
 		}
 	}
+
+	ctx := context.Background()
+
+	// Test embedding models
+	if hasEmbedding {
+		embedder, err := m.CreateEmbedder(ctx, &req)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 200, "success": false, "message": "Embedder init failed: " + err.Error()})
+			return
+		}
+		// Test with a simple text
+		_, err = embedder.EmbedStrings(ctx, []string{"test"})
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{"code": 200, "success": false, "message": "Embedding test failed: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"code": 200, "success": true, "message": "Embedding connection successful"})
+		return
+	}
+
+	// For non-chat and non-embedding task types, skip actual API test
 	if !hasChat && len(req.TaskTypes) > 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    200,
 			"success": true,
-			"message": "Configuration looks valid (non-chat task type test not implemented yet)",
+			"message": "Configuration looks valid (test not implemented for this task type)",
 		})
 		return
 	}
 
-	ctx := context.Background()
 	testMessages := []*schema.Message{{Role: schema.User, Content: "Hi"}}
 
 	switch req.Provider {
@@ -573,4 +604,141 @@ func (m *ModelService) GetProviderApiKeys(c *gin.Context) {
 			"base_urls": baseUrls,
 		},
 	})
+}
+
+// CreateEmbedder creates an eino embedder from config
+// Supports providers: openai, ark, ollama, dashscope, gemini, qianfan, custom (uses openai-compatible API)
+func (m *ModelService) CreateEmbedder(ctx context.Context, config *models.ModelConfig) (embedding.Embedder, error) {
+	if config == nil {
+		return nil, fmt.Errorf("model config is nil")
+	}
+
+	// Check if model supports text_embedding task type
+	hasEmbedding := false
+	for _, t := range config.TaskTypes {
+		if t == models.TaskTypeTextEmbedding {
+			hasEmbedding = true
+			break
+		}
+	}
+	if !hasEmbedding {
+		return nil, fmt.Errorf("model %s does not support text_embedding task type", config.Name)
+	}
+
+	switch config.Provider {
+	case "openai", "custom":
+		embedder, err := openaiEmbed.NewEmbedder(ctx, &openaiEmbed.EmbeddingConfig{
+			BaseURL: config.BaseUrl,
+			APIKey:  config.ApiKey,
+			Model:   config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create OpenAI embedder: %w", err)
+		}
+		return embedder, nil
+
+	case "ark":
+		timeout := time.Second * 60
+		retries := 2
+		region := ""
+		if config.Extra != nil {
+			if v, ok := config.Extra["region"]; ok {
+				region, _ = v.(string)
+			}
+		}
+		embedder, err := arkEmbed.NewEmbedder(ctx, &arkEmbed.EmbeddingConfig{
+			BaseURL:    config.BaseUrl,
+			Region:     region,
+			Timeout:    &timeout,
+			RetryTimes: &retries,
+			APIKey:     config.ApiKey,
+			Model:      config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Ark embedder: %w", err)
+		}
+		return embedder, nil
+
+	case "ollama":
+		baseURL := config.BaseUrl
+		if baseURL == "" {
+			baseURL = "http://localhost:11434"
+		}
+		embedder, err := ollamaEmbed.NewEmbedder(ctx, &ollamaEmbed.EmbeddingConfig{
+			BaseURL: baseURL,
+			Model:   config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Ollama embedder: %w", err)
+		}
+		return embedder, nil
+
+	case "dashscope", "qwen":
+		// DashScope (Alibaba Cloud) - used for Qwen models
+		apiKey := config.ApiKey
+		if apiKey == "" {
+			apiKey = os.Getenv("DASHSCOPE_API_KEY")
+		}
+		embedder, err := dashscopeEmbed.NewEmbedder(ctx, &dashscopeEmbed.EmbeddingConfig{
+			APIKey: apiKey,
+			Model:  config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DashScope embedder: %w", err)
+		}
+		return embedder, nil
+
+	case "gemini", "google":
+		// Google Gemini - requires genai.Client
+		apiKey := config.ApiKey
+		if apiKey == "" {
+			apiKey = os.Getenv("GEMINI_API_KEY")
+		}
+		genaiClient, err := genai.NewClient(ctx, &genai.ClientConfig{
+			APIKey:  apiKey,
+			Backend: genai.BackendGeminiAPI,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+		}
+		embedder, err := geminiEmbed.NewEmbedder(ctx, &geminiEmbed.EmbeddingConfig{
+			Client: genaiClient,
+			Model:  config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Gemini embedder: %w", err)
+		}
+		return embedder, nil
+
+	case "qianfan":
+		// Baidu Qianfan - uses singleton config
+		accessKey := config.ApiKey
+		secretKey := ""
+		if config.Extra != nil {
+			if v, ok := config.Extra["secret_key"]; ok {
+				secretKey, _ = v.(string)
+			}
+		}
+		if accessKey == "" {
+			accessKey = os.Getenv("QIANFAN_ACCESS_KEY")
+		}
+		if secretKey == "" {
+			secretKey = os.Getenv("QIANFAN_SECRET_KEY")
+		}
+		// Set qianfan singleton config
+		qianfanConfig := qianfanEmbed.GetQianfanSingletonConfig()
+		qianfanConfig.AccessKey = accessKey
+		qianfanConfig.SecretKey = secretKey
+
+		embedder, err := qianfanEmbed.NewEmbedder(ctx, &qianfanEmbed.EmbeddingConfig{
+			Model: config.Model,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create Qianfan embedder: %w", err)
+		}
+		return embedder, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported embedding provider: %s", config.Provider)
+	}
 }

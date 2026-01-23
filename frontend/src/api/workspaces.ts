@@ -58,6 +58,11 @@ export interface Workspace {
   status: "running" | "stopped" | "starting" | "stopping" | "error";
   color: string;
   active_room_id: string;
+  // Memory configuration
+  memory_enabled?: boolean;
+  embedding_provider?: string;
+  embedding_model?: string;
+  // Relations
   runtime?: WorkspaceRuntime;
   assets?: WorkspaceAssetRef[];
   tools?: WorkspaceTool[];
@@ -82,6 +87,11 @@ export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
   color?: string;
+  // Memory configuration
+  memory_enabled?: boolean;
+  embedding_provider?: string;
+  embedding_model?: string;
+  // Runtime and relations
   runtime?: {
     type: "local" | "docker-local" | "docker-remote";
     docker_asset_id?: string;
@@ -124,6 +134,11 @@ export interface UpdateWorkspaceRequest {
   name?: string;
   description?: string;
   color?: string;
+  // Memory configuration
+  memory_enabled?: boolean;
+  embedding_provider?: string;
+  embedding_model?: string;
+  // Relations
   runtime?: CreateWorkspaceRequest["runtime"];
   assets?: CreateWorkspaceRequest["assets"];
   tools?: CreateWorkspaceRequest["tools"];

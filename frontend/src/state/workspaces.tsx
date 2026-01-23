@@ -466,6 +466,10 @@ export type SpaceConfigInput = {
   assets: SpaceAssetsConfig;
   tools: ToolConfig[];
   agents: workspacesApi.WorkspaceAgent[];
+  // Memory configuration
+  memory_enabled?: boolean;
+  embedding_provider?: string;
+  embedding_model?: string;
 };
 
 // Validate workspace name for K8s/DNS compatibility
@@ -871,6 +875,10 @@ export type Workspace = {
   agents: workspacesApi.WorkspaceAgent[];
   rooms: Room[];
   activeRoomId: string;
+  // Memory configuration
+  memory_enabled?: boolean;
+  embedding_provider?: string;
+  embedding_model?: string;
   // File tree loaded from runtime environment (not persisted)
   fileTree: FileNode[];
   fileTreeLoading?: boolean;
@@ -998,6 +1006,9 @@ export const createRoomConfigTemplate = (name = "new-space"): SpaceConfigInput =
   },
   tools: [],
   agents: [],
+  memory_enabled: false,
+  embedding_provider: undefined,
+  embedding_model: undefined,
 });
 
 const findFileNode = (nodes: FileNode[], path: string): FileNode | undefined => {
@@ -1196,6 +1207,10 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
     agents: [],
     rooms,
     activeRoomId: ws.active_room_id || rooms[0]?.id || "",
+    // Memory configuration
+    memory_enabled: ws.memory_enabled,
+    embedding_provider: ws.embedding_provider,
+    embedding_model: ws.embedding_model,
     workMode: "chat",  // Default to chat mode
     fileTree: [],  // Will be loaded from runtime environment
     fileTreeLoading: false,
@@ -1208,6 +1223,10 @@ const convertToBackendRequest = (ws: Workspace): workspacesApi.CreateWorkspaceRe
     name: ws.name,
     description: ws.description,
     color: ws.color,
+    // Memory configuration
+    memory_enabled: ws.memory_enabled,
+    embedding_provider: ws.embedding_provider,
+    embedding_model: ws.embedding_model,
     runtime: ws.runtime ? {
       type: ws.runtime.type,
       docker_asset_id: ws.runtime.dockerAssetId,
@@ -1728,6 +1747,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         assets: config.assets,
         tools: config.tools,
         agents: config.agents || [],
+        // Memory configuration
+        memory_enabled: config.memory_enabled,
+        embedding_provider: config.embedding_provider,
+        embedding_model: config.embedding_model,
         rooms: [newRoom],
         activeRoomId: newRoom.id,
         fileTree: [],
@@ -1776,6 +1799,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
                 runtime: config.runtime,
                 assets: config.assets,
                 tools: config.tools,
+                // Memory configuration
+                memory_enabled: config.memory_enabled,
+                embedding_provider: config.embedding_provider,
+                embedding_model: config.embedding_model,
               }
             : workspace,
         ),
@@ -1786,6 +1813,10 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         const requestPayload = {
           name: config.name,
           description: config.description,
+          // Memory configuration
+          memory_enabled: config.memory_enabled,
+          embedding_provider: config.embedding_provider,
+          embedding_model: config.embedding_model,
           runtime: config.runtime ? {
             type: config.runtime.type,
             docker_asset_id: config.runtime.dockerAssetId,

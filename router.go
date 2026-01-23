@@ -397,6 +397,7 @@ func (s *Server) SetupRoutes() {
 				string(tools.CategoryDatabase),
 				string(tools.CategoryTransfer),
 				string(tools.CategoryBrowser),
+				string(tools.CategoryMemory),
 			},
 		})
 	})
@@ -422,6 +423,26 @@ func (s *Server) SetupRoutes() {
 	// Set asset service on chat service for asset info in system prompt
 	chatService.SetAssetService(assetService)
 
+	// Initialize memory service for long-term memory storage
+	memoryConfig := service.DefaultMemoryConfig()
+	// Try to get OpenAI API key from environment for embeddings
+	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
+		memoryConfig.OpenAIAPIKey = apiKey
+	}
+	memoryService, err := service.NewMemoryService(chatStoreService.DB(), memoryConfig)
+	if err != nil {
+		slog.Warn("Failed to initialize memory service, memory features disabled", "error", err)
+	} else {
+		if err := memoryService.AutoMigrate(); err != nil {
+			slog.Error("Failed to migrate memory tables", "error", err)
+		}
+		// Set workspace getter for per-workspace embedding config
+		memoryService.SetWorkspaceGetter(workspaceService.GetWorkspace)
+		// Set model service for creating embedders
+		memoryService.SetModelService(modelService)
+		chatService.SetMemoryService(memoryService)
+	}
+
 	// Initialize tool context and loader for workspace tools
 	toolCtx := tools.NewToolContext(fsService, assetService)
 	// Configure workspace services for command execution in workspace runtime
@@ -430,8 +451,48 @@ func (s *Server) SetupRoutes() {
 	toolCtx.WithBrowserService(browserService)
 	// Configure model service for vision analysis in browser tools
 	toolCtx.WithModelService(modelService)
+	// Configure memory service for memory tools
+	if memoryService != nil {
+		toolCtx.WithMemoryService(memoryService)
+	}
 	toolLoader := tools.NewToolLoaderAdapter(toolCtx)
 	chatService.SetToolLoader(toolLoader)
+
+	// Memory API routes
+	var memoryLifecycleService *service.MemoryLifecycleService
+	if memoryService != nil {
+		memoryHandler := handler.NewMemoryHandler(memoryService)
+		memoryHandler.RegisterRoutes(apiGroup)
+
+		// Initialize memory lifecycle service
+		memoryLifecycleService = service.NewMemoryLifecycleService(chatStoreService.DB(), memoryService, nil)
+		// Set access tracking callback
+		memoryService.SetOnAccessCallback(func(ctx context.Context, memoryIDs []string) {
+			memoryLifecycleService.RecordBatchAccess(ctx, memoryIDs)
+		})
+		// Register lifecycle handler
+		lifecycleHandler := handler.NewMemoryLifecycleHandler(memoryLifecycleService)
+		lifecycleHandler.RegisterRoutes(apiGroup)
+		// Start background cleanup (if enabled)
+		memoryLifecycleService.Start()
+
+		// Initialize memory optimization service
+		optimizationService := service.NewMemoryOptimizationService(chatStoreService.DB(), memoryService, modelService, nil)
+		optimizationHandler := handler.NewMemoryOptimizationHandler(optimizationService)
+		optimizationHandler.RegisterRoutes(apiGroup)
+	}
+
+	// Compression API routes
+	if compressionService := chatService.GetCompressionService(); compressionService != nil {
+		compressionHandler := handler.NewCompressionHandler(compressionService)
+		compressionHandler.RegisterRoutes(apiGroup)
+	}
+
+	// Memory extraction API routes
+	if extractionService := chatService.GetMemoryExtractionService(); extractionService != nil {
+		extractionHandler := handler.NewMemoryExtractionHandler(extractionService)
+		extractionHandler.RegisterRoutes(apiGroup)
+	}
 
 	// Browser API routes for preview
 	browserHandler := handler.NewBrowserHandler(browserService)

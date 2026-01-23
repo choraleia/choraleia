@@ -70,6 +70,11 @@ type Workspace struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 
+	// Memory configuration
+	MemoryEnabled     bool    `json:"memory_enabled" gorm:"default:false"`
+	EmbeddingProvider *string `json:"embedding_provider,omitempty" gorm:"size:50"` // Provider name (openai, ollama, etc.)
+	EmbeddingModel    *string `json:"embedding_model,omitempty" gorm:"size:100"`   // Model name (text-embedding-3-small, etc.)
+
 	// Relations
 	Runtime *WorkspaceRuntime   `json:"runtime,omitempty" gorm:"foreignKey:WorkspaceID;constraint:OnDelete:CASCADE"`
 	Assets  []WorkspaceAssetRef `json:"assets,omitempty" gorm:"foreignKey:WorkspaceID;constraint:OnDelete:CASCADE"`

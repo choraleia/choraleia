@@ -252,13 +252,21 @@ type ChatCompletionChunkChoice struct {
 
 // ChatCompletionChunkDelta represents the delta content in a streaming chunk
 type ChatCompletionChunkDelta struct {
-	Role             string     `json:"role,omitempty"`
-	Content          string     `json:"content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	Refusal          string     `json:"refusal,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"` // Extended
-	AgentName        string     `json:"agent_name,omitempty"`        // Extended: current agent name
+	Role             string       `json:"role,omitempty"`
+	Content          string       `json:"content,omitempty"`
+	ToolCalls        []ToolCall   `json:"tool_calls,omitempty"`
+	ToolCallID       string       `json:"tool_call_id,omitempty"`
+	Refusal          string       `json:"refusal,omitempty"`
+	ReasoningContent string       `json:"reasoning_content,omitempty"` // Extended
+	AgentName        string       `json:"agent_name,omitempty"`        // Extended: current agent name
+	SystemEvent      *SystemEvent `json:"system_event,omitempty"`      // Extended: system events (compression, etc.)
+}
+
+// SystemEvent represents a system event notification in streaming
+type SystemEvent struct {
+	Type    string                 `json:"type"`              // Event type: conversation_compressed, etc.
+	Message string                 `json:"message,omitempty"` // Human-readable message
+	Data    map[string]interface{} `json:"data,omitempty"`    // Additional event data
 }
 
 // ========== Constants ==========

@@ -20,6 +20,7 @@ const (
 	CategoryDatabase  ToolCategory = "database"
 	CategoryTransfer  ToolCategory = "transfer"
 	CategoryBrowser   ToolCategory = "browser"
+	CategoryMemory    ToolCategory = "memory"
 )
 
 // ToolCategory represents the category of a tool
