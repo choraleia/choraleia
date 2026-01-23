@@ -454,6 +454,16 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
               }
             }
           }
+
+          // System event - display as notification in chat
+          if (choice.delta.system_event) {
+            const event = choice.delta.system_event;
+            // Add a system notification marker to content
+            contentParts.push({
+              type: "text",
+              text: `\n\n> 📌 **${event.type.replace(/_/g, " ")}**: ${event.message || ""}\n\n`,
+            });
+          }
         }
 
         // Update UI
@@ -688,6 +698,15 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
               }
             }
           }
+        }
+
+        // System event - display as notification in chat
+        if (choice.delta.system_event) {
+          const event = choice.delta.system_event;
+          contentParts.push({
+            type: "text",
+            text: `\n\n> 📌 **${event.type.replace(/_/g, " ")}**: ${event.message || ""}\n\n`,
+          });
         }
       }
 

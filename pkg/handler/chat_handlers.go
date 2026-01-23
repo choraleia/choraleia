@@ -230,8 +230,23 @@ func (h *ChatHandler) DeleteConversation(c *gin.Context) {
 
 // GetMessages gets messages for a conversation
 // GET /api/v1/conversations/:id/messages
+// Query params:
+//   - include_compression_info: if "true", returns messages with compression metadata
 func (h *ChatHandler) GetMessages(c *gin.Context) {
 	conversationID := c.Param("id")
+	includeCompressionInfo := c.Query("include_compression_info") == "true"
+
+	if includeCompressionInfo {
+		messages, err := h.chatService.GetMessagesWithCompressionInfo(conversationID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"messages": messages,
+		})
+		return
+	}
 
 	messages, err := h.chatService.GetMessages(conversationID)
 	if err != nil {

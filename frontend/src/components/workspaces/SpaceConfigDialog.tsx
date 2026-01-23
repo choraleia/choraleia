@@ -41,6 +41,7 @@ import StorageIcon from "@mui/icons-material/Storage";
 import SettingsIcon from "@mui/icons-material/Settings";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
+import PsychologyIcon from "@mui/icons-material/Psychology";
 import {
   SpaceConfigInput,
   RuntimeType,
@@ -1384,6 +1385,11 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   const [loadingVisionModels, setLoadingVisionModels] = useState(false);
   const visionModelsFetched = React.useRef(false);
 
+  // Embedding models for memory feature
+  const [embeddingModels, setEmbeddingModels] = useState<VisionModel[]>([]); // Reuse VisionModel type
+  const [loadingEmbeddingModels, setLoadingEmbeddingModels] = useState(false);
+  const embeddingModelsFetched = React.useRef(false);
+
 
 
   // Asset type icons
@@ -1450,6 +1456,23 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
         .finally(() => setLoadingVisionModels(false));
     }
   }, [open, tab, loadingVisionModels]);
+
+  // Fetch embedding models for memory feature (tab 4 = Memory)
+  useEffect(() => {
+    if (open && tab === 4 && !embeddingModelsFetched.current && !loadingEmbeddingModels) {
+      embeddingModelsFetched.current = true;
+      setLoadingEmbeddingModels(true);
+      fetch(`${getApiBase()}/api/models?task_types=text_embedding`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.code === 200 && Array.isArray(data.data)) {
+            setEmbeddingModels(data.data);
+          }
+        })
+        .catch((err) => console.error("Failed to fetch embedding models:", err))
+        .finally(() => setLoadingEmbeddingModels(false));
+    }
+  }, [open, tab, loadingEmbeddingModels]);
 
 
   // Add asset to workspace
@@ -2071,7 +2094,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     }
   };
 
-  const tabs = ["General", "Assets", "Tools", "Agents"];
+  const tabs = ["General", "Assets", "Tools", "Agents", "Memory"];
 
   return (
     <Dialog
@@ -2966,6 +2989,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                           { id: "database", label: "Database Tools", desc: "MySQL, PostgreSQL, Redis operations" },
                           { id: "transfer", label: "Transfer Tools", desc: "File transfer between workspace and assets" },
                           { id: "browser", label: "Browser Tools", desc: "Browser automation & web scraping" },
+                          { id: "memory", label: "Memory Tools", desc: "Store and recall information across conversations" },
                         ].map(({ id: category, label, desc }) => {
                           const categoryTools = builtinTools.filter((t) => t.category === category);
                           if (categoryTools.length === 0) return null;
@@ -3414,6 +3438,112 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
               workspaceId={workspaceId || ""}
               tools={state.tools || []}
             />
+          </Box>
+        )}
+
+        {/* Memory Tab */}
+        {tab === 4 && (
+          <Box display="flex" flexDirection="column" gap={2}>
+            <FormSection title="Memory & Context Management">
+              <Box display="flex" flexDirection="column" gap={2}>
+                <Box display="flex" alignItems="center" gap={2}>
+                  <PsychologyIcon color="primary" />
+                  <Box flex={1}>
+                    <Typography variant="subtitle2">Enable Workspace Memory</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Store and recall information across conversations using semantic search
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={state.memory_enabled || false}
+                    onChange={(e) => handleChange({ memory_enabled: e.target.checked })}
+                  />
+                </Box>
+
+                <Collapse in={state.memory_enabled}>
+                  <Box display="flex" flexDirection="column" gap={2} sx={{ mt: 1, pl: 5 }}>
+                    {embeddingModels.length === 0 && !loadingEmbeddingModels ? (
+                      <Alert severity="warning" sx={{ fontSize: 12 }}>
+                        No embedding models configured. Please add a model with <strong>text_embedding</strong> task type in Settings → Models.
+                      </Alert>
+                    ) : (
+                      <Alert severity="info" sx={{ fontSize: 12 }}>
+                        Select an embedding model for semantic search. Models with <strong>text_embedding</strong> task type are shown below.
+                      </Alert>
+                    )}
+
+                    <Box>
+                      <FieldLabel label="Embedding Model" />
+                      <FormControl size="small" fullWidth>
+                        <Select
+                          value={state.embedding_model || ""}
+                          onChange={(e) => {
+                            const selectedModel = embeddingModels.find(m => m.id === e.target.value);
+                            handleChange({
+                              embedding_model: e.target.value || undefined,
+                              embedding_provider: selectedModel?.provider || undefined,
+                            });
+                          }}
+                          displayEmpty
+                          disabled={loadingEmbeddingModels}
+                        >
+                          <MenuItem value="">
+                            <em>{loadingEmbeddingModels ? "Loading models..." : "Select embedding model..."}</em>
+                          </MenuItem>
+                          {embeddingModels.map((model) => (
+                            <MenuItem key={model.id} value={model.id}>
+                              <Box display="flex" alignItems="center" gap={1}>
+                                <Typography variant="body2">{model.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  ({model.provider} / {model.model})
+                                </Typography>
+                              </Box>
+                            </MenuItem>
+                          ))}
+                        </Select>
+                        {state.embedding_model && (
+                          <FormHelperText>
+                            Provider: {state.embedding_provider}
+                          </FormHelperText>
+                        )}
+                      </FormControl>
+                    </Box>
+                  </Box>
+                </Collapse>
+              </Box>
+            </FormSection>
+
+            {state.memory_enabled && (
+              <FormSection title="Memory Features">
+                <Box display="flex" flexDirection="column" gap={1}>
+                  <Typography variant="body2" color="text.secondary">
+                    When memory is enabled, the following features become available:
+                  </Typography>
+                  <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Agent Memory Tools</strong> - Agents can store and recall facts, preferences, and learnings
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Semantic Search</strong> - Find relevant memories using natural language queries
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Auto Extraction</strong> - Automatically extract important information from conversations
+                      </Typography>
+                    </li>
+                    <li>
+                      <Typography variant="body2">
+                        <strong>Context Compression</strong> - Compress long conversations while preserving key information
+                      </Typography>
+                    </li>
+                  </Box>
+                </Box>
+              </FormSection>
+            )}
           </Box>
         )}
       </DialogContent>

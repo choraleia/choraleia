@@ -42,13 +42,18 @@ type ToolLoader interface {
 
 // ChatService handles workspace chat operations
 type ChatService struct {
-	db               *gorm.DB
-	modelService     *ModelService
-	workspaceService *WorkspaceService
-	assetService     *AssetService
-	toolLoader       ToolLoader
-	browserService   *BrowserService
-	logger           *slog.Logger
+	db                      *gorm.DB
+	modelService            *ModelService
+	workspaceService        *WorkspaceService
+	assetService            *AssetService
+	toolLoader              ToolLoader
+	browserService          *BrowserService
+	memoryService           *MemoryService
+	compressionService      *CompressionService
+	compressionConfig       *CompressionConfig
+	memoryExtractionService *MemoryExtractionService
+	memoryExtractionConfig  *MemoryExtractionConfig
+	logger                  *slog.Logger
 
 	// Active streams management for graceful handling
 	activeStreams sync.Map // conversationID -> *StreamSession
@@ -103,6 +108,48 @@ func (s *ChatService) SetBrowserService(browserService *BrowserService) {
 	s.browserService = browserService
 }
 
+// SetMemoryService sets the memory service for memory context injection
+func (s *ChatService) SetMemoryService(memoryService *MemoryService) {
+	s.memoryService = memoryService
+	// Initialize compression service when memory service is available
+	if s.compressionConfig == nil {
+		s.compressionConfig = DefaultCompressionConfig()
+	}
+	s.compressionService = NewCompressionService(s.db, s.modelService, memoryService, s.compressionConfig)
+
+	// Initialize memory extraction service
+	if s.memoryExtractionConfig == nil {
+		s.memoryExtractionConfig = DefaultMemoryExtractionConfig()
+	}
+	s.memoryExtractionService = NewMemoryExtractionService(s.db, s.modelService, memoryService, s.memoryExtractionConfig)
+}
+
+// SetMemoryExtractionConfig sets the memory extraction configuration
+func (s *ChatService) SetMemoryExtractionConfig(config *MemoryExtractionConfig) {
+	s.memoryExtractionConfig = config
+	if s.memoryService != nil {
+		s.memoryExtractionService = NewMemoryExtractionService(s.db, s.modelService, s.memoryService, config)
+	}
+}
+
+// GetMemoryExtractionService returns the memory extraction service
+func (s *ChatService) GetMemoryExtractionService() *MemoryExtractionService {
+	return s.memoryExtractionService
+}
+
+// SetCompressionConfig sets the compression configuration
+func (s *ChatService) SetCompressionConfig(config *CompressionConfig) {
+	s.compressionConfig = config
+	if s.memoryService != nil {
+		s.compressionService = NewCompressionService(s.db, s.modelService, s.memoryService, config)
+	}
+}
+
+// GetCompressionService returns the compression service
+func (s *ChatService) GetCompressionService() *CompressionService {
+	return s.compressionService
+}
+
 // SetAssetService sets the asset service for asset info lookup
 func (s *ChatService) SetAssetService(assetService *AssetService) {
 	s.assetService = assetService
@@ -111,6 +158,10 @@ func (s *ChatService) SetAssetService(assetService *AssetService) {
 // AutoMigrate creates database tables
 func (s *ChatService) AutoMigrate() error {
 	if err := s.db.AutoMigrate(&models.Conversation{}, &models.Message{}); err != nil {
+		return err
+	}
+	// Migrate compression tables
+	if err := s.db.AutoMigrate(&db.ConversationSnapshot{}); err != nil {
 		return err
 	}
 	// Clean up stale streaming states on startup
@@ -251,6 +302,46 @@ func (s *ChatService) GetMessages(conversationID string) ([]models.Message, erro
 	}
 
 	return messages, nil
+}
+
+// MessageWithCompression represents a message with compression metadata
+type MessageWithCompression struct {
+	models.Message
+	CompressionInfo *CompressionInfo `json:"compression_info,omitempty"`
+}
+
+// CompressionInfo contains compression-related metadata for a message
+type CompressionInfo struct {
+	IsCompressed bool   `json:"is_compressed"`
+	SnapshotID   string `json:"snapshot_id,omitempty"`
+}
+
+// GetMessagesWithCompressionInfo retrieves all messages with compression metadata
+// This is used by frontend to display full history with compression indicators
+func (s *ChatService) GetMessagesWithCompressionInfo(conversationID string) ([]MessageWithCompression, error) {
+	messages, err := s.GetMessages(conversationID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]MessageWithCompression, len(messages))
+	for i, msg := range messages {
+		result[i] = MessageWithCompression{
+			Message: msg,
+		}
+		if msg.IsCompressed {
+			snapshotID := ""
+			if msg.SnapshotID != nil {
+				snapshotID = *msg.SnapshotID
+			}
+			result[i].CompressionInfo = &CompressionInfo{
+				IsCompressed: true,
+				SnapshotID:   snapshotID,
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // GetMessage retrieves a single message
@@ -946,13 +1037,40 @@ func (s *ChatService) saveUserMessage(conversationID string, msg *models.ChatCom
 }
 
 func (s *ChatService) buildConversationHistory(conversationID string) ([]*schema.Message, error) {
-	// Get all messages for the conversation
-	messages, err := s.GetMessages(conversationID)
+	// Get conversation to check workspace settings
+	conv, err := s.GetConversation(conversationID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if preemptive compression is needed
+	if s.compressionService != nil && s.compressionConfig != nil {
+		if err := s.checkAndPerformPreemptiveCompression(context.Background(), conversationID); err != nil {
+			s.logger.Warn("Preemptive compression failed, continuing without compression",
+				"conversationID", conversationID, "error", err)
+		}
+	}
+
+	// Get all non-compressed messages for the conversation
+	messages, err := s.GetUncompressedMessages(conversationID)
 	if err != nil {
 		return nil, err
 	}
 
 	history := make([]*schema.Message, 0)
+
+	// If conversation has been compressed, prepend the summary as a system message
+	if conv.Summary != "" {
+		summaryContext := s.getCompressionSummaryContext(conversationID)
+		if summaryContext != "" {
+			history = append(history, &schema.Message{
+				Role:    schema.System,
+				Content: summaryContext,
+			})
+		}
+	}
+
+	// Add remaining messages
 	for _, msg := range messages {
 		// Convert each message to schema messages (may produce multiple for tool calls)
 		schemaMessages := s.messageToSchemaMessages(&msg)
@@ -960,6 +1078,62 @@ func (s *ChatService) buildConversationHistory(conversationID string) ([]*schema
 	}
 
 	return history, nil
+}
+
+// GetUncompressedMessages retrieves non-compressed messages for a conversation
+func (s *ChatService) GetUncompressedMessages(conversationID string) ([]models.Message, error) {
+	var messages []models.Message
+
+	if err := s.db.Where("conversation_id = ? AND is_compressed = ?", conversationID, false).
+		Order("created_at ASC").
+		Find(&messages).Error; err != nil {
+		return nil, err
+	}
+
+	return messages, nil
+}
+
+// checkAndPerformPreemptiveCompression checks token count and compresses if needed
+func (s *ChatService) checkAndPerformPreemptiveCompression(ctx context.Context, conversationID string) error {
+	if s.compressionService == nil || s.compressionConfig == nil {
+		return nil
+	}
+
+	// Get all non-compressed messages
+	messages, err := s.GetUncompressedMessages(conversationID)
+	if err != nil {
+		return err
+	}
+
+	// Estimate total tokens
+	totalTokens := s.estimateMessagesTokens(messages)
+	threshold := int(float64(s.compressionConfig.MaxContextTokens) * s.compressionConfig.CompressThreshold)
+
+	if totalTokens < threshold {
+		return nil // No compression needed
+	}
+
+	s.logger.Info("Preemptive compression triggered",
+		"conversationID", conversationID,
+		"estimatedTokens", totalTokens,
+		"threshold", threshold)
+
+	// Perform compression
+	_, err = s.compressionService.Compress(ctx, conversationID)
+	return err
+}
+
+// estimateMessagesTokens estimates token count for messages
+func (s *ChatService) estimateMessagesTokens(messages []models.Message) int {
+	total := 0
+	for _, msg := range messages {
+		content := msg.GetTextContent()
+		// Rough estimate: 1 token ≈ 4 characters
+		total += len(content) / 4
+		// Add overhead for role, metadata
+		total += 10
+	}
+	return total
 }
 
 // messageToSchemaMessages converts a db.Message with Parts to one or more schema.Message
@@ -1283,6 +1457,18 @@ Be professional, helpful, and concise in your responses.`
 		basePrompt += "\n\n" + assetContext
 	}
 
+	// Add memory context
+	memoryContext := s.getMemoryContext(workspaceID, conversationID, nil, "")
+	if memoryContext != "" {
+		basePrompt += "\n\n" + memoryContext
+	}
+
+	// Add compression summary context if available
+	summaryContext := s.getCompressionSummaryContext(conversationID)
+	if summaryContext != "" {
+		basePrompt += "\n\n" + summaryContext
+	}
+
 	// Add browser context if there are active browsers
 	//browserContext := s.getBrowserContext(conversationID)
 	//if browserContext != "" {
@@ -1290,6 +1476,32 @@ Be professional, helpful, and concise in your responses.`
 	//}
 
 	return basePrompt
+}
+
+// getCompressionSummaryContext retrieves compression summary for the conversation
+func (s *ChatService) getCompressionSummaryContext(conversationID string) string {
+	if s.compressionService == nil || conversationID == "" {
+		return ""
+	}
+	return s.compressionService.BuildSummaryContext(context.Background(), conversationID)
+}
+
+// getMemoryContext retrieves relevant memories for the conversation
+func (s *ChatService) getMemoryContext(workspaceID, conversationID string, agentID *string, recentQuery string) string {
+	if s.memoryService == nil || workspaceID == "" {
+		return ""
+	}
+
+	ctx := context.Background()
+
+	// Build memory context with semantic search if query provided
+	memoryContext, err := s.memoryService.BuildMemoryContext(ctx, workspaceID, agentID, recentQuery, 5000)
+	if err != nil {
+		s.logger.Warn("Failed to build memory context", "error", err)
+		return ""
+	}
+
+	return memoryContext
 }
 
 // getWorkspaceInfoContext returns the workspace basic information
@@ -1673,6 +1885,47 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				}
 				return currentAssistantMsg, part.Err
 			}
+
+			// Check if this is a context length error - attempt compression and retry
+			if IsContextLengthError(part.Err) && s.compressionService != nil {
+				s.logger.Warn("Context length exceeded, attempting compression",
+					"conversationID", conv.ID,
+					"error", part.Err)
+
+				// Perform compression
+				snapshot, compressErr := s.compressionService.Compress(ctx, conv.ID)
+				if compressErr != nil {
+					s.logger.Error("Compression failed", "error", compressErr)
+					return currentAssistantMsg, fmt.Errorf("context length exceeded and compression failed: %w", part.Err)
+				}
+
+				if snapshot != nil {
+					// Notify frontend about compression
+					sendChunk(&models.ChatCompletionChunk{
+						ID:             currentAssistantMsg.ID,
+						Object:         "chat.completion.chunk",
+						Created:        time.Now().Unix(),
+						Model:          modelID,
+						ConversationID: conv.ID,
+						Choices: []models.ChatCompletionChunkChoice{{
+							Index: 0,
+							Delta: models.ChatCompletionChunkDelta{
+								SystemEvent: &models.SystemEvent{
+									Type:    "conversation_compressed",
+									Message: fmt.Sprintf("Conversation history compressed (%d messages)", snapshot.MessageCount),
+								},
+							},
+						}},
+					})
+
+					// Rebuild history and retry (return error to trigger retry at caller level)
+					s.logger.Info("Compression completed, caller should retry",
+						"compressedMessages", snapshot.MessageCount)
+				}
+
+				return currentAssistantMsg, fmt.Errorf("context_compressed_retry_needed: %w", part.Err)
+			}
+
 			s.logger.Error("Agent iteration error", "error", part.Err)
 			return currentAssistantMsg, fmt.Errorf("agent error: %w", part.Err)
 		}
@@ -1994,6 +2247,17 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			},
 		},
 	})
+
+	// Trigger async memory extraction after conversation round completes
+	if s.memoryExtractionService != nil {
+		go func() {
+			extractCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.memoryExtractionService.AnalyzeAndUpdateConversation(extractCtx, conv.WorkspaceID, conv.ID); err != nil {
+				s.logger.Debug("Async memory extraction failed", "error", err)
+			}
+		}()
+	}
 
 	return currentAssistantMsg, nil
 }

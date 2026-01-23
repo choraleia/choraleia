@@ -153,6 +153,12 @@ function getDomainLabel(domain: string) {
   return d?.label || domain;
 }
 
+// Check if domain needs limits and capabilities configuration
+// Only language/multimodal/vision models need context_window, max_tokens, and capabilities
+function needsLimitsAndCapabilities(domain: string): boolean {
+  return ["language", "multimodal", "vision"].includes(domain);
+}
+
 // ============================================================
 // Main Component
 // ============================================================
@@ -395,19 +401,24 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
     setSaving(true);
     setError("");
     const overrides = presetOverrides[preset.model] || {};
+    const domain = overrides.domain || preset.domain;
+    const needsConfig = needsLimitsAndCapabilities(domain);
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       provider: selectedProvider,
       model: overrides.model || preset.model,
       name: overrides.name || preset.name,
-      domain: overrides.domain || preset.domain,
+      domain: domain,
       task_types: overrides.task_types || preset.task_types,
-      capabilities: overrides.capabilities || preset.capabilities,
-      limits: overrides.limits || preset.limits,
       base_url: customModel.base_url || provider?.base_url || "",
       api_key: apiKey,
       extra: customModel.extra,
     };
+    // Only include limits and capabilities for domains that need them
+    if (needsConfig) {
+      payload.capabilities = overrides.capabilities || preset.capabilities;
+      payload.limits = overrides.limits || preset.limits;
+    }
     try {
       const res = await fetch(getApiUrl("/api/models"), {
         method: "POST",
@@ -438,12 +449,22 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
     setSaving(true);
     setError("");
 
-    const payload = {
+    const needsConfig = needsLimitsAndCapabilities(customModel.domain);
+    const payload: Record<string, unknown> = {
       provider: selectedProvider,
-      ...customModel,
+      model: customModel.model,
+      name: customModel.name,
+      domain: customModel.domain,
+      task_types: customModel.task_types,
       base_url: customModel.base_url || provider?.base_url || "",
       api_key: apiKey,
+      extra: customModel.extra,
     };
+    // Only include limits and capabilities for domains that need them
+    if (needsConfig) {
+      payload.capabilities = customModel.capabilities;
+      payload.limits = customModel.limits;
+    }
     try {
       const res = await fetch(getApiUrl("/api/models"), {
         method: "POST",
@@ -701,16 +722,22 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                             </Box>
                             <Box>
                               <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                Model Type
+                                Model Domain
                               </Typography>
                               <FormControl size="small" fullWidth>
                                 <Select
                                   value={override.domain ?? preset.domain}
                                   onChange={(e) => {
                                     const newDomain = e.target.value as ModelDomain;
+                                    const needsConfig = needsLimitsAndCapabilities(newDomain);
                                     updatePresetOverride(preset.model, "domain", newDomain);
                                     // Reset task_types to default for new domain
                                     updatePresetOverride(preset.model, "task_types", DOMAIN_TASK_MAPPING[newDomain]?.slice(0, 1) || ["chat"]);
+                                    // Clear limits and capabilities for non-chat domains
+                                    if (!needsConfig) {
+                                      updatePresetOverride(preset.model, "limits", { context_window: 0, max_tokens: 0 });
+                                      updatePresetOverride(preset.model, "capabilities", {});
+                                    }
                                   }}
                                 >
                                   {DOMAINS.map((d) => (
@@ -740,73 +767,77 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                                 </Select>
                               </FormControl>
                             </Box>
-                            <Box>
-                              <Box display="flex" gap={1}>
-                                <Box flex={1}>
-                                  <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                    Context Window
-                                  </Typography>
-                                  <TextField
-                                    size="small"
-                                    fullWidth
-                                    type="number"
-                                    value={(override.limits ?? preset.limits)?.context_window || 0}
-                                    onChange={(e) => {
-                                      const currentLimits = override.limits ?? preset.limits ?? {};
-                                      updatePresetOverride(preset.model, "limits", {
-                                        ...currentLimits,
-                                        context_window: parseInt(e.target.value) || 0,
-                                      });
-                                    }}
-                                    inputProps={{ min: 0 }}
-                                  />
+                            {needsLimitsAndCapabilities(override.domain ?? preset.domain) && (
+                              <>
+                                <Box>
+                                  <Box display="flex" gap={1}>
+                                    <Box flex={1}>
+                                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                        Context Window
+                                      </Typography>
+                                      <TextField
+                                        size="small"
+                                        fullWidth
+                                        type="number"
+                                        value={(override.limits ?? preset.limits)?.context_window || 0}
+                                        onChange={(e) => {
+                                          const currentLimits = override.limits ?? preset.limits ?? {};
+                                          updatePresetOverride(preset.model, "limits", {
+                                            ...currentLimits,
+                                            context_window: parseInt(e.target.value) || 0,
+                                          });
+                                        }}
+                                        inputProps={{ min: 0 }}
+                                      />
+                                    </Box>
+                                    <Box flex={1}>
+                                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                        Max Tokens
+                                      </Typography>
+                                      <TextField
+                                        size="small"
+                                        fullWidth
+                                        type="number"
+                                        value={(override.limits ?? preset.limits)?.max_tokens || 0}
+                                        onChange={(e) => {
+                                          const currentLimits = override.limits ?? preset.limits ?? {};
+                                          updatePresetOverride(preset.model, "limits", {
+                                            ...currentLimits,
+                                            max_tokens: parseInt(e.target.value) || 0,
+                                          });
+                                        }}
+                                        inputProps={{ min: 0 }}
+                                      />
+                                    </Box>
+                                  </Box>
                                 </Box>
-                                <Box flex={1}>
+                                <Box>
                                   <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                    Max Tokens
+                                    Capabilities
                                   </Typography>
-                                  <TextField
-                                    size="small"
-                                    fullWidth
-                                    type="number"
-                                    value={(override.limits ?? preset.limits)?.max_tokens || 0}
-                                    onChange={(e) => {
-                                      const currentLimits = override.limits ?? preset.limits ?? {};
-                                      updatePresetOverride(preset.model, "limits", {
-                                        ...currentLimits,
-                                        max_tokens: parseInt(e.target.value) || 0,
-                                      });
-                                    }}
-                                    inputProps={{ min: 0 }}
-                                  />
+                                  <Box display="flex" flexWrap="wrap" gap={0.5}>
+                                    {MODEL_CAPABILITY_OPTIONS.map((cap) => {
+                                      const caps = override.capabilities ?? preset.capabilities;
+                                      const isActive = caps[cap.key];
+                                      return (
+                                        <Chip
+                                          key={cap.key}
+                                          label={cap.label}
+                                          size="small"
+                                          variant={isActive ? "filled" : "outlined"}
+                                          color={isActive ? "primary" : "default"}
+                                          onClick={() => {
+                                            const newCaps = { ...caps, [cap.key]: !isActive };
+                                            updatePresetOverride(preset.model, "capabilities", newCaps);
+                                          }}
+                                          sx={{ fontSize: 11, cursor: "pointer" }}
+                                        />
+                                      );
+                                    })}
+                                  </Box>
                                 </Box>
-                              </Box>
-                            </Box>
-                            <Box>
-                              <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                Capabilities
-                              </Typography>
-                              <Box display="flex" flexWrap="wrap" gap={0.5}>
-                                {MODEL_CAPABILITY_OPTIONS.map((cap) => {
-                                  const caps = override.capabilities ?? preset.capabilities;
-                                  const isActive = caps[cap.key];
-                                  return (
-                                    <Chip
-                                      key={cap.key}
-                                      label={cap.label}
-                                      size="small"
-                                      variant={isActive ? "filled" : "outlined"}
-                                      color={isActive ? "primary" : "default"}
-                                      onClick={() => {
-                                        const newCaps = { ...caps, [cap.key]: !isActive };
-                                        updatePresetOverride(preset.model, "capabilities", newCaps);
-                                      }}
-                                      sx={{ fontSize: 11, cursor: "pointer" }}
-                                    />
-                                  );
-                                })}
-                              </Box>
-                            </Box>
+                              </>
+                            )}
                             <Box display="flex" justifyContent="flex-end" gap={1} mt={1}>
                               <Button
                                 size="small"
@@ -890,10 +921,14 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                         value={customModel.domain}
                         onChange={(e) => {
                           const newDomain = e.target.value as ModelDomain;
+                          const needsConfig = needsLimitsAndCapabilities(newDomain);
                           setCustomModel((m) => ({
                             ...m,
                             domain: newDomain,
                             task_types: DOMAIN_TASK_MAPPING[newDomain]?.slice(0, 1) || ["chat"],
+                            // Clear limits and capabilities for non-chat domains
+                            limits: needsConfig ? m.limits : { context_window: 0, max_tokens: 0 },
+                            capabilities: needsConfig ? m.capabilities : {},
                           }));
                         }}
                       >
@@ -924,72 +959,76 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                       </Select>
                     </FormControl>
                   </Box>
-                  <Box>
-                    <Box display="flex" gap={1}>
-                      <Box flex={1}>
-                        <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                          Context Window
-                        </Typography>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          type="number"
-                          value={customModel.limits.context_window || 0}
-                          onChange={(e) =>
-                            setCustomModel((m) => ({
-                              ...m,
-                              limits: { ...m.limits, context_window: parseInt(e.target.value) || 0 },
-                            }))
-                          }
-                          inputProps={{ min: 0 }}
-                        />
+                  {needsLimitsAndCapabilities(customModel.domain) && (
+                    <>
+                      <Box>
+                        <Box display="flex" gap={1}>
+                          <Box flex={1}>
+                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                              Context Window
+                            </Typography>
+                            <TextField
+                              size="small"
+                              fullWidth
+                              type="number"
+                              value={customModel.limits.context_window || 0}
+                              onChange={(e) =>
+                                setCustomModel((m) => ({
+                                  ...m,
+                                  limits: { ...m.limits, context_window: parseInt(e.target.value) || 0 },
+                                }))
+                              }
+                              inputProps={{ min: 0 }}
+                            />
+                          </Box>
+                          <Box flex={1}>
+                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                              Max Tokens
+                            </Typography>
+                            <TextField
+                              size="small"
+                              fullWidth
+                              type="number"
+                              value={customModel.limits.max_tokens || 0}
+                              onChange={(e) =>
+                                setCustomModel((m) => ({
+                                  ...m,
+                                  limits: { ...m.limits, max_tokens: parseInt(e.target.value) || 0 },
+                                }))
+                              }
+                              inputProps={{ min: 0 }}
+                            />
+                          </Box>
+                        </Box>
                       </Box>
-                      <Box flex={1}>
+                      <Box>
                         <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                          Max Tokens
+                          Capabilities
                         </Typography>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          type="number"
-                          value={customModel.limits.max_tokens || 0}
-                          onChange={(e) =>
-                            setCustomModel((m) => ({
-                              ...m,
-                              limits: { ...m.limits, max_tokens: parseInt(e.target.value) || 0 },
-                            }))
-                          }
-                          inputProps={{ min: 0 }}
-                        />
+                        <Box display="flex" flexWrap="wrap" gap={0.5}>
+                          {MODEL_CAPABILITY_OPTIONS.map((cap) => {
+                            const isActive = customModel.capabilities[cap.key];
+                            return (
+                              <Chip
+                                key={cap.key}
+                                label={cap.label}
+                                size="small"
+                                variant={isActive ? "filled" : "outlined"}
+                                color={isActive ? "primary" : "default"}
+                                onClick={() =>
+                                  setCustomModel((m) => ({
+                                    ...m,
+                                    capabilities: { ...m.capabilities, [cap.key]: !isActive },
+                                  }))
+                                }
+                                sx={{ fontSize: 11, cursor: "pointer" }}
+                              />
+                            );
+                          })}
+                        </Box>
                       </Box>
-                    </Box>
-                  </Box>
-                  <Box>
-                    <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                      Capabilities
-                    </Typography>
-                    <Box display="flex" flexWrap="wrap" gap={0.5}>
-                      {MODEL_CAPABILITY_OPTIONS.map((cap) => {
-                        const isActive = customModel.capabilities[cap.key];
-                        return (
-                          <Chip
-                            key={cap.key}
-                            label={cap.label}
-                            size="small"
-                            variant={isActive ? "filled" : "outlined"}
-                            color={isActive ? "primary" : "default"}
-                            onClick={() =>
-                              setCustomModel((m) => ({
-                                ...m,
-                                capabilities: { ...m.capabilities, [cap.key]: !isActive },
-                              }))
-                            }
-                            sx={{ fontSize: 11, cursor: "pointer" }}
-                          />
-                        );
-                      })}
-                    </Box>
-                  </Box>
+                    </>
+                  )}
                   <Box display="flex" justifyContent="flex-end" gap={1}>
                     <Button
                       variant="outlined"

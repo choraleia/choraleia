@@ -9,7 +9,7 @@ export interface BuiltinToolDefinition {
   id: string;
   name: string;
   description: string;
-  category: "workspace" | "asset" | "database" | "transfer" | "browser";
+  category: "workspace" | "asset" | "database" | "transfer" | "browser" | "memory";
   scope: "workspace" | "global" | "both";
   dangerous: boolean;
 }

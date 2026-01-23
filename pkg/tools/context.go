@@ -66,9 +66,13 @@ type ToolContext struct {
 	WorkspaceGetter   WorkspaceGetter
 	BrowserService    BrowserServiceInterface
 	ModelService      *service.ModelService
+	MemoryService     *service.MemoryService
 
 	// Workspace context (if tool is running in workspace scope)
 	WorkspaceID string
+
+	// Agent context (for memory tools)
+	AgentID *string
 
 	// Conversation context (for browser tools)
 	ConversationID string
@@ -101,7 +105,9 @@ func (c *ToolContext) WithWorkspace(workspaceID string) *ToolContext {
 		WorkspaceGetter:   c.WorkspaceGetter,
 		BrowserService:    c.BrowserService,
 		ModelService:      c.ModelService,
+		MemoryService:     c.MemoryService,
 		WorkspaceID:       workspaceID,
+		AgentID:           c.AgentID,
 		ConversationID:    c.ConversationID,
 		VisionModelID:     c.VisionModelID,
 	}
@@ -122,7 +128,9 @@ func (c *ToolContext) WithConversation(conversationID string) *ToolContext {
 		WorkspaceGetter:   c.WorkspaceGetter,
 		BrowserService:    c.BrowserService,
 		ModelService:      c.ModelService,
+		MemoryService:     c.MemoryService,
 		WorkspaceID:       c.WorkspaceID,
+		AgentID:           c.AgentID,
 		ConversationID:    conversationID,
 		VisionModelID:     c.VisionModelID,
 	}
@@ -143,9 +151,34 @@ func (c *ToolContext) WithVisionModel(visionModelID string) *ToolContext {
 		WorkspaceGetter:   c.WorkspaceGetter,
 		BrowserService:    c.BrowserService,
 		ModelService:      c.ModelService,
+		MemoryService:     c.MemoryService,
 		WorkspaceID:       c.WorkspaceID,
+		AgentID:           c.AgentID,
 		ConversationID:    c.ConversationID,
 		VisionModelID:     visionModelID,
+	}
+}
+
+// WithMemoryService sets the memory service
+func (c *ToolContext) WithMemoryService(memorySvc *service.MemoryService) *ToolContext {
+	c.MemoryService = memorySvc
+	return c
+}
+
+// WithAgent returns a new context with agent ID set
+func (c *ToolContext) WithAgent(agentID string) *ToolContext {
+	return &ToolContext{
+		FSService:         c.FSService,
+		AssetService:      c.AssetService,
+		WorkspaceExecutor: c.WorkspaceExecutor,
+		WorkspaceGetter:   c.WorkspaceGetter,
+		BrowserService:    c.BrowserService,
+		ModelService:      c.ModelService,
+		MemoryService:     c.MemoryService,
+		WorkspaceID:       c.WorkspaceID,
+		AgentID:           &agentID,
+		ConversationID:    c.ConversationID,
+		VisionModelID:     c.VisionModelID,
 	}
 }
 
