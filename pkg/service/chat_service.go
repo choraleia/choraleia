@@ -1552,14 +1552,7 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 }
 
 func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string, conversationID string) ([]tool.InvokableTool, error) {
-	s.logger.Debug("loadWorkspaceTools called", "workspaceID", workspaceID, "conversationID", conversationID, "hasToolLoader", s.toolLoader != nil)
-
-	if workspaceID == "" {
-		s.logger.Warn("workspaceID is empty, skipping tool loading")
-		return nil, nil
-	}
-	if s.toolLoader == nil {
-		s.logger.Warn("toolLoader is nil, skipping tool loading")
+	if workspaceID == "" || s.toolLoader == nil {
 		return nil, nil
 	}
 
@@ -1569,24 +1562,16 @@ func (s *ChatService) loadWorkspaceTools(ctx context.Context, workspaceID string
 		return nil, err
 	}
 
-	s.logger.Debug("Got workspace for tool loading",
-		"workspaceID", workspaceID,
-		"workspaceName", workspace.Name,
-		"toolsCount", len(workspace.Tools))
-
 	if len(workspace.Tools) == 0 {
-		s.logger.Warn("Workspace has no tools configured", "workspaceID", workspaceID)
 		return nil, nil
 	}
 
 	tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, conversationID, workspace.Tools)
-	//tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, conversationID, nil)
 	if err != nil {
 		s.logger.Error("toolLoader.LoadWorkspaceTools failed", "error", err)
 		return nil, err
 	}
 
-	s.logger.Debug("Workspace tools loaded", "workspaceID", workspaceID, "toolCount", len(tools))
 	return tools, nil
 }
 
@@ -1709,31 +1694,8 @@ func (s *ChatService) createCompressionMiddlewares(conversationID string, worksp
 		// Calculate threshold as 75% of context window
 		threshold := int(float64(contextWindow) * 0.75)
 
-		s.logger.Debug("Compression middleware configured",
-			"compressionModelID", compressionModelID,
-			"contextWindow", contextWindow,
-			"threshold", threshold,
-			"rootAgentName", rootAgentName)
-
 		compressionMiddleware := adk.AgentMiddleware{
 			BeforeChatModel: func(ctx context.Context, state *adk.ChatModelAgentState) error {
-				// Get current agent name from State
-				// Only trigger compression for root agent to avoid duplicate compression
-				// when sub-agents receive copied history via transfer
-				var currentAgentName string
-				_ = compose.ProcessState(ctx, func(_ context.Context, st *adk.State) error {
-					currentAgentName = st.AgentName
-					return nil
-				})
-
-				// Skip compression for sub-agents (non-root agents)
-				if currentAgentName != "" && rootAgentName != "" && currentAgentName != rootAgentName {
-					s.logger.Debug("Skipping compression for sub-agent",
-						"currentAgent", currentAgentName,
-						"rootAgent", rootAgentName)
-					return nil
-				}
-
 				// Estimate current context size from state.Messages
 				totalTokens := 0
 				for _, msg := range state.Messages {
@@ -1752,7 +1714,6 @@ func (s *ChatService) createCompressionMiddlewares(conversationID string, worksp
 
 				s.logger.Info("Context approaching limit, triggering compression",
 					"conversationID", conversationID,
-					"agentName", currentAgentName,
 					"estimatedTokens", totalTokens,
 					"threshold", threshold,
 					"contextWindow", contextWindow)
@@ -1783,24 +1744,14 @@ func (s *ChatService) createCompressionMiddlewares(conversationID string, worksp
 						break
 					}
 					if snapshot == nil || snapshot.MessageCount == 0 {
-						s.logger.Debug("No more messages to compress", "round", round+1)
 						break
 					}
 
 					compressed = true
-					s.logger.Info("Compression round completed",
-						"round", round+1,
-						"agentName", currentAgentName,
-						"compressedMessages", snapshot.MessageCount,
-						"originalTokens", snapshot.OriginalTokens,
-						"compressedTokens", snapshot.CompressedTokens)
 
 					// Re-estimate tokens after compression
 					totalTokens = totalTokens - snapshot.OriginalTokens + snapshot.CompressedTokens
 					if totalTokens <= threshold {
-						s.logger.Info("Compression sufficient",
-							"remainingTokens", totalTokens,
-							"threshold", threshold)
 						break
 					}
 				}
@@ -1818,29 +1769,11 @@ func (s *ChatService) createCompressionMiddlewares(conversationID string, worksp
 					// These are messages after runtimeStartIdx in the original state
 					if runtimeStartIdx < len(state.Messages) {
 						runtimeMessages := state.Messages[runtimeStartIdx:]
-						s.logger.Debug("Preserving runtime messages",
-							"count", len(runtimeMessages),
-							"newHistoryCount", len(newHistory))
 						newHistory = append(newHistory, runtimeMessages...)
 					}
 
 					// Update state.Messages with compressed history + runtime messages
 					state.Messages = newHistory
-
-					// Log final state
-					finalTokens := 0
-					for _, msg := range state.Messages {
-						finalTokens += len(msg.Content) / 4
-						finalTokens += len(msg.ReasoningContent) / 4
-						for _, tc := range msg.ToolCalls {
-							finalTokens += len(tc.Function.Arguments) / 4
-						}
-						finalTokens += 10
-					}
-					s.logger.Info("State.Messages updated after compression",
-						"messageCount", len(state.Messages),
-						"estimatedTokens", finalTokens,
-						"threshold", threshold)
 				}
 
 				return nil
@@ -1901,7 +1834,6 @@ func (s *ChatService) createModelRetryConfig(conversationID string) *adk.ModelRe
 			if delay > maxDelay {
 				delay = maxDelay
 			}
-			s.logger.Debug("Retry backoff", "attempt", attempt, "delay", delay)
 			return delay
 		},
 	}
@@ -1920,12 +1852,6 @@ func (s *ChatService) getChatModel(ctx context.Context, modelID string) (model.T
 	if modelConfig == nil {
 		return nil, fmt.Errorf("model not found: %s", modelID)
 	}
-
-	s.logger.Debug("Creating chat model",
-		"modelID", modelID,
-		"provider", modelConfig.Provider,
-		"model", modelConfig.Model,
-		"baseURL", modelConfig.BaseUrl)
 
 	// Use ModelService to create the model
 	return s.modelService.CreateChatModel(ctx, modelConfig)
@@ -2306,7 +2232,6 @@ func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*s
 			}
 			toolsInfo = append(toolsInfo, info)
 		}
-		s.logger.Debug("Binding tools to model", "count", len(toolsInfo))
 
 		if len(toolsInfo) > 0 {
 			chatModel, err = chatModel.WithTools(toolsInfo)
@@ -2314,8 +2239,6 @@ func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*s
 				return nil, fmt.Errorf("failed to bind tools: %w", err)
 			}
 		}
-	} else {
-		s.logger.Debug("No workspace tools to bind")
 	}
 
 	// Generate response
@@ -2384,21 +2307,11 @@ func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*s
 }
 
 func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCompletionRequest, conv *models.Conversation, assistantMsg *models.Message, chunks chan<- *models.ChatCompletionChunk) (*models.Message, error) {
-	s.logger.Debug("runStreamingAgent started",
-		"workspaceID", req.WorkspaceID,
-		"conversationID", conv.ID,
-		"modelID", req.Model,
-		"agentID", req.AgentID)
-
 	// Load workspace tools
 	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID, conv.ID)
 	if err != nil {
 		s.logger.Warn("Failed to load workspace tools", "error", err)
 	}
-
-	s.logger.Debug("After loadWorkspaceTools",
-		"toolCount", len(workspaceTools),
-		"hasTools", len(workspaceTools) > 0)
 
 	// Build conversation history
 	history, err := s.buildConversationHistory(conv.ID)
@@ -2452,32 +2365,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		// Create GenModelInput for dynamic context injection
 		genModelInput := s.createGenModelInput(req.WorkspaceID, conv.ID)
 
-		s.logger.Debug("Creating ChatModelAgent", "toolCount", len(baseTools))
-
-		// Log tool information for debugging
-		for i, t := range baseTools {
-			info, err := t.Info(ctx)
-			if err != nil {
-				s.logger.Error("Failed to get tool info", "index", i, "error", err)
-				continue
-			}
-			descLen := len(info.Desc)
-			if descLen > 50 {
-				descLen = 50
-			}
-			s.logger.Debug("Tool info", "index", i, "name", info.Name, "descPreview", info.Desc[:descLen])
-
-			// Try to generate JSON schema to catch errors early
-			if info.ParamsOneOf != nil {
-				jsonSchema, schemaErr := info.ParamsOneOf.ToJSONSchema()
-				if schemaErr != nil {
-					s.logger.Error("Failed to generate tool JSON schema", "toolName", info.Name, "error", schemaErr)
-				} else {
-					s.logger.Debug("Tool JSON schema generated", "toolName", info.Name, "hasSchema", jsonSchema != nil)
-				}
-			}
-		}
-
 		agent, err = adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 			Name:          "Workspace Assistant",
 			Description:   "An AI assistant that helps with coding and development tasks in the workspace",
@@ -2495,7 +2382,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		if err != nil {
 			return assistantMsg, fmt.Errorf("failed to create agent: %w", err)
 		}
-		s.logger.Debug("ChatModelAgent created successfully", "agentName", agent.Name(ctx))
 	}
 
 	// Helper to send chunk and update buffer
@@ -2522,13 +2408,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	})
 
 	// Run agent with streaming
-	s.logger.Debug("Running agent", "historyLen", len(history))
-	for i, h := range history {
-		s.logger.Debug("History message", "index", i, "role", h.Role, "contentLen", len(h.Content))
-	}
-	s.logger.Debug("Calling agent.Run...")
 	iter := agent.Run(ctx, &adk.AgentInput{Messages: history, EnableStreaming: true})
-	s.logger.Debug("agent.Run returned, starting iteration loop")
 
 	// Track current assistantMsg
 	currentAssistantMsg := assistantMsg
@@ -2539,15 +2419,10 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Track current agent name for display
 	currentAgentName := ""
 
-	iterCount := 0
 	for {
-		iterCount++
-		s.logger.Debug("Loop iteration", "count", iterCount)
-
 		// Check for cancellation before getting next chunk
 		select {
 		case <-ctx.Done():
-			s.logger.Debug("Context cancelled")
 			if !cancelled {
 				cancelled = true
 				currentAssistantMsg.Status = models.MessageStatusCompleted
@@ -2558,15 +2433,11 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		default:
 		}
 
-		s.logger.Debug("Calling iter.Next()...")
 		chunk, ok := iter.Next()
-		s.logger.Debug("iter.Next() returned", "ok", ok, "hasChunk", chunk != nil)
 		if !ok {
-			s.logger.Debug("iter.Next() returned false, breaking loop")
 			break
 		}
 		if chunk.Err != nil {
-			s.logger.Error("Chunk has error", "error", chunk.Err)
 			// Check if this is a cancellation error
 			if errors.Is(chunk.Err, context.Canceled) || errors.Is(chunk.Err, context.DeadlineExceeded) {
 				if !cancelled {
@@ -2591,9 +2462,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 		// Skip events with no output (e.g., transfer actions)
 		if chunk.Output == nil || chunk.Output.MessageOutput == nil {
-			s.logger.Debug("Skipping event with no message output",
-				"agentName", chunk.AgentName,
-				"hasAction", chunk.Action != nil)
 			continue
 		}
 
@@ -2607,8 +2475,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				s.logger.Error("Failed to get tool result message", "error", err)
 				continue
 			}
-
-			s.logger.Debug("Received tool result", "toolCallID", fullMsg.ToolCallID, "toolName", fullMsg.ToolName)
 
 			// Get current round index from the assistant message
 			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
@@ -3007,16 +2873,6 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		if err != nil {
 			return nil, fmt.Errorf("failed to build sub-agents for supervisor: %w", err)
 		}
-		s.logger.Info("Building supervisor agent",
-			"name", agentConfig.Name,
-			"description", ptrToString(agentConfig.Description),
-			"subAgentCount", len(subAgents))
-		for i, sa := range subAgents {
-			s.logger.Info("Sub-agent info",
-				"index", i,
-				"name", sa.Name(ctx),
-				"description", sa.Description(ctx))
-		}
 		// Create the supervisor agent itself (a ChatModelAgent)
 		supervisorAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 			Name:          agentConfig.Name,
@@ -3173,23 +3029,12 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 // buildSubAgents builds sub-agents for a supervisor agent based on canvas edges
 func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.WorkspaceAgent, parentAgent *models.Agent, defaultModelID string, baseTools []tool.BaseTool, workspaceID string, conversationID string) ([]adk.Agent, error) {
 	if wsAgent == nil {
-		s.logger.Warn("buildSubAgents: wsAgent is nil")
 		return nil, nil
 	}
-
-	s.logger.Info("buildSubAgents: starting",
-		"parentAgentID", parentAgent.ID,
-		"parentAgentName", parentAgent.Name,
-		"nodesCount", len(wsAgent.Nodes),
-		"edgesCount", len(wsAgent.Edges))
 
 	// Find the parent node
 	var parentNodeID string
 	for _, node := range wsAgent.Nodes {
-		s.logger.Debug("buildSubAgents: checking node",
-			"nodeID", node.ID,
-			"nodeType", node.Type,
-			"hasAgent", node.Agent != nil)
 		if node.Agent != nil && node.Agent.ID == parentAgent.ID {
 			parentNodeID = node.ID
 			break
@@ -3197,35 +3042,22 @@ func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.Worksp
 	}
 
 	if parentNodeID == "" {
-		s.logger.Warn("buildSubAgents: parent node not found")
 		return nil, nil
 	}
-
-	s.logger.Info("buildSubAgents: found parent node", "parentNodeID", parentNodeID)
 
 	// Find connected sub-agent nodes via edges
 	subAgentNodeIDs := make([]string, 0)
 	for _, edge := range wsAgent.Edges {
-		s.logger.Debug("buildSubAgents: checking edge",
-			"source", edge.Source,
-			"target", edge.Target)
 		if edge.Source == parentNodeID && edge.Target != "start" {
 			subAgentNodeIDs = append(subAgentNodeIDs, edge.Target)
 		}
 	}
-
-	s.logger.Info("buildSubAgents: found sub-agent node IDs", "subAgentNodeIDs", subAgentNodeIDs)
 
 	// Build sub-agents
 	subAgents := make([]adk.Agent, 0, len(subAgentNodeIDs))
 	for _, nodeID := range subAgentNodeIDs {
 		for _, node := range wsAgent.Nodes {
 			if node.ID == nodeID && node.Agent != nil {
-				s.logger.Info("buildSubAgents: building sub-agent",
-					"nodeID", nodeID,
-					"agentName", node.Agent.Name,
-					"agentType", node.Agent.Type,
-					"agentDescription", ptrToString(node.Agent.Description))
 				// Recursively build sub-agent (but pass nil for wsAgent to prevent infinite recursion for supervisor)
 				subAgent, err := s.buildAgentFromConfig(ctx, node.Agent, defaultModelID, baseTools, nil, workspaceID, conversationID)
 				if err != nil {
@@ -3237,7 +3069,6 @@ func (s *ChatService) buildSubAgents(ctx context.Context, wsAgent *models.Worksp
 		}
 	}
 
-	s.logger.Info("buildSubAgents: completed", "subAgentCount", len(subAgents))
 	return subAgents, nil
 }
 
