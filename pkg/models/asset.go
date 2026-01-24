@@ -338,7 +338,7 @@ func (a *Asset) validateSSHConfig() error {
 				return fmt.Errorf("tunnel[%d]: remote_host is required for %s tunnel", i, tunnel.Type)
 			}
 			if tunnel.RemotePort <= 0 || tunnel.RemotePort > 65535 {
-				return fmt.Errorf("tunnel[%d]: remote_port must be between 1 and 65535", i, tunnel.Type)
+				return fmt.Errorf("tunnel[%d]: remote_port must be between 1 and 65535", i)
 			}
 		}
 	}
