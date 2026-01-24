@@ -9,7 +9,6 @@ type Conversation struct {
 	WorkspaceID string `json:"workspace_id" gorm:"index;size:36;not null"`
 	RoomID      string `json:"room_id,omitempty" gorm:"index;size:36"`
 	Title       string `json:"title" gorm:"size:200;default:'New Chat'"`
-	ModelID     string `json:"model_id,omitempty" gorm:"size:100"`
 	Status      string `json:"status" gorm:"size:20;default:'active'"` // active, archived
 
 	// Compression-related fields
@@ -18,6 +17,9 @@ type Conversation struct {
 	Summary          string      `json:"summary,omitempty" gorm:"type:text"`
 	KeyTopics        StringArray `json:"key_topics,omitempty" gorm:"type:json"`
 	KeyDecisions     StringArray `json:"key_decisions,omitempty" gorm:"type:json"`
+
+	// Memory extraction tracking
+	LastAnalyzedAt *time.Time `json:"last_analyzed_at,omitempty"` // Last time memories were extracted
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

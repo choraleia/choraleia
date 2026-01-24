@@ -70,10 +70,15 @@ type Workspace struct {
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
 
+	// Compression configuration
+	CompressionEnabled bool    `json:"compression_enabled" gorm:"default:false"`
+	CompressionModel   *string `json:"compression_model,omitempty" gorm:"size:100"` // Model ID for conversation compression
+
 	// Memory configuration
-	MemoryEnabled     bool    `json:"memory_enabled" gorm:"default:false"`
-	EmbeddingProvider *string `json:"embedding_provider,omitempty" gorm:"size:50"` // Provider name (openai, ollama, etc.)
-	EmbeddingModel    *string `json:"embedding_model,omitempty" gorm:"size:100"`   // Model name (text-embedding-3-small, etc.)
+	MemoryEnabled      bool    `json:"memory_enabled" gorm:"default:false"`
+	EmbeddingModel     *string `json:"embedding_model,omitempty" gorm:"size:100"`         // Model ID (provider/model format)
+	EmbeddingDimension *int    `json:"embedding_dimension,omitempty" gorm:"default:null"` // Embedding vector dimension (immutable once set)
+	ExtractionModel    *string `json:"extraction_model,omitempty" gorm:"size:100"`        // Model ID for memory extraction
 
 	// Relations
 	Runtime *WorkspaceRuntime   `json:"runtime,omitempty" gorm:"foreignKey:WorkspaceID;constraint:OnDelete:CASCADE"`

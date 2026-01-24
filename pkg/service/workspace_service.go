@@ -268,6 +268,14 @@ type CreateWorkspaceRequest struct {
 	Runtime     *CreateRuntimeRequest   `json:"runtime"`
 	Assets      []CreateAssetRefRequest `json:"assets,omitempty"`
 	Tools       []CreateToolRequest     `json:"tools,omitempty"`
+	// Compression configuration
+	CompressionEnabled bool    `json:"compression_enabled,omitempty"`
+	CompressionModel   *string `json:"compression_model,omitempty"`
+	// Memory configuration
+	MemoryEnabled      bool    `json:"memory_enabled,omitempty"`
+	EmbeddingModel     *string `json:"embedding_model,omitempty"`
+	EmbeddingDimension *int    `json:"embedding_dimension,omitempty"`
+	ExtractionModel    *string `json:"extraction_model,omitempty"`
 }
 
 // CreateRuntimeRequest represents runtime configuration for creation
@@ -322,8 +330,16 @@ func (s *WorkspaceService) Create(ctx context.Context, req *CreateWorkspaceReque
 		Description: req.Description,
 		Status:      models.WorkspaceStatusStopped,
 		Color:       req.Color,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		// Compression configuration
+		CompressionEnabled: req.CompressionEnabled,
+		CompressionModel:   req.CompressionModel,
+		// Memory configuration
+		MemoryEnabled:      req.MemoryEnabled,
+		EmbeddingModel:     req.EmbeddingModel,
+		EmbeddingDimension: req.EmbeddingDimension,
+		ExtractionModel:    req.ExtractionModel,
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
 	}
 
 	// Create in transaction
@@ -501,6 +517,14 @@ type UpdateWorkspaceRequest struct {
 	Runtime     *CreateRuntimeRequest   `json:"runtime,omitempty"`
 	Assets      []CreateAssetRefRequest `json:"assets,omitempty"`
 	Tools       []CreateToolRequest     `json:"tools,omitempty"`
+	// Compression configuration
+	CompressionEnabled *bool   `json:"compression_enabled,omitempty"`
+	CompressionModel   *string `json:"compression_model,omitempty"`
+	// Memory configuration
+	MemoryEnabled      *bool   `json:"memory_enabled,omitempty"`
+	EmbeddingModel     *string `json:"embedding_model,omitempty"`
+	EmbeddingDimension *int    `json:"embedding_dimension,omitempty"`
+	ExtractionModel    *string `json:"extraction_model,omitempty"`
 }
 
 // Update updates a workspace
@@ -537,6 +561,26 @@ func (s *WorkspaceService) Update(ctx context.Context, id string, req *UpdateWor
 		}
 		if req.Color != nil {
 			updates["color"] = *req.Color
+		}
+		// Compression configuration
+		if req.CompressionEnabled != nil {
+			updates["compression_enabled"] = *req.CompressionEnabled
+		}
+		if req.CompressionModel != nil {
+			updates["compression_model"] = req.CompressionModel
+		}
+		// Memory configuration
+		if req.MemoryEnabled != nil {
+			updates["memory_enabled"] = *req.MemoryEnabled
+		}
+		if req.EmbeddingModel != nil {
+			updates["embedding_model"] = req.EmbeddingModel
+		}
+		if req.EmbeddingDimension != nil {
+			updates["embedding_dimension"] = req.EmbeddingDimension
+		}
+		if req.ExtractionModel != nil {
+			updates["extraction_model"] = req.ExtractionModel
 		}
 
 		if err := tx.Model(workspace).Updates(updates).Error; err != nil {

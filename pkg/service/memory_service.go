@@ -17,8 +17,10 @@ import (
 	"github.com/choraleia/choraleia/pkg/models"
 	"github.com/choraleia/choraleia/pkg/utils"
 	"github.com/cloudwego/eino/components/embedding"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
-	chromem "github.com/philippgille/chromem-go"
+	"github.com/philippgille/chromem-go"
 	"gorm.io/gorm"
 )
 
@@ -33,16 +35,7 @@ var (
 type MemoryConfig struct {
 	// Vector store settings
 	EnableVectorStore bool   `yaml:"enable_vector_store"`
-	VectorStorePath   string `yaml:"vector_store_path"`  // Path for persistent storage
-	EmbeddingProvider string `yaml:"embedding_provider"` // openai, ollama, or empty for default
-
-	// OpenAI settings
-	OpenAIAPIKey string `yaml:"openai_api_key"`
-	OpenAIModel  string `yaml:"openai_model"` // e.g., text-embedding-3-small
-
-	// Ollama settings
-	OllamaURL   string `yaml:"ollama_url"`
-	OllamaModel string `yaml:"ollama_model"`
+	VectorStorePath   string `yaml:"vector_store_path"` // Path for persistent storage
 
 	// Query settings
 	DefaultMaxResults   int `yaml:"default_max_results"`
@@ -64,22 +57,10 @@ func DefaultMemoryConfig() *MemoryConfig {
 	return &MemoryConfig{
 		EnableVectorStore:   true,
 		VectorStorePath:     getDefaultVectorStorePath(),
-		EmbeddingProvider:   "openai",
-		OpenAIModel:         "text-embedding-3-small",
-		OllamaURL:           "http://localhost:11434",
-		OllamaModel:         "nomic-embed-text",
 		DefaultMaxResults:   50,
 		DefaultMaxTokens:    5000,
 		SemanticSearchLimit: 20,
 	}
-}
-
-// WorkspaceEmbeddingConfig holds embedding configuration for a workspace
-type WorkspaceEmbeddingConfig struct {
-	Provider string // openai, ollama, etc.
-	Model    string // model name
-	APIKey   string // API key (if needed)
-	BaseURL  string // Base URL (if needed)
 }
 
 // MemoryService handles memory operations
@@ -95,9 +76,6 @@ type MemoryService struct {
 
 	// Per-workspace embedding functions (created via ModelService)
 	embeddingFuncs sync.Map // workspaceID -> chromem.EmbeddingFunc
-
-	// Default embedding function (fallback)
-	defaultEmbeddingFunc chromem.EmbeddingFunc
 
 	// Workspace getter for fetching workspace embedding config
 	workspaceGetter func(id string) (*models.Workspace, error)
@@ -160,9 +138,6 @@ func (s *MemoryService) initVectorStore() error {
 		}
 	}
 
-	// Create default embedding function from config (optional fallback)
-	s.defaultEmbeddingFunc = s.createEmbeddingFunc(s.config.EmbeddingProvider, s.config.OpenAIModel, s.config.OpenAIAPIKey, "")
-
 	// Create persistent DB
 	var err error
 	if s.config.VectorStorePath != "" {
@@ -177,39 +152,6 @@ func (s *MemoryService) initVectorStore() error {
 	s.logger.Info("Vector store initialized", "path", s.config.VectorStorePath)
 
 	return nil
-}
-
-// createEmbeddingFunc creates an embedding function for given provider/model
-func (s *MemoryService) createEmbeddingFunc(provider, model, apiKey, baseURL string) chromem.EmbeddingFunc {
-	switch provider {
-	case "openai", "custom":
-		if apiKey == "" {
-			apiKey = os.Getenv("OPENAI_API_KEY")
-		}
-		if apiKey == "" {
-			return nil
-		}
-		if model == "" {
-			model = "text-embedding-3-small"
-		}
-		return chromem.NewEmbeddingFuncOpenAI(apiKey, chromem.EmbeddingModelOpenAI(model))
-
-	case "ollama":
-		url := baseURL
-		if url == "" {
-			url = s.config.OllamaURL
-		}
-		if url == "" {
-			url = "http://localhost:11434"
-		}
-		if model == "" {
-			model = "nomic-embed-text"
-		}
-		return chromem.NewEmbeddingFuncOllama(model, url)
-
-	default:
-		return nil
-	}
 }
 
 // createEmbeddingFuncFromEmbedder wraps eino Embedder as chromem.EmbeddingFunc
@@ -231,8 +173,20 @@ func (s *MemoryService) createEmbeddingFuncFromEmbedder(embedder embedding.Embed
 	}
 }
 
-// findEmbeddingModelConfig finds a model config by provider and model name
-func (s *MemoryService) findEmbeddingModelConfig(provider, model string) (*models.ModelConfig, error) {
+// findEmbeddingModelConfig finds a model config by model ID (format: provider/model)
+func (s *MemoryService) findEmbeddingModelConfig(modelID string) (*models.ModelConfig, error) {
+	if modelID == "" {
+		return nil, fmt.Errorf("model ID is empty")
+	}
+
+	// Parse provider/model format
+	parts := strings.SplitN(modelID, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid model format, expected 'provider/model': %s", modelID)
+	}
+	provider := parts[0]
+	model := parts[1]
+
 	modelsList, err := models.LoadModels()
 	if err != nil {
 		return nil, err
@@ -247,7 +201,7 @@ func (s *MemoryService) findEmbeddingModelConfig(provider, model string) (*model
 			}
 		}
 	}
-	return nil, fmt.Errorf("no matching embedding model found for provider=%s, model=%s", provider, model)
+	return nil, fmt.Errorf("no matching embedding model found for %s", modelID)
 }
 
 // getEmbeddingFuncForWorkspace gets or creates embedding function for a workspace
@@ -258,53 +212,61 @@ func (s *MemoryService) getEmbeddingFuncForWorkspace(workspaceID string) chromem
 	}
 
 	// Try to get workspace config and use ModelService.CreateEmbedder
-	if s.workspaceGetter != nil && s.modelService != nil {
-		workspace, err := s.workspaceGetter(workspaceID)
-		if err == nil && workspace != nil && workspace.MemoryEnabled {
-			if workspace.EmbeddingProvider != nil && workspace.EmbeddingModel != nil {
-				// Find model config by provider + model name
-				modelConfig, err := s.findEmbeddingModelConfig(*workspace.EmbeddingProvider, *workspace.EmbeddingModel)
-				if err == nil && modelConfig != nil {
-					// Create embedder using ModelService
-					ctx := context.Background()
-					embedder, err := s.modelService.CreateEmbedder(ctx, modelConfig)
-					if err == nil && embedder != nil {
-						embFunc := s.createEmbeddingFuncFromEmbedder(embedder)
-						s.embeddingFuncs.Store(workspaceID, embFunc)
-						s.logger.Info("Created workspace-specific embedding function via ModelService",
-							"workspaceID", workspaceID,
-							"provider", *workspace.EmbeddingProvider,
-							"model", *workspace.EmbeddingModel)
-						return embFunc
-					} else {
-						s.logger.Warn("Failed to create embedder via ModelService, trying fallback",
-							"provider", *workspace.EmbeddingProvider,
-							"model", *workspace.EmbeddingModel,
-							"error", err)
-					}
-				}
-
-				// Fallback: try to create using chromem-go built-in functions
-				var apiKey, baseURL string
-				if modelConfig != nil {
-					apiKey = modelConfig.ApiKey
-					baseURL = modelConfig.BaseUrl
-				}
-				embFunc := s.createEmbeddingFunc(*workspace.EmbeddingProvider, *workspace.EmbeddingModel, apiKey, baseURL)
-				if embFunc != nil {
-					s.embeddingFuncs.Store(workspaceID, embFunc)
-					s.logger.Info("Created workspace-specific embedding function via chromem-go",
-						"workspaceID", workspaceID,
-						"provider", *workspace.EmbeddingProvider,
-						"model", *workspace.EmbeddingModel)
-					return embFunc
-				}
-			}
-		}
+	if s.workspaceGetter == nil || s.modelService == nil {
+		s.logger.Warn("WorkspaceGetter or ModelService not available")
+		return nil
 	}
 
-	// Fallback to default
-	return s.defaultEmbeddingFunc
+	workspace, err := s.workspaceGetter(workspaceID)
+	if err != nil {
+		s.logger.Warn("Failed to get workspace", "workspaceID", workspaceID, "error", err)
+		return nil
+	}
+
+	if workspace == nil || !workspace.MemoryEnabled {
+		s.logger.Debug("Memory not enabled for workspace", "workspaceID", workspaceID)
+		return nil
+	}
+
+	if workspace.EmbeddingModel == nil || *workspace.EmbeddingModel == "" {
+		s.logger.Warn("No embedding model configured for workspace", "workspaceID", workspaceID)
+		return nil
+	}
+
+	// Find model config by model ID (format: provider/model)
+	modelConfig, err := s.findEmbeddingModelConfig(*workspace.EmbeddingModel)
+	if err != nil {
+		s.logger.Warn("Failed to find embedding model config", "model", *workspace.EmbeddingModel, "error", err)
+		return nil
+	}
+
+	// Get dimension from workspace config (if set)
+	var dimension int
+	if workspace.EmbeddingDimension != nil && *workspace.EmbeddingDimension > 0 {
+		dimension = *workspace.EmbeddingDimension
+	}
+
+	// Create embedder using ModelService with optional dimension
+	ctx := context.Background()
+	var embedder embedding.Embedder
+	if dimension > 0 {
+		embedder, err = s.modelService.CreateEmbedder(ctx, modelConfig, dimension)
+	} else {
+		embedder, err = s.modelService.CreateEmbedder(ctx, modelConfig)
+	}
+	if err != nil {
+		s.logger.Error("Failed to create embedder via ModelService",
+			"model", *workspace.EmbeddingModel, "error", err)
+		return nil
+	}
+
+	embFunc := s.createEmbeddingFuncFromEmbedder(embedder)
+	s.embeddingFuncs.Store(workspaceID, embFunc)
+	s.logger.Info("Created workspace embedding function via ModelService",
+		"workspaceID", workspaceID,
+		"model", *workspace.EmbeddingModel,
+		"dimension", dimension)
+	return embFunc
 }
 
 // InvalidateWorkspaceEmbeddingFunc removes cached embedding function for workspace
@@ -874,19 +836,93 @@ func (s *MemoryService) DeleteByWorkspace(ctx context.Context, workspaceID strin
 
 // ========== Context Building ==========
 
-// BuildMemoryContext builds memory context string for LLM prompt
+// MemoryContextConfig holds configuration for building memory context
+type MemoryContextConfig struct {
+	ModelConfig      *models.ModelConfig // Model config for context limits
+	ThresholdPercent float64             // Trigger compression at this % of context window (default 0.75)
+	CompressionModel *models.ModelConfig // Model to use for compression (if nil, use same as ModelConfig)
+}
+
+// BuildMemoryContext builds memory context string for LLM prompt (simple version)
 func (s *MemoryService) BuildMemoryContext(ctx context.Context, workspaceID string, agentID *string, recentQuery string, maxTokens int) (string, error) {
 	if maxTokens <= 0 {
 		maxTokens = s.config.DefaultMaxTokens
 	}
 
+	memories, err := s.collectMemories(ctx, workspaceID, agentID, recentQuery)
+	if err != nil {
+		return "", err
+	}
+
+	if len(memories) == 0 {
+		return "", nil
+	}
+
+	return s.buildSimpleContext(memories, maxTokens), nil
+}
+
+// BuildMemoryContextWithModel builds memory context with model-aware chunked compression
+// It processes memories in batches based on model's context window, compressing when needed
+func (s *MemoryService) BuildMemoryContextWithModel(ctx context.Context, workspaceID string, agentID *string, recentQuery string, config *MemoryContextConfig) (string, error) {
+	if config == nil || config.ModelConfig == nil {
+		// Fallback to simple version
+		return s.BuildMemoryContext(ctx, workspaceID, agentID, recentQuery, s.config.DefaultMaxTokens)
+	}
+
+	// Get context window from model config
+	contextWindow := 0
+	if config.ModelConfig.Limits != nil {
+		contextWindow = config.ModelConfig.Limits.ContextWindow
+	}
+	if contextWindow <= 0 {
+		contextWindow = 128000 // Default fallback
+	}
+
+	// Set threshold (default 75%)
+	threshold := config.ThresholdPercent
+	if threshold <= 0 {
+		threshold = 0.75
+	}
+
+	// Calculate max tokens for memory context (leave room for other content)
+	maxContextTokens := int(float64(contextWindow) * threshold)
+
+	// Collect all memories
+	memories, err := s.collectMemories(ctx, workspaceID, agentID, recentQuery)
+	if err != nil {
+		return "", err
+	}
+
+	if len(memories) == 0 {
+		return "", nil
+	}
+
+	// Estimate total tokens
+	totalTokens := s.estimateMemoriesTokens(memories)
+
+	// If within limits, return simple context
+	if totalTokens <= maxContextTokens {
+		return s.buildSimpleContext(memories, maxContextTokens), nil
+	}
+
+	// Need chunked compression
+	s.logger.Info("Memory context exceeds threshold, performing chunked compression",
+		"totalTokens", totalTokens,
+		"maxContextTokens", maxContextTokens,
+		"memoryCount", len(memories))
+
+	return s.buildCompressedContext(ctx, memories, maxContextTokens, config)
+}
+
+// collectMemories collects all relevant memories for a workspace/agent
+func (s *MemoryService) collectMemories(ctx context.Context, workspaceID string, agentID *string, recentQuery string) ([]db.Memory, error) {
 	var allMemories []db.Memory
 
 	// 1. Get important workspace-level memories
 	workspaceMemories, err := s.GetAccessibleMemories(ctx, workspaceID, agentID, &db.MemoryQueryOptions{
 		Scopes:        []db.MemoryScope{db.MemoryScopeWorkspace},
 		MinImportance: 60,
-		Limit:         20,
+		Limit:         50, // Get more memories for potential compression
 	})
 	if err == nil {
 		allMemories = append(allMemories, workspaceMemories...)
@@ -894,7 +930,7 @@ func (s *MemoryService) BuildMemoryContext(ctx context.Context, workspaceID stri
 
 	// 2. Semantic search for relevant memories (if query provided)
 	if recentQuery != "" && s.config.EnableVectorStore {
-		searchResults, err := s.SearchSemantic(ctx, workspaceID, recentQuery, 10)
+		searchResults, err := s.SearchSemantic(ctx, workspaceID, recentQuery, 20)
 		if err == nil {
 			for _, r := range searchResults {
 				// Avoid duplicates
@@ -912,18 +948,26 @@ func (s *MemoryService) BuildMemoryContext(ctx context.Context, workspaceID stri
 		}
 	}
 
-	if len(allMemories) == 0 {
-		return "", nil
-	}
+	return allMemories, nil
+}
 
-	// Build context string
+// estimateMemoriesTokens estimates total tokens for a list of memories
+func (s *MemoryService) estimateMemoriesTokens(memories []db.Memory) int {
+	total := 30 // Header tokens
+	for _, m := range memories {
+		total += (len(m.Content) + len(m.Key) + 20) / 4
+	}
+	return total
+}
+
+// buildSimpleContext builds a simple context string without compression
+func (s *MemoryService) buildSimpleContext(memories []db.Memory, maxTokens int) string {
 	var sb strings.Builder
 	sb.WriteString("=== RELEVANT MEMORIES ===\n")
 
 	currentTokens := 30 // Approximate header tokens
 
-	for _, m := range allMemories {
-		// Estimate tokens (rough: 4 chars per token)
+	for _, m := range memories {
 		entryTokens := (len(m.Content) + len(m.Key) + 20) / 4
 
 		if currentTokens+entryTokens > maxTokens {
@@ -934,7 +978,184 @@ func (s *MemoryService) BuildMemoryContext(ctx context.Context, workspaceID stri
 		currentTokens += entryTokens
 	}
 
-	return sb.String(), nil
+	return sb.String()
+}
+
+// buildCompressedContext builds context with chunked compression
+func (s *MemoryService) buildCompressedContext(ctx context.Context, memories []db.Memory, maxContextTokens int, config *MemoryContextConfig) (string, error) {
+	if s.modelService == nil {
+		// No model service, fallback to simple truncation
+		s.logger.Warn("ModelService not available for compression, using truncation")
+		return s.buildSimpleContext(memories, maxContextTokens), nil
+	}
+
+	// Determine compression model
+	compressionModel := config.CompressionModel
+	if compressionModel == nil {
+		compressionModel = config.ModelConfig
+	}
+
+	// Create chat model for compression
+	chatModel, err := s.modelService.CreateChatModel(ctx, compressionModel)
+	if err != nil {
+		s.logger.Warn("Failed to create chat model for compression", "error", err)
+		return s.buildSimpleContext(memories, maxContextTokens), nil
+	}
+
+	// Calculate chunk size (use 75% of context window for each chunk to leave room for prompt)
+	chunkMaxTokens := int(float64(maxContextTokens) * 0.75)
+	if chunkMaxTokens < 1000 {
+		chunkMaxTokens = 1000
+	}
+
+	// Split memories into chunks that fit within the limit
+	var chunks [][]db.Memory
+	var currentChunk []db.Memory
+	currentChunkTokens := 0
+
+	for _, m := range memories {
+		memoryTokens := (len(m.Content) + len(m.Key) + 20) / 4
+
+		if currentChunkTokens+memoryTokens > chunkMaxTokens && len(currentChunk) > 0 {
+			chunks = append(chunks, currentChunk)
+			currentChunk = nil
+			currentChunkTokens = 0
+		}
+
+		currentChunk = append(currentChunk, m)
+		currentChunkTokens += memoryTokens
+	}
+	if len(currentChunk) > 0 {
+		chunks = append(chunks, currentChunk)
+	}
+
+	s.logger.Info("Split memories into chunks for compression",
+		"totalMemories", len(memories),
+		"chunkCount", len(chunks),
+		"chunkMaxTokens", chunkMaxTokens)
+
+	// Compress each chunk
+	var compressedSummaries []string
+	for i, chunk := range chunks {
+		summary, err := s.compressMemoryChunk(ctx, chatModel, chunk)
+		if err != nil {
+			s.logger.Warn("Failed to compress chunk, using raw content", "chunkIndex", i, "error", err)
+			// Fallback: use truncated raw content
+			summary = s.extractRawContent(chunk, chunkMaxTokens/len(chunks))
+		}
+		compressedSummaries = append(compressedSummaries, summary)
+	}
+
+	// Combine summaries
+	combinedSummary := strings.Join(compressedSummaries, "\n\n")
+	combinedTokens := len(combinedSummary) / 4
+
+	// If combined still exceeds limit, do another pass of compression
+	for combinedTokens > maxContextTokens && len(compressedSummaries) > 1 {
+		s.logger.Info("Combined summaries still exceed limit, performing another compression pass",
+			"combinedTokens", combinedTokens,
+			"maxContextTokens", maxContextTokens)
+
+		finalSummary, err := s.compressFinalSummary(ctx, chatModel, combinedSummary, maxContextTokens)
+		if err != nil {
+			s.logger.Warn("Failed to compress final summary", "error", err)
+			// Truncate as last resort
+			if len(combinedSummary) > maxContextTokens*4 {
+				combinedSummary = combinedSummary[:maxContextTokens*4] + "\n...[truncated]"
+			}
+			break
+		}
+		combinedSummary = finalSummary
+		combinedTokens = len(combinedSummary) / 4
+	}
+
+	return "=== COMPRESSED MEMORY CONTEXT ===\n" + combinedSummary, nil
+}
+
+// compressMemoryChunk compresses a chunk of memories using LLM
+func (s *MemoryService) compressMemoryChunk(ctx context.Context, chatModel interface {
+	Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error)
+}, memories []db.Memory) (string, error) {
+	// Build content for compression
+	var content strings.Builder
+	for _, m := range memories {
+		content.WriteString(fmt.Sprintf("[%s] %s: %s\n", m.Type, m.Key, m.Content))
+	}
+
+	prompt := `Summarize the following memory entries concisely while preserving all key information, facts, preferences, and important details.
+
+Memory Entries:
+` + content.String() + `
+
+Provide a concise summary that captures:
+1. Key facts and information
+2. User preferences and instructions
+3. Important technical details (file paths, configurations, code patterns)
+4. Context that would be useful for future interactions
+
+Summary:`
+
+	resp, err := chatModel.Generate(ctx, []*schema.Message{
+		schema.UserMessage(prompt),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Content, nil
+}
+
+// compressFinalSummary does a final compression pass on combined summaries
+func (s *MemoryService) compressFinalSummary(ctx context.Context, chatModel interface {
+	Generate(context.Context, []*schema.Message, ...model.Option) (*schema.Message, error)
+}, combinedSummary string, maxTokens int) (string, error) {
+	targetWords := maxTokens * 3 / 4 // Rough estimate: 0.75 tokens per word
+
+	prompt := fmt.Sprintf(`The following is a combined memory summary that is too long. Please condense it to approximately %d words while preserving the most important information.
+
+Focus on keeping:
+1. Critical facts and technical details
+2. User preferences and explicit instructions
+3. Important context for ongoing work
+
+Combined Summary:
+%s
+
+Condensed Summary:`, targetWords, combinedSummary)
+
+	resp, err := chatModel.Generate(ctx, []*schema.Message{
+		schema.UserMessage(prompt),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Content, nil
+}
+
+// extractRawContent extracts raw content from memories with truncation
+func (s *MemoryService) extractRawContent(memories []db.Memory, maxTokens int) string {
+	var sb strings.Builder
+	currentTokens := 0
+
+	for _, m := range memories {
+		entry := fmt.Sprintf("- [%s] %s: %s\n", m.Type, m.Key, m.Content)
+		entryTokens := len(entry) / 4
+
+		if currentTokens+entryTokens > maxTokens {
+			// Truncate this entry
+			remaining := (maxTokens - currentTokens) * 4
+			if remaining > 50 {
+				sb.WriteString(entry[:remaining] + "...\n")
+			}
+			break
+		}
+
+		sb.WriteString(entry)
+		currentTokens += entryTokens
+	}
+
+	return sb.String()
 }
 
 // ========== Workspace-level Convenience Methods ==========
@@ -965,4 +1186,68 @@ func (s *MemoryService) StoreAgentMemory(ctx context.Context, workspaceID, agent
 		AgentID:    &agentID,
 		Visibility: visibility,
 	})
+}
+
+// MemorySimpleStats holds simple statistics about memories in a workspace
+type MemorySimpleStats struct {
+	Total        int            `json:"total"`
+	ByType       map[string]int `json:"by_type"`
+	ByScope      map[string]int `json:"by_scope"`
+	StorageBytes int64          `json:"storage_bytes,omitempty"`
+	LastUpdated  *time.Time     `json:"last_updated,omitempty"`
+}
+
+// GetStats returns memory statistics for a workspace
+func (s *MemoryService) GetStats(ctx context.Context, workspaceID string) (*MemorySimpleStats, error) {
+	stats := &MemorySimpleStats{
+		ByType:  make(map[string]int),
+		ByScope: make(map[string]int),
+	}
+
+	// Get total count
+	var total int64
+	if err := s.db.Model(&db.Memory{}).Where("workspace_id = ?", workspaceID).Count(&total).Error; err != nil {
+		return nil, err
+	}
+	stats.Total = int(total)
+
+	// Group by type
+	type TypeCount struct {
+		Type  string
+		Count int64
+	}
+	var typeCounts []TypeCount
+	if err := s.db.Model(&db.Memory{}).
+		Select("type, count(*) as count").
+		Where("workspace_id = ?", workspaceID).
+		Group("type").
+		Find(&typeCounts).Error; err != nil {
+		return nil, err
+	}
+	for _, tc := range typeCounts {
+		stats.ByType[tc.Type] = int(tc.Count)
+	}
+
+	// Group by scope
+	var scopeCounts []TypeCount
+	if err := s.db.Model(&db.Memory{}).
+		Select("scope as type, count(*) as count").
+		Where("workspace_id = ?", workspaceID).
+		Group("scope").
+		Find(&scopeCounts).Error; err != nil {
+		return nil, err
+	}
+	for _, sc := range scopeCounts {
+		stats.ByScope[sc.Type] = int(sc.Count)
+	}
+
+	// Get last updated
+	var lastMemory db.Memory
+	if err := s.db.Where("workspace_id = ?", workspaceID).
+		Order("updated_at DESC").
+		First(&lastMemory).Error; err == nil {
+		stats.LastUpdated = &lastMemory.UpdatedAt
+	}
+
+	return stats, nil
 }

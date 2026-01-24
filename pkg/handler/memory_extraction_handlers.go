@@ -42,7 +42,10 @@ func (h *MemoryExtractionHandler) AnalyzeConversation(c *gin.Context) {
 		return
 	}
 
-	err := h.extractionService.AnalyzeAndUpdateConversation(c.Request.Context(), workspaceID, conversationID)
+	// Get model from query parameter (format: provider/model)
+	modelID := c.Query("model")
+
+	err := h.extractionService.AnalyzeAndUpdateConversation(c.Request.Context(), workspaceID, conversationID, modelID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -54,7 +57,7 @@ func (h *MemoryExtractionHandler) AnalyzeConversation(c *gin.Context) {
 }
 
 // ExtractTopics extracts key topics from a conversation
-// POST /api/conversations/:id/extract-topics
+// POST /api/conversations/:id/extract-topics?model=provider/model
 func (h *MemoryExtractionHandler) ExtractTopics(c *gin.Context) {
 	conversationID := c.Param("id")
 
@@ -63,7 +66,10 @@ func (h *MemoryExtractionHandler) ExtractTopics(c *gin.Context) {
 		return
 	}
 
-	topics, err := h.extractionService.ExtractTopicsFromConversation(c.Request.Context(), conversationID)
+	// Get model from query parameter (format: provider/model)
+	modelID := c.Query("model")
+
+	topics, err := h.extractionService.ExtractTopicsFromConversation(c.Request.Context(), conversationID, modelID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

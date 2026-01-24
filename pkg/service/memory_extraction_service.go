@@ -77,9 +77,20 @@ type ExtractionResult struct {
 }
 
 // ExtractFromRecentMessages analyzes recent messages and extracts memories
-func (s *MemoryExtractionService) ExtractFromRecentMessages(ctx context.Context, workspaceID, conversationID string, recentMessages []db.Message) (*ExtractionResult, error) {
+func (s *MemoryExtractionService) ExtractFromRecentMessages(ctx context.Context, workspaceID, conversationID string, modelID string, recentMessages []db.Message) (*ExtractionResult, error) {
 	if !s.config.Enabled || s.memoryService == nil {
 		return nil, nil
+	}
+
+	// If no model specified, try to get from workspace configuration
+	if modelID == "" && workspaceID != "" {
+		var workspace models.Workspace
+		if err := s.db.First(&workspace, "id = ?", workspaceID).Error; err == nil {
+			if workspace.ExtractionModel != nil && *workspace.ExtractionModel != "" {
+				modelID = *workspace.ExtractionModel
+				s.logger.Info("Using workspace extraction model", "workspaceID", workspaceID, "modelID", modelID)
+			}
+		}
 	}
 
 	// Check if we have enough messages
@@ -111,14 +122,8 @@ func (s *MemoryExtractionService) ExtractFromRecentMessages(ctx context.Context,
 		return nil, nil
 	}
 
-	// Get conversation for model ID
-	var conv db.Conversation
-	if err := s.db.First(&conv, "id = ?", conversationID).Error; err != nil {
-		return nil, err
-	}
-
 	// Extract memories using LLM
-	extracted, err := s.extractMemoriesWithLLM(ctx, convText.String(), conv.ModelID)
+	extracted, err := s.extractMemoriesWithLLM(ctx, convText.String(), modelID)
 	if err != nil {
 		s.logger.Warn("Memory extraction failed", "error", err)
 		return nil, err
@@ -264,7 +269,7 @@ func (s *MemoryExtractionService) getChatModel(ctx context.Context, modelID stri
 }
 
 // ExtractTopicsFromConversation extracts key topics from a conversation
-func (s *MemoryExtractionService) ExtractTopicsFromConversation(ctx context.Context, conversationID string) ([]string, error) {
+func (s *MemoryExtractionService) ExtractTopicsFromConversation(ctx context.Context, conversationID string, modelID string) ([]string, error) {
 	// Get all messages
 	var messages []db.Message
 	if err := s.db.Where("conversation_id = ?", conversationID).
@@ -274,12 +279,6 @@ func (s *MemoryExtractionService) ExtractTopicsFromConversation(ctx context.Cont
 
 	if len(messages) < 3 {
 		return nil, nil // Not enough messages
-	}
-
-	// Get conversation for model ID
-	var conv db.Conversation
-	if err := s.db.First(&conv, "id = ?", conversationID).Error; err != nil {
-		return nil, err
 	}
 
 	// Build conversation text
@@ -306,7 +305,7 @@ Conversation:
 Output JSON array only (e.g., ["topic1", "topic2"]):
 `
 
-	chatModel, err := s.getChatModel(ctx, conv.ModelID)
+	chatModel, err := s.getChatModel(ctx, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,37 +333,55 @@ Output JSON array only (e.g., ["topic1", "topic2"]):
 
 	// Update conversation with topics
 	if len(topics) > 0 {
-		s.db.Model(&conv).Update("key_topics", db.StringArray(topics))
+		s.db.Model(&db.Conversation{}).Where("id = ?", conversationID).Update("key_topics", db.StringArray(topics))
 	}
 
 	return topics, nil
 }
 
-// AnalyzeAndUpdateConversation performs full analysis on a conversation
-// This includes topic extraction, memory extraction, and updating conversation metadata
-func (s *MemoryExtractionService) AnalyzeAndUpdateConversation(ctx context.Context, workspaceID, conversationID string) error {
-	// Get recent messages
-	var messages []db.Message
-	if err := s.db.Where("conversation_id = ?", conversationID).
-		Order("created_at DESC").
-		Limit(s.config.ExtractAfterMessages * 2).
-		Find(&messages).Error; err != nil {
+// AnalyzeAndUpdateConversation performs incremental analysis on a conversation
+// It only analyzes messages that haven't been analyzed yet (after last_analyzed_at)
+func (s *MemoryExtractionService) AnalyzeAndUpdateConversation(ctx context.Context, workspaceID, conversationID string, modelID string) error {
+	// Get conversation to check last analyzed time
+	var conv db.Conversation
+	if err := s.db.First(&conv, "id = ?", conversationID).Error; err != nil {
 		return err
 	}
 
-	// Reverse to get chronological order
-	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
-		messages[i], messages[j] = messages[j], messages[i]
+	// Get messages after last analysis (or all if never analyzed)
+	var messages []db.Message
+	query := s.db.Where("conversation_id = ?", conversationID)
+	if conv.LastAnalyzedAt != nil {
+		query = query.Where("created_at > ?", *conv.LastAnalyzedAt)
+	}
+	if err := query.Order("created_at ASC").Find(&messages).Error; err != nil {
+		return err
 	}
 
-	// Extract memories from recent messages
-	if _, err := s.ExtractFromRecentMessages(ctx, workspaceID, conversationID, messages); err != nil {
+	// Skip if not enough new messages
+	if len(messages) < s.config.ExtractAfterMessages {
+		s.logger.Debug("Not enough new messages for analysis",
+			"conversationID", conversationID,
+			"newMessages", len(messages),
+			"required", s.config.ExtractAfterMessages)
+		return nil
+	}
+
+	// Extract memories from new messages
+	if _, err := s.ExtractFromRecentMessages(ctx, workspaceID, conversationID, modelID, messages); err != nil {
 		s.logger.Warn("Memory extraction failed during analysis", "error", err)
 	}
 
-	// Extract topics
-	if _, err := s.ExtractTopicsFromConversation(ctx, conversationID); err != nil {
+	// Extract topics (this still analyzes full conversation for better topic extraction)
+	if _, err := s.ExtractTopicsFromConversation(ctx, conversationID, modelID); err != nil {
 		s.logger.Warn("Topic extraction failed during analysis", "error", err)
+	}
+
+	// Update last analyzed time
+	now := time.Now()
+	if err := s.db.Model(&db.Conversation{}).Where("id = ?", conversationID).
+		Update("last_analyzed_at", now).Error; err != nil {
+		s.logger.Warn("Failed to update last_analyzed_at", "error", err)
 	}
 
 	return nil

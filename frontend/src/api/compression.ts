@@ -60,12 +60,6 @@ export interface ConversationWithCompression {
   updated_at: string;
 }
 
-// System event from streaming (for compression notifications)
-export interface SystemEvent {
-  type: string;
-  message?: string;
-  data?: Record<string, unknown>;
-}
 
 // ========== API Functions ==========
 

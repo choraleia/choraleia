@@ -58,10 +58,14 @@ export interface Workspace {
   status: "running" | "stopped" | "starting" | "stopping" | "error";
   color: string;
   active_room_id: string;
+  // Compression configuration
+  compression_enabled?: boolean;
+  compression_model?: string;
   // Memory configuration
   memory_enabled?: boolean;
-  embedding_provider?: string;
   embedding_model?: string;
+  embedding_dimension?: number;
+  extraction_model?: string;
   // Relations
   runtime?: WorkspaceRuntime;
   assets?: WorkspaceAssetRef[];
@@ -87,10 +91,14 @@ export interface CreateWorkspaceRequest {
   name: string;
   description?: string;
   color?: string;
+  // Compression configuration
+  compression_enabled?: boolean;
+  compression_model?: string;
   // Memory configuration
   memory_enabled?: boolean;
-  embedding_provider?: string;
   embedding_model?: string;
+  embedding_dimension?: number;
+  extraction_model?: string;
   // Runtime and relations
   runtime?: {
     type: "local" | "docker-local" | "docker-remote";
@@ -134,10 +142,14 @@ export interface UpdateWorkspaceRequest {
   name?: string;
   description?: string;
   color?: string;
+  // Compression configuration
+  compression_enabled?: boolean;
+  compression_model?: string;
   // Memory configuration
   memory_enabled?: boolean;
-  embedding_provider?: string;
   embedding_model?: string;
+  embedding_dimension?: number;
+  extraction_model?: string;
   // Relations
   runtime?: CreateWorkspaceRequest["runtime"];
   assets?: CreateWorkspaceRequest["assets"];

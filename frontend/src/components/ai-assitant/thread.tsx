@@ -184,6 +184,7 @@ const AgentModeSelector: FC<{
   disabled,
 }) => {
   const modelMenuItems: React.ReactElement[] = [];
+  const modelDisplayNames: Record<string, string> = {};
   Object.entries(groupedModelOptions).forEach(([provider, models]) => {
     modelMenuItems.push(
       <MenuItem key={`provider-${provider}`} disabled divider>
@@ -192,10 +193,12 @@ const AgentModeSelector: FC<{
     );
     models.forEach((m) => {
       const modelTypeLabel = m.model_type ? ` (${m.model_type})` : "";
+      const modelValue = `${m.provider}/${m.model}`;
+      const displayName = m.name + modelTypeLabel;
+      modelDisplayNames[modelValue] = displayName;
       modelMenuItems.push(
-        <MenuItem key={m.name} value={m.name}>
-          {m.name}
-          {modelTypeLabel}
+        <MenuItem key={modelValue} value={modelValue}>
+          {displayName}
         </MenuItem>,
       );
     });
@@ -260,6 +263,7 @@ const AgentModeSelector: FC<{
                   },
                 },
               }}
+              renderValue={(value) => modelDisplayNames[value as string] || value || "Select Model"}
             >
               {modelMenuItems.length === 0 && (
                 <MenuItem value="" disabled>

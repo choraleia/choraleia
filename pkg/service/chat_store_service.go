@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"gorm.io/gorm/logger"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -110,7 +111,7 @@ func NewChatStore() (*ChatStoreService, error) {
 	_ = os.MkdirAll(filepath.Dir(dbFile), 0755)
 
 	db, err := gorm.Open(sqlite.Open(dbFile), &gorm.Config{
-		DisableForeignKeyConstraintWhenMigrating: true,
+		Logger: logger.Default.LogMode(logger.Warn), // Suppress INFO level (including record not found)
 	})
 	if err != nil {
 		return nil, err

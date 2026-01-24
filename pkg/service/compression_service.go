@@ -68,56 +68,72 @@ func (s *CompressionService) AutoMigrate() error {
 	return s.db.AutoMigrate(&db.ConversationSnapshot{}, &db.Conversation{})
 }
 
-// CheckAndCompress checks if compression is needed and performs it
-func (s *CompressionService) CheckAndCompress(ctx context.Context, conversationID string) (*db.ConversationSnapshot, error) {
-	// Get all messages for the conversation
-	var messages []db.Message
-	if err := s.db.Where("conversation_id = ?", conversationID).Order("created_at ASC").Find(&messages).Error; err != nil {
-		return nil, err
-	}
-
-	// Estimate total tokens
-	totalTokens := s.estimateTokens(messages)
-	threshold := int(float64(s.config.MaxContextTokens) * s.config.CompressThreshold)
-
-	if totalTokens < threshold {
-		return nil, nil // No compression needed
-	}
-
-	s.logger.Info("Conversation needs compression",
-		"conversationID", conversationID,
-		"currentTokens", totalTokens,
-		"threshold", threshold)
-
-	return s.Compress(ctx, conversationID)
-}
-
 // Compress performs conversation compression
-func (s *CompressionService) Compress(ctx context.Context, conversationID string) (*db.ConversationSnapshot, error) {
+func (s *CompressionService) Compress(ctx context.Context, conversationID string, modelID string) (*db.ConversationSnapshot, error) {
 	// Get conversation
 	var conv db.Conversation
 	if err := s.db.First(&conv, "id = ?", conversationID).Error; err != nil {
 		return nil, fmt.Errorf("conversation not found: %w", err)
 	}
 
-	// Get all messages
+	// If no model specified, try to get from workspace configuration
+	if modelID == "" && conv.WorkspaceID != "" {
+		var workspace models.Workspace
+		if err := s.db.First(&workspace, "id = ?", conv.WorkspaceID).Error; err == nil {
+			if workspace.CompressionModel != nil && *workspace.CompressionModel != "" {
+				modelID = *workspace.CompressionModel
+				s.logger.Info("Using workspace compression model", "workspaceID", conv.WorkspaceID, "modelID", modelID)
+			}
+		}
+	}
+
+	// Get all non-system messages (system messages should not be compressed)
 	var messages []db.Message
-	if err := s.db.Where("conversation_id = ? AND is_compressed = ?", conversationID, false).
+	if err := s.db.Where("conversation_id = ? AND is_compressed = ? AND role != ?", conversationID, false, "system").
 		Order("created_at ASC").Find(&messages).Error; err != nil {
 		return nil, err
 	}
 
-	if len(messages) <= s.config.RecentMessagesKeep {
+	// Calculate how many messages we can keep while staying under target
+	totalTokens := s.estimateTokens(messages)
+	recentMessagesKeep := s.config.RecentMessagesKeep
+
+	// If total tokens exceed target, reduce the number of recent messages to keep
+	// to ensure we compress enough
+	if totalTokens > s.config.TargetTokens && len(messages) > recentMessagesKeep {
+		// Be more aggressive - keep fewer messages
+		// Calculate how many messages we need to compress to get under target
+		for recentMessagesKeep > 3 && len(messages) > recentMessagesKeep {
+			keepTokens := s.estimateTokens(messages[len(messages)-recentMessagesKeep:])
+			if keepTokens < s.config.TargetTokens/2 { // Leave room for summary
+				break
+			}
+			recentMessagesKeep = recentMessagesKeep / 2
+			if recentMessagesKeep < 3 {
+				recentMessagesKeep = 3
+			}
+		}
+		s.logger.Info("Adjusting recent messages to keep",
+			"original", s.config.RecentMessagesKeep,
+			"adjusted", recentMessagesKeep,
+			"totalTokens", totalTokens,
+			"targetTokens", s.config.TargetTokens)
+	}
+
+	if len(messages) <= recentMessagesKeep {
+		s.logger.Warn("Not enough messages to compress",
+			"messageCount", len(messages),
+			"recentMessagesKeep", recentMessagesKeep)
 		return nil, nil // Not enough messages to compress
 	}
 
 	// Split: messages to compress vs messages to keep
-	compressCount := len(messages) - s.config.RecentMessagesKeep
+	compressCount := len(messages) - recentMessagesKeep
 	toCompress := messages[:compressCount]
 	// toKeep := messages[compressCount:]
 
 	// Generate summary using LLM
-	extractedData, err := s.generateSummary(ctx, toCompress, conv.ModelID)
+	extractedData, err := s.generateSummary(ctx, toCompress, modelID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate summary: %w", err)
 	}
@@ -196,7 +212,65 @@ func (s *CompressionService) Compress(ctx context.Context, conversationID string
 
 // generateSummary uses LLM to generate structured summary
 func (s *CompressionService) generateSummary(ctx context.Context, messages []db.Message, modelID string) (*db.CompressionExtractedData, error) {
-	// Build conversation text
+	// Get or create model first
+	var chatModel model.ToolCallingChatModel
+	var modelConfig *models.ModelConfig
+
+	// Try to get model config by ID
+	if modelID != "" {
+		modelConfig, _ = s.modelService.GetModelConfig(modelID)
+		if modelConfig != nil {
+			var err error
+			chatModel, err = s.modelService.CreateChatModel(ctx, modelConfig)
+			if err != nil {
+				s.logger.Warn("Failed to create model from ID, will try default", "modelID", modelID, "error", err)
+			}
+		}
+	}
+
+	// Fallback to first available model
+	if chatModel == nil {
+		modelsList, _ := models.LoadModels()
+		if len(modelsList) > 0 {
+			modelConfig = modelsList[0]
+			var err error
+			chatModel, err = s.modelService.CreateChatModel(ctx, modelConfig)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create chat model: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("no models available for compression")
+		}
+	}
+
+	// Determine max chunk tokens based on model's context window
+	// Use 75% of context window to leave room for prompt and response
+	maxChunkTokens := 50000 // Default conservative limit
+	if modelConfig != nil && modelConfig.Limits != nil && modelConfig.Limits.ContextWindow > 0 {
+		// Use 75% of context window for input, leaving 25% for output
+		maxChunkTokens = int(float64(modelConfig.Limits.ContextWindow) * 0.75)
+		// Ensure a reasonable minimum
+		if maxChunkTokens < 4000 {
+			maxChunkTokens = 4000
+		}
+		s.logger.Debug("Using model context window for chunking",
+			"model", modelConfig.Model,
+			"contextWindow", modelConfig.Limits.ContextWindow,
+			"maxChunkTokens", maxChunkTokens)
+	}
+
+	totalTokens := s.estimateTokens(messages)
+
+	if totalTokens > maxChunkTokens {
+		// Need to process in chunks
+		s.logger.Info("Large conversation, processing in chunks",
+			"totalTokens", totalTokens,
+			"maxChunkTokens", maxChunkTokens,
+			"messageCount", len(messages))
+		return s.generateChunkedSummary(ctx, chatModel, messages, maxChunkTokens)
+	}
+
+	// Build conversation text for single-pass summarization
 	var convText strings.Builder
 	for _, msg := range messages {
 		content := msg.GetTextContent()
@@ -205,6 +279,146 @@ func (s *CompressionService) generateSummary(ctx context.Context, messages []db.
 		}
 	}
 
+	return s.generateSingleSummary(ctx, chatModel, convText.String())
+}
+
+// generateChunkedSummary processes large conversations in chunks
+func (s *CompressionService) generateChunkedSummary(ctx context.Context, chatModel model.ToolCallingChatModel, messages []db.Message, maxChunkTokens int) (*db.CompressionExtractedData, error) {
+	var chunkSummaries []string
+	var allTopics, allDecisions, allFacts, allPreferences, allDetails []string
+
+	// Split messages into chunks
+	var currentChunk []db.Message
+	currentTokens := 0
+
+	for _, msg := range messages {
+		msgTokens := s.estimateTokensFromString(msg.GetTextContent())
+
+		if currentTokens+msgTokens > maxChunkTokens && len(currentChunk) > 0 {
+			// Process current chunk
+			summary, err := s.summarizeChunk(ctx, chatModel, currentChunk)
+			if err != nil {
+				s.logger.Warn("Failed to summarize chunk, using simple extraction", "error", err)
+				// Fallback: just extract key content
+				summary = s.extractKeyContent(currentChunk)
+			}
+			chunkSummaries = append(chunkSummaries, summary)
+
+			// Reset chunk
+			currentChunk = nil
+			currentTokens = 0
+		}
+
+		currentChunk = append(currentChunk, msg)
+		currentTokens += msgTokens
+	}
+
+	// Process remaining chunk
+	if len(currentChunk) > 0 {
+		summary, err := s.summarizeChunk(ctx, chatModel, currentChunk)
+		if err != nil {
+			s.logger.Warn("Failed to summarize final chunk, using simple extraction", "error", err)
+			summary = s.extractKeyContent(currentChunk)
+		}
+		chunkSummaries = append(chunkSummaries, summary)
+	}
+
+	// Combine chunk summaries into final summary
+	combinedSummary := strings.Join(chunkSummaries, "\n\n---\n\n")
+
+	// If combined is still too long, do a final summarization pass
+	if s.estimateTokensFromString(combinedSummary) > maxChunkTokens {
+		finalData, err := s.generateSingleSummary(ctx, chatModel, combinedSummary)
+		if err != nil {
+			// Fallback: truncate
+			s.logger.Warn("Failed to generate final summary, using truncated version", "error", err)
+			if len(combinedSummary) > 10000 {
+				combinedSummary = combinedSummary[:10000] + "...[truncated]"
+			}
+			return &db.CompressionExtractedData{
+				Summary:   combinedSummary,
+				KeyTopics: allTopics,
+			}, nil
+		}
+		return finalData, nil
+	}
+
+	return &db.CompressionExtractedData{
+		Summary:                combinedSummary,
+		KeyTopics:              allTopics,
+		KeyDecisions:           allDecisions,
+		ExtractedFacts:         allFacts,
+		UserPreferences:        allPreferences,
+		ImportantDetails:       allDetails,
+		ContextForContinuation: "Conversation was compressed from multiple segments.",
+	}, nil
+}
+
+// summarizeChunk summarizes a single chunk of messages
+func (s *CompressionService) summarizeChunk(ctx context.Context, chatModel model.ToolCallingChatModel, messages []db.Message) (string, error) {
+	var convText strings.Builder
+	for _, msg := range messages {
+		content := msg.GetTextContent()
+		if content != "" {
+			// Truncate very long individual messages
+			if len(content) > 5000 {
+				content = content[:5000] + "...[truncated]"
+			}
+			convText.WriteString(fmt.Sprintf("[%s]: %s\n\n", msg.Role, content))
+		}
+	}
+
+	prompt := `Summarize this conversation segment concisely. Focus on:
+1. Main topics and tasks discussed
+2. Key decisions made
+3. Important information and context
+
+Conversation:
+` + convText.String() + `
+
+Provide a concise summary (under 500 words):`
+
+	resp, err := chatModel.Generate(ctx, []*schema.Message{
+		schema.UserMessage(prompt),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Content, nil
+}
+
+// extractKeyContent extracts key content without using LLM (fallback)
+func (s *CompressionService) extractKeyContent(messages []db.Message) string {
+	var result strings.Builder
+	result.WriteString("Conversation segment summary:\n")
+
+	for i, msg := range messages {
+		content := msg.GetTextContent()
+		if content == "" {
+			continue
+		}
+
+		// Take first 200 chars of each message
+		preview := content
+		if len(preview) > 200 {
+			preview = preview[:200] + "..."
+		}
+
+		result.WriteString(fmt.Sprintf("- [%s] %s\n", msg.Role, preview))
+
+		// Limit to first 20 messages
+		if i >= 20 {
+			result.WriteString(fmt.Sprintf("... and %d more messages\n", len(messages)-20))
+			break
+		}
+	}
+
+	return result.String()
+}
+
+// generateSingleSummary generates summary from text in a single pass
+func (s *CompressionService) generateSingleSummary(ctx context.Context, chatModel model.ToolCallingChatModel, convText string) (*db.CompressionExtractedData, error) {
 	prompt := `Analyze the following conversation history and generate a structured summary.
 
 Output a JSON object with these fields:
@@ -226,38 +440,9 @@ Requirements:
 5. Be objective and concise
 
 Conversation History:
-` + convText.String() + `
+` + convText + `
 
 Output JSON only, no other text:`
-
-	// Get or create model
-	var chatModel model.ToolCallingChatModel
-
-	// Try to get model config by ID
-	if modelID != "" {
-		modelConfig, _ := s.modelService.GetModelConfig(modelID)
-		if modelConfig != nil {
-			var err error
-			chatModel, err = s.modelService.CreateChatModel(ctx, modelConfig)
-			if err != nil {
-				s.logger.Warn("Failed to create model from ID, will try default", "modelID", modelID, "error", err)
-			}
-		}
-	}
-
-	// Fallback to first available model
-	if chatModel == nil {
-		modelsList, _ := models.LoadModels()
-		if len(modelsList) > 0 {
-			var err error
-			chatModel, err = s.modelService.CreateChatModel(ctx, modelsList[0])
-			if err != nil {
-				return nil, fmt.Errorf("failed to create chat model: %w", err)
-			}
-		} else {
-			return nil, fmt.Errorf("no models available for compression")
-		}
-	}
 
 	// Generate summary
 	resp, err := chatModel.Generate(ctx, []*schema.Message{
@@ -362,10 +547,31 @@ func (s *CompressionService) extractToMemory(ctx context.Context, workspaceID, s
 // GetSnapshots returns all snapshots for a conversation
 func (s *CompressionService) GetSnapshots(ctx context.Context, conversationID string) ([]db.ConversationSnapshot, error) {
 	var snapshots []db.ConversationSnapshot
-	err := s.db.Where("conversation_id = ?", conversationID).
+	if err := s.db.Where("conversation_id = ?", conversationID).
 		Order("created_at DESC").
-		Find(&snapshots).Error
-	return snapshots, err
+		Find(&snapshots).Error; err != nil {
+		return nil, err
+	}
+	return snapshots, nil
+}
+
+// GetSnapshotMessages returns the original messages for a snapshot
+func (s *CompressionService) GetSnapshotMessages(ctx context.Context, snapshotID string) ([]db.Message, error) {
+	// Get the snapshot to find message range
+	var snapshot db.ConversationSnapshot
+	if err := s.db.First(&snapshot, "id = ?", snapshotID).Error; err != nil {
+		return nil, fmt.Errorf("snapshot not found: %w", err)
+	}
+
+	// Get messages that belong to this snapshot
+	var messages []db.Message
+	if err := s.db.Where("snapshot_id = ?", snapshotID).
+		Order("created_at ASC").
+		Find(&messages).Error; err != nil {
+		return nil, err
+	}
+
+	return messages, nil
 }
 
 // BuildSummaryContext builds the summary context string for LLM prompt
@@ -402,13 +608,35 @@ func (s *CompressionService) BuildSummaryContext(ctx context.Context, conversati
 	return sb.String()
 }
 
-// estimateTokens estimates token count for messages
+// estimateTokens estimates token count for messages (including tool calls and results)
 func (s *CompressionService) estimateTokens(messages []db.Message) int {
 	total := 0
 	for _, msg := range messages {
+		// Text content
 		content := msg.GetTextContent()
-		// Rough estimate: 1 token ≈ 4 characters
 		total += len(content) / 4
+
+		// Reasoning content
+		reasoning := msg.GetReasoningContent()
+		total += len(reasoning) / 4
+
+		// Tool calls
+		for _, tc := range msg.GetToolCalls() {
+			total += len(tc.Function.Name) / 4
+			total += len(tc.Function.Arguments) / 4
+			total += 20 // overhead for tool call structure
+		}
+
+		// Tool results (from Chunks)
+		if msg.Chunks != nil {
+			for _, chunk := range msg.Chunks {
+				if chunk.Type == db.ChunkTypeToolResult {
+					total += len(chunk.ToolResultContent) / 4
+					total += 20 // overhead for tool result structure
+				}
+			}
+		}
+
 		// Add overhead for role, metadata
 		total += 10
 	}

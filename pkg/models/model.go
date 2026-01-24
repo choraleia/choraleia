@@ -75,10 +75,10 @@ var SupportedTaskTypes = map[string]struct{}{
 var DomainTaskMapping = map[string][]string{
 	DomainLanguage:   {TaskTypeChat},
 	DomainEmbedding:  {TaskTypeTextEmbedding, TaskTypeRerank},
-	DomainVision:     {TaskTypeImageUnderstanding, TaskTypeImageGeneration},
-	DomainAudio:      {TaskTypeSpeechToText, TaskTypeTextToSpeech},
-	DomainVideo:      {TaskTypeVideoUnderstanding, TaskTypeVideoGeneration},
-	DomainMultimodal: {TaskTypeChat, TaskTypeImageUnderstanding, TaskTypeSpeechToText, TaskTypeTextToSpeech},
+	DomainVision:     {TaskTypeChat, TaskTypeImageUnderstanding, TaskTypeImageGeneration},
+	DomainAudio:      {TaskTypeChat, TaskTypeSpeechToText, TaskTypeTextToSpeech},
+	DomainVideo:      {TaskTypeChat, TaskTypeVideoUnderstanding, TaskTypeVideoGeneration},
+	DomainMultimodal: {TaskTypeChat, TaskTypeImageUnderstanding, TaskTypeImageGeneration, TaskTypeSpeechToText, TaskTypeTextToSpeech, TaskTypeVideoUnderstanding, TaskTypeVideoGeneration},
 }
 
 // ModelCapabilities represents functional features that a model supports.
@@ -99,14 +99,15 @@ type ModelCapabilities struct {
 	Realtime bool `json:"realtime,omitempty"` // Real-time streaming (e.g., GPT-4o Realtime API)
 
 	// Processing capabilities
-	Batch      bool `json:"batch,omitempty"`       // Batch/async processing support
-	FineTuning bool `json:"fine_tuning,omitempty"` // Fine-tuning support
+	Batch bool `json:"batch,omitempty"` // Batch/async processing support
 }
 
 // ModelLimits represents optional size limits.
 type ModelLimits struct {
-	MaxTokens     int `json:"max_tokens"`
-	ContextWindow int `json:"context_window"`
+	MaxTokens     int   `json:"max_tokens"`
+	ContextWindow int   `json:"context_window"`
+	Dimensions    []int `json:"dimensions,omitempty"` // Embedding output dimensions (first is default)
+	BatchSize     int   `json:"batch_size,omitempty"` // Max batch size for embedding
 }
 
 // ModelConfig unified struct containing common fields and vendor extension fields.

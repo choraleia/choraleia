@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/choraleia/choraleia/pkg/models"
@@ -534,15 +535,27 @@ func (m *ModelService) CreateChatModel(ctx context.Context, config *models.Model
 	}
 }
 
-// GetModelConfig get specified model config (match by id, name or model field)
-func (m *ModelService) GetModelConfig(modelName string) (*models.ModelConfig, error) {
+// GetModelConfig get specified model config by "provider/model" format string
+func (m *ModelService) GetModelConfig(providerModel string) (*models.ModelConfig, error) {
+	if providerModel == "" {
+		return nil, nil
+	}
+
+	// Parse provider/model format
+	parts := strings.SplitN(providerModel, "/", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid model format, expected 'provider/model': %s", providerModel)
+	}
+	provider := parts[0]
+	model := parts[1]
+
 	currentModels, err := models.LoadModels()
 	if err != nil {
 		return nil, err
 	}
 	for _, mm := range currentModels {
 		mm.Normalize()
-		if mm.ID == modelName || mm.Name == modelName || mm.Model == modelName {
+		if mm.Provider == provider && mm.Model == model {
 			return mm, nil
 		}
 	}
@@ -608,7 +621,8 @@ func (m *ModelService) GetProviderApiKeys(c *gin.Context) {
 
 // CreateEmbedder creates an eino embedder from config
 // Supports providers: openai, ark, ollama, dashscope, gemini, qianfan, custom (uses openai-compatible API)
-func (m *ModelService) CreateEmbedder(ctx context.Context, config *models.ModelConfig) (embedding.Embedder, error) {
+// Optional dimension parameter can be passed to specify output vector dimensions (for models that support it)
+func (m *ModelService) CreateEmbedder(ctx context.Context, config *models.ModelConfig, dimension ...int) (embedding.Embedder, error) {
 	if config == nil {
 		return nil, fmt.Errorf("model config is nil")
 	}
@@ -625,12 +639,19 @@ func (m *ModelService) CreateEmbedder(ctx context.Context, config *models.ModelC
 		return nil, fmt.Errorf("model %s does not support text_embedding task type", config.Name)
 	}
 
+	// Get dimension if provided
+	var dim *int
+	if len(dimension) > 0 && dimension[0] > 0 {
+		dim = &dimension[0]
+	}
+
 	switch config.Provider {
 	case "openai", "custom":
 		embedder, err := openaiEmbed.NewEmbedder(ctx, &openaiEmbed.EmbeddingConfig{
-			BaseURL: config.BaseUrl,
-			APIKey:  config.ApiKey,
-			Model:   config.Model,
+			BaseURL:    config.BaseUrl,
+			APIKey:     config.ApiKey,
+			Model:      config.Model,
+			Dimensions: dim,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create OpenAI embedder: %w", err)
@@ -680,8 +701,9 @@ func (m *ModelService) CreateEmbedder(ctx context.Context, config *models.ModelC
 			apiKey = os.Getenv("DASHSCOPE_API_KEY")
 		}
 		embedder, err := dashscopeEmbed.NewEmbedder(ctx, &dashscopeEmbed.EmbeddingConfig{
-			APIKey: apiKey,
-			Model:  config.Model,
+			APIKey:     apiKey,
+			Model:      config.Model,
+			Dimensions: dim,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create DashScope embedder: %w", err)

@@ -6,11 +6,14 @@ import {
   Tooltip,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import PsychologyIcon from "@mui/icons-material/Psychology";
+import HistoryIcon from "@mui/icons-material/History";
 import RoomTopBar from "./SpaceTopBar";
 import SpaceConfigDialog from "./SpaceConfigDialog";
 import RoomManagerDialog from "./RoomManagerDialog";
 import WorkspaceChat from "./WorkspaceChat";
 import WorkspaceExplorer from "./WorkspaceExplorer";
+import { MemoryBrowser, CompressionHistory } from "./sidebar";
 import { PaneTreeRenderer, TabContent } from "./pane";
 import {
   useWorkspaces,
@@ -51,6 +54,12 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
   // Panel visibility state
   const [showExplorer, setShowExplorer] = useState(true);
   const [showChat, setShowChat] = useState(true);
+
+  // Right tool panel state
+  type RightToolType = "memory" | "compression" | null;
+  const [rightToolOpen, setRightToolOpen] = useState(false);
+  const [rightToolType, setRightToolType] = useState<RightToolType>(null);
+  const [rightToolWidth, setRightToolWidth] = useState(320);
 
   // Explorer resizer state
   const [explorerWidth, setExplorerWidth] = useState(240);
@@ -214,6 +223,14 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
       assets: activeWorkspace.assets,
       tools: activeWorkspace.tools,
       agents: activeWorkspace.agents || [],
+      // Compression configuration
+      compression_enabled: activeWorkspace.compression_enabled,
+      compression_model: activeWorkspace.compression_model,
+      // Memory configuration
+      memory_enabled: activeWorkspace.memory_enabled,
+      embedding_model: activeWorkspace.embedding_model,
+      embedding_dimension: activeWorkspace.embedding_dimension,
+      extraction_model: activeWorkspace.extraction_model,
     };
   }, [activeWorkspace]);
 
@@ -315,6 +332,29 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
     document.body.style.userSelect = "none";
   }, [chatWidth]);
 
+  // Right tool panel resize handler
+  const handleRightToolResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = rightToolWidth;
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      // Dragging left increases width
+      const delta = startX - moveEvent.clientX;
+      const newWidth = Math.max(280, Math.min(600, startWidth + delta));
+      setRightToolWidth(newWidth);
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }, [rightToolWidth]);
+
   // Render tab content using TabContent component
   const renderTabContent = useCallback((props: React.ComponentProps<typeof TabContent>) => {
     return <TabContent {...props} conversationId={currentConversationId} />;
@@ -330,6 +370,7 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
         py={0.5}
         borderBottom={(theme) => `1px solid ${theme.palette.divider}`}
         gap={2}
+        sx={{ pr: 6 }} // Reserve space for right dock
       >
         <Box display="flex" alignItems="center" gap={1} flexShrink={0}>
           <RoomTopBar onOpenManager={openRoomManager} onBackToOverview={onBackToOverview} section="left" />
@@ -369,7 +410,7 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
       </Box>
 
       {/* Content Area */}
-      <Box display="flex" flex={1} minHeight={0} minWidth={0} width="100%" overflow="hidden">
+      <Box display="flex" flex={1} minHeight={0} minWidth={0} width="100%" overflow="hidden" sx={{ pr: rightToolOpen ? `${rightToolWidth + 40}px` : "40px" }}>
         {/* Explorer Panel */}
         {showExplorer && (
           <>
@@ -457,6 +498,162 @@ const SpaceLayout: React.FC<SpaceLayoutProps> = ({ onBackToOverview }) => {
             )}
           </Box>
         )}
+      </Box>
+
+      {/* Right Tool Panel - Fixed position, below TopBar */}
+      {rightToolOpen && activeWorkspace && (
+        <Box
+          sx={{
+            position: "fixed",
+            right: 40,
+            top: 37, // Below TopBar (36px + 1px border)
+            bottom: 24, // Leave space for status bar
+            width: rightToolWidth,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            borderLeft: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.paper",
+            zIndex: 1200,
+          }}
+        >
+          {/* Resize handle on left edge */}
+          <Box
+            onMouseDown={handleRightToolResize}
+            sx={{
+              position: "absolute",
+              left: -4,
+              top: 0,
+              width: 8,
+              height: "100%",
+              cursor: "ew-resize",
+              zIndex: 2,
+              "&:hover": {
+                bgcolor: "primary.main",
+                opacity: 0.3,
+              },
+            }}
+          />
+          {/* Panel Header - same height as pane tabs */}
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              px: 1.5,
+              minHeight: 36,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexShrink: 0,
+            }}
+          >
+            <Typography variant="subtitle2" fontWeight={600} fontSize={12}>
+              {rightToolType === "memory" ? "🧠 Memory" : "📦 Compression History"}
+            </Typography>
+            <IconButton size="small" onClick={() => setRightToolOpen(false)} sx={{ p: 0.5 }}>
+              ✕
+            </IconButton>
+          </Box>
+          {/* Panel Content */}
+          <Box flex={1} overflow="hidden" display="flex" flexDirection="column">
+            {rightToolType === "memory" && (
+              <MemoryBrowser workspaceId={activeWorkspace.id} />
+            )}
+            {rightToolType === "compression" && currentConversationId && (
+              <Box p={1.5} overflow="auto" flex={1}>
+                <CompressionHistory conversationId={currentConversationId} />
+              </Box>
+            )}
+            {rightToolType === "compression" && !currentConversationId && (
+              <Box display="flex" alignItems="center" justifyContent="center" flex={1} color="text.secondary">
+                <Typography variant="body2">Select a conversation first</Typography>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      )}
+
+      {/* Right Tool Dock - Fixed position, full height */}
+      <Box
+        sx={{
+          position: "fixed",
+          right: 0,
+          top: 0, // Full height from top
+          bottom: 24, // Leave space for status bar
+          width: 40,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          pt: 1,
+          borderLeft: "1px solid",
+          borderColor: "divider",
+          bgcolor: "background.paper",
+          zIndex: 1201,
+        }}
+      >
+        <Tooltip title="Memory" placement="left">
+          <IconButton
+            size="small"
+            onClick={() => {
+              if (rightToolOpen && rightToolType === "memory") {
+                setRightToolOpen(false);
+              } else {
+                setRightToolType("memory");
+                setRightToolOpen(true);
+              }
+            }}
+            sx={(theme) => ({
+              width: 26,
+              height: 26,
+              p: 0.25,
+              mb: 1.5,
+              borderRadius: "5px",
+              color: rightToolOpen && rightToolType === "memory"
+                ? theme.palette.primary.main
+                : theme.palette.text.secondary,
+              backgroundColor: rightToolOpen && rightToolType === "memory"
+                ? "#e8e8e8"
+                : "transparent",
+              "&:hover": {
+                backgroundColor: "#dedede",
+              },
+            })}
+          >
+            <PsychologyIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="Compression History" placement="left">
+          <IconButton
+            size="small"
+            onClick={() => {
+              if (rightToolOpen && rightToolType === "compression") {
+                setRightToolOpen(false);
+              } else {
+                setRightToolType("compression");
+                setRightToolOpen(true);
+              }
+            }}
+            sx={(theme) => ({
+              width: 26,
+              height: 26,
+              p: 0.25,
+              mb: 1.5,
+              borderRadius: "5px",
+              color: rightToolOpen && rightToolType === "compression"
+                ? theme.palette.primary.main
+                : theme.palette.text.secondary,
+              backgroundColor: rightToolOpen && rightToolType === "compression"
+                ? "#e8e8e8"
+                : "transparent",
+              "&:hover": {
+                backgroundColor: "#dedede",
+              },
+            })}
+          >
+            <HistoryIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
       </Box>
 
       {dialogInitialConfig && (

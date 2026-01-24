@@ -84,6 +84,19 @@ interface VisionModel {
   provider: string;
 }
 
+// Embedding model info with limits
+interface EmbeddingModel {
+  id: string;
+  name: string;
+  model: string;
+  provider: string;
+  limits?: {
+    dimensions?: number[];
+    context_window?: number;
+    batch_size?: number;
+  };
+}
+
 interface SpaceConfigDialogProps {
   open: boolean;
   onClose: () => void;
@@ -1386,10 +1399,20 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
   const visionModelsFetched = React.useRef(false);
 
   // Embedding models for memory feature
-  const [embeddingModels, setEmbeddingModels] = useState<VisionModel[]>([]); // Reuse VisionModel type
+  const [embeddingModels, setEmbeddingModels] = useState<EmbeddingModel[]>([]);
   const [loadingEmbeddingModels, setLoadingEmbeddingModels] = useState(false);
-  const embeddingModelsFetched = React.useRef(false);
 
+  // Chat models for compression and extraction
+  const [chatModels, setChatModels] = useState<VisionModel[]>([]);
+  const [loadingChatModels, setLoadingChatModels] = useState(false);
+
+  // Reset fetched refs when dialog closes
+  useEffect(() => {
+    if (!open) {
+      visionModelsFetched.current = false;
+      builtinToolsFetched.current = false;
+    }
+  }, [open]);
 
 
   // Asset type icons
@@ -1457,10 +1480,9 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     }
   }, [open, tab, loadingVisionModels]);
 
-  // Fetch embedding models for memory feature (tab 4 = Memory)
+  // Fetch embedding models for memory feature when dialog opens
   useEffect(() => {
-    if (open && tab === 4 && !embeddingModelsFetched.current && !loadingEmbeddingModels) {
-      embeddingModelsFetched.current = true;
+    if (open) {
       setLoadingEmbeddingModels(true);
       fetch(`${getApiBase()}/api/models?task_types=text_embedding`)
         .then((res) => res.json())
@@ -1472,7 +1494,23 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
         .catch((err) => console.error("Failed to fetch embedding models:", err))
         .finally(() => setLoadingEmbeddingModels(false));
     }
-  }, [open, tab, loadingEmbeddingModels]);
+  }, [open]);
+
+  // Fetch chat models for compression and extraction when dialog opens
+  useEffect(() => {
+    if (open) {
+      setLoadingChatModels(true);
+      fetch(`${getApiBase()}/api/models?task_types=chat`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.code === 200 && Array.isArray(data.data)) {
+            setChatModels(data.data);
+          }
+        })
+        .catch((err) => console.error("Failed to fetch chat models:", err))
+        .finally(() => setLoadingChatModels(false));
+    }
+  }, [open]);
 
 
   // Add asset to workspace
@@ -2094,7 +2132,7 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
     }
   };
 
-  const tabs = ["General", "Assets", "Tools", "Agents", "Memory"];
+  const tabs = ["General", "Assets", "Tools", "Agents"];
 
   return (
     <Dialog
@@ -2511,6 +2549,176 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
                     </FormHelperText>
                   </Box>
                 )}
+              </Box>
+            </FormSection>
+
+            <FormSection title="Compression & Memory">
+              <Box display="flex" flexDirection="column" gap={2}>
+                {/* Compression Configuration */}
+                <Box display="flex" alignItems="center" gap={2}>
+                  <Box flex={1}>
+                    <Typography variant="subtitle2">Conversation Compression</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Automatically compress long conversation history to save tokens
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={state.compression_enabled || false}
+                    onChange={(e) => handleChange({ compression_enabled: e.target.checked })}
+                  />
+                </Box>
+
+                <Collapse in={state.compression_enabled}>
+                  <Box>
+                    <FieldLabel label="Compression Model" />
+                    <FormControl size="small" fullWidth>
+                      <Select
+                        value={state.compression_model || ""}
+                        onChange={(e) => handleChange({ compression_model: e.target.value || undefined })}
+                        displayEmpty
+                        disabled={loadingChatModels}
+                      >
+                        <MenuItem value="">
+                          <em>{loadingChatModels ? "Loading models..." : "Select compression model..."}</em>
+                        </MenuItem>
+                        {chatModels.map((model) => (
+                          <MenuItem key={model.id} value={`${model.provider}/${model.model}`}>
+                            <Box display="flex" alignItems="center" gap={1}>
+                              <Typography variant="body2">{model.name}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                ({model.provider} / {model.model})
+                              </Typography>
+                            </Box>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      <FormHelperText>
+                        Model used to summarize and compress conversation history
+                      </FormHelperText>
+                    </FormControl>
+                  </Box>
+                </Collapse>
+
+                <Divider sx={{ my: 0.5 }} />
+
+                {/* Memory Configuration */}
+                <Box display="flex" alignItems="center" gap={2}>
+                  <Box flex={1}>
+                    <Typography variant="subtitle2">Enable Workspace Memory</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Store and recall information across conversations using semantic search
+                    </Typography>
+                  </Box>
+                  <Switch
+                    checked={state.memory_enabled || false}
+                    onChange={(e) => handleChange({ memory_enabled: e.target.checked })}
+                  />
+                </Box>
+
+                <Collapse in={state.memory_enabled}>
+                  <Box display="flex" flexDirection="column" gap={2}>
+                    {embeddingModels.length === 0 && !loadingEmbeddingModels ? (
+                      <Alert severity="warning" sx={{ fontSize: 12 }}>
+                        No embedding models configured. Please add a model with <strong>text_embedding</strong> task type in Settings → Models.
+                      </Alert>
+                    ) : null}
+
+                    <Box display="flex" gap={2}>
+                      <Box flex={2}>
+                        <FieldLabel label="Embedding Model" />
+                        <FormControl size="small" fullWidth>
+                          <Select
+                            value={state.embedding_model || ""}
+                            onChange={(e) => {
+                              const modelValue = e.target.value || undefined;
+                              const model = embeddingModels.find(m => `${m.provider}/${m.model}` === modelValue);
+                              // Always set the first dimension as default
+                              const defaultDim = model?.limits?.dimensions?.[0] || undefined;
+                              handleChange({
+                                embedding_model: modelValue,
+                                embedding_dimension: modelValue ? defaultDim : undefined,
+                              });
+                            }}
+                            displayEmpty
+                            disabled={loadingEmbeddingModels}
+                          >
+                            <MenuItem value="">
+                              <em>{loadingEmbeddingModels ? "Loading models..." : "Select embedding model..."}</em>
+                            </MenuItem>
+                            {embeddingModels.map((model) => (
+                              <MenuItem key={model.id} value={`${model.provider}/${model.model}`}>
+                                <Box display="flex" alignItems="center" gap={1}>
+                                  <Typography variant="body2">{model.name}</Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    ({model.provider} / {model.model})
+                                  </Typography>
+                                </Box>
+                              </MenuItem>
+                            ))}
+                          </Select>
+                          <FormHelperText>
+                            Semantic memory search
+                          </FormHelperText>
+                        </FormControl>
+                      </Box>
+                      {/* Dimension selector - only show if model supports multiple dimensions */}
+                      {(() => {
+                        const selectedModel = embeddingModels.find(m => `${m.provider}/${m.model}` === state.embedding_model);
+                        const dimensions = selectedModel?.limits?.dimensions || [];
+                        if (dimensions.length <= 1) return null;
+                        return (
+                          <Box flex={1}>
+                            <FieldLabel label="Dimension" />
+                            <FormControl size="small" fullWidth>
+                              <Select
+                                value={state.embedding_dimension || dimensions[0] || ""}
+                                onChange={(e) => handleChange({ embedding_dimension: Number(e.target.value) || undefined })}
+                              >
+                                {dimensions.map((dim) => (
+                                  <MenuItem key={dim} value={dim}>
+                                    {dim} {dim === dimensions[0] ? "(default)" : ""}
+                                  </MenuItem>
+                                ))}
+                              </Select>
+                              <FormHelperText>
+                                Vector size
+                              </FormHelperText>
+                            </FormControl>
+                          </Box>
+                        );
+                      })()}
+                    </Box>
+
+                    <Box>
+                      <FieldLabel label="Extraction Model" />
+                      <FormControl size="small" fullWidth>
+                        <Select
+                          value={state.extraction_model || ""}
+                          onChange={(e) => handleChange({ extraction_model: e.target.value || undefined })}
+                          displayEmpty
+                          disabled={loadingChatModels}
+                        >
+                          <MenuItem value="">
+                            <em>{loadingChatModels ? "Loading models..." : "Select extraction model..."}</em>
+                          </MenuItem>
+                          {chatModels.map((model) => (
+                            <MenuItem key={model.id} value={`${model.provider}/${model.model}`}>
+                              <Box display="flex" alignItems="center" gap={1}>
+                                <Typography variant="body2">{model.name}</Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  ({model.provider} / {model.model})
+                                </Typography>
+                              </Box>
+                            </MenuItem>
+                          ))}
+                        </Select>
+                        <FormHelperText>
+                          Extract facts from conversations
+                        </FormHelperText>
+                      </FormControl>
+                    </Box>
+                  </Box>
+                </Collapse>
               </Box>
             </FormSection>
           </Box>
@@ -3438,112 +3646,6 @@ const SpaceConfigDialog: React.FC<SpaceConfigDialogProps> = ({
               workspaceId={workspaceId || ""}
               tools={state.tools || []}
             />
-          </Box>
-        )}
-
-        {/* Memory Tab */}
-        {tab === 4 && (
-          <Box display="flex" flexDirection="column" gap={2}>
-            <FormSection title="Memory & Context Management">
-              <Box display="flex" flexDirection="column" gap={2}>
-                <Box display="flex" alignItems="center" gap={2}>
-                  <PsychologyIcon color="primary" />
-                  <Box flex={1}>
-                    <Typography variant="subtitle2">Enable Workspace Memory</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Store and recall information across conversations using semantic search
-                    </Typography>
-                  </Box>
-                  <Switch
-                    checked={state.memory_enabled || false}
-                    onChange={(e) => handleChange({ memory_enabled: e.target.checked })}
-                  />
-                </Box>
-
-                <Collapse in={state.memory_enabled}>
-                  <Box display="flex" flexDirection="column" gap={2} sx={{ mt: 1, pl: 5 }}>
-                    {embeddingModels.length === 0 && !loadingEmbeddingModels ? (
-                      <Alert severity="warning" sx={{ fontSize: 12 }}>
-                        No embedding models configured. Please add a model with <strong>text_embedding</strong> task type in Settings → Models.
-                      </Alert>
-                    ) : (
-                      <Alert severity="info" sx={{ fontSize: 12 }}>
-                        Select an embedding model for semantic search. Models with <strong>text_embedding</strong> task type are shown below.
-                      </Alert>
-                    )}
-
-                    <Box>
-                      <FieldLabel label="Embedding Model" />
-                      <FormControl size="small" fullWidth>
-                        <Select
-                          value={state.embedding_model || ""}
-                          onChange={(e) => {
-                            const selectedModel = embeddingModels.find(m => m.id === e.target.value);
-                            handleChange({
-                              embedding_model: e.target.value || undefined,
-                              embedding_provider: selectedModel?.provider || undefined,
-                            });
-                          }}
-                          displayEmpty
-                          disabled={loadingEmbeddingModels}
-                        >
-                          <MenuItem value="">
-                            <em>{loadingEmbeddingModels ? "Loading models..." : "Select embedding model..."}</em>
-                          </MenuItem>
-                          {embeddingModels.map((model) => (
-                            <MenuItem key={model.id} value={model.id}>
-                              <Box display="flex" alignItems="center" gap={1}>
-                                <Typography variant="body2">{model.name}</Typography>
-                                <Typography variant="caption" color="text.secondary">
-                                  ({model.provider} / {model.model})
-                                </Typography>
-                              </Box>
-                            </MenuItem>
-                          ))}
-                        </Select>
-                        {state.embedding_model && (
-                          <FormHelperText>
-                            Provider: {state.embedding_provider}
-                          </FormHelperText>
-                        )}
-                      </FormControl>
-                    </Box>
-                  </Box>
-                </Collapse>
-              </Box>
-            </FormSection>
-
-            {state.memory_enabled && (
-              <FormSection title="Memory Features">
-                <Box display="flex" flexDirection="column" gap={1}>
-                  <Typography variant="body2" color="text.secondary">
-                    When memory is enabled, the following features become available:
-                  </Typography>
-                  <Box component="ul" sx={{ m: 0, pl: 2 }}>
-                    <li>
-                      <Typography variant="body2">
-                        <strong>Agent Memory Tools</strong> - Agents can store and recall facts, preferences, and learnings
-                      </Typography>
-                    </li>
-                    <li>
-                      <Typography variant="body2">
-                        <strong>Semantic Search</strong> - Find relevant memories using natural language queries
-                      </Typography>
-                    </li>
-                    <li>
-                      <Typography variant="body2">
-                        <strong>Auto Extraction</strong> - Automatically extract important information from conversations
-                      </Typography>
-                    </li>
-                    <li>
-                      <Typography variant="body2">
-                        <strong>Context Compression</strong> - Compress long conversations while preserving key information
-                      </Typography>
-                    </li>
-                  </Box>
-                </Box>
-              </FormSection>
-            )}
           </Box>
         )}
       </DialogContent>

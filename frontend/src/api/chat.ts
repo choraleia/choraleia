@@ -168,13 +168,6 @@ export interface ChatCompletionResponse {
   usage?: TokenUsage;
 }
 
-// System event for compression notifications, etc.
-export interface SystemEvent {
-  type: string;
-  message?: string;
-  data?: Record<string, unknown>;
-}
-
 export interface ChatCompletionChunk {
   id: string;
   object: "chat.completion.chunk";
@@ -190,7 +183,6 @@ export interface ChatCompletionChunk {
       tool_call_id?: string;
       reasoning_content?: string;
       agent_name?: string;
-      system_event?: SystemEvent;
     };
     finish_reason?: string;
   }>;
@@ -201,7 +193,6 @@ export interface CreateConversationRequest {
   title?: string;
   workspace_id: string;
   room_id?: string;
-  model_id?: string;
 }
 
 export interface UpdateConversationRequest {

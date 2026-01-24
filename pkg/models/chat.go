@@ -10,23 +10,23 @@ import (
 
 type Conversation = db.Conversation
 type Message = db.Message
-type MessagePart = db.MessagePart
-type MessageParts = db.MessageParts
-type ToolCallPart = db.ToolCallPart
-type ToolResultPart = db.ToolResultPart
+type MessageChunk = db.MessageChunk
+type MessageChunks = db.MessageChunks
+type ToolCallChunk = db.ToolCallChunk
+type ToolResultChunk = db.ToolResultChunk
 
 // ========== Constant aliases from db package ==========
 
-// MessagePart type constants
+// MessageChunk type constants
 const (
-	PartTypeText       = db.PartTypeText
-	PartTypeReasoning  = db.PartTypeReasoning
-	PartTypeToolCall   = db.PartTypeToolCall
-	PartTypeToolResult = db.PartTypeToolResult
-	PartTypeImageURL   = db.PartTypeImageURL
-	PartTypeAudioURL   = db.PartTypeAudioURL
-	PartTypeVideoURL   = db.PartTypeVideoURL
-	PartTypeFileURL    = db.PartTypeFileURL
+	ChunkTypeText       = db.ChunkTypeText
+	ChunkTypeReasoning  = db.ChunkTypeReasoning
+	ChunkTypeToolCall   = db.ChunkTypeToolCall
+	ChunkTypeToolResult = db.ChunkTypeToolResult
+	ChunkTypeImageURL   = db.ChunkTypeImageURL
+	ChunkTypeAudioURL   = db.ChunkTypeAudioURL
+	ChunkTypeVideoURL   = db.ChunkTypeVideoURL
+	ChunkTypeFileURL    = db.ChunkTypeFileURL
 )
 
 // Message status constants
@@ -252,21 +252,13 @@ type ChatCompletionChunkChoice struct {
 
 // ChatCompletionChunkDelta represents the delta content in a streaming chunk
 type ChatCompletionChunkDelta struct {
-	Role             string       `json:"role,omitempty"`
-	Content          string       `json:"content,omitempty"`
-	ToolCalls        []ToolCall   `json:"tool_calls,omitempty"`
-	ToolCallID       string       `json:"tool_call_id,omitempty"`
-	Refusal          string       `json:"refusal,omitempty"`
-	ReasoningContent string       `json:"reasoning_content,omitempty"` // Extended
-	AgentName        string       `json:"agent_name,omitempty"`        // Extended: current agent name
-	SystemEvent      *SystemEvent `json:"system_event,omitempty"`      // Extended: system events (compression, etc.)
-}
-
-// SystemEvent represents a system event notification in streaming
-type SystemEvent struct {
-	Type    string                 `json:"type"`              // Event type: conversation_compressed, etc.
-	Message string                 `json:"message,omitempty"` // Human-readable message
-	Data    map[string]interface{} `json:"data,omitempty"`    // Additional event data
+	Role             string     `json:"role,omitempty"`
+	Content          string     `json:"content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	Refusal          string     `json:"refusal,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // Extended
+	AgentName        string     `json:"agent_name,omitempty"`        // Extended: current agent name
 }
 
 // ========== Constants ==========
@@ -297,7 +289,6 @@ type CreateConversationRequest struct {
 	Title       string `json:"title,omitempty"`
 	WorkspaceID string `json:"workspace_id"`
 	RoomID      string `json:"room_id,omitempty"`
-	ModelID     string `json:"model_id,omitempty"`
 }
 
 // UpdateConversationRequest represents a request to update a conversation
