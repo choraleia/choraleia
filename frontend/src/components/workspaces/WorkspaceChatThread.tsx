@@ -185,8 +185,9 @@ const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
   isLoading,
   disabled,
 }) => {
-  // Build model menu items
+  // Build model menu items and display name map
   const modelMenuItems: React.ReactNode[] = [];
+  const modelDisplayNames: Record<string, string> = {};
   Object.entries(groupedModelOptions).forEach(([provider, models]) => {
     modelMenuItems.push(
       <MenuItem key={`provider-${provider}`} disabled divider sx={{ fontSize: 12, fontWeight: 600 }}>
@@ -195,10 +196,12 @@ const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
     );
     models.forEach((m) => {
       const modelTypeLabel = m.model_type ? ` (${m.model_type})` : "";
+      const modelValue = `${m.provider}/${m.model}`;
+      const displayName = m.name + modelTypeLabel;
+      modelDisplayNames[modelValue] = displayName;
       modelMenuItems.push(
-        <MenuItem key={m.name} value={m.name} sx={{ fontSize: 13 }}>
-          {m.name}
-          {modelTypeLabel}
+        <MenuItem key={modelValue} value={modelValue} sx={{ fontSize: 12 }}>
+          {displayName}
         </MenuItem>,
       );
     });
@@ -331,7 +334,7 @@ const ComposerWithToolbar: FC<ComposerWithToolbarProps> = ({
                 }}
                 renderValue={(value) => (
                   <Typography sx={{ fontSize: 12 }} noWrap>
-                    {value || "Select Model"}
+                    {modelDisplayNames[value as string] || value || "Select Model"}
                   </Typography>
                 )}
               >

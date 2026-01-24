@@ -305,6 +305,14 @@ const SpacesView: React.FC = () => {
         assets: editingWorkspace.assets,
         tools: editingWorkspace.tools,
         agents: editingWorkspace.agents || [],
+        // Compression configuration
+        compression_enabled: editingWorkspace.compression_enabled,
+        compression_model: editingWorkspace.compression_model,
+        // Memory configuration
+        memory_enabled: editingWorkspace.memory_enabled,
+        embedding_model: editingWorkspace.embedding_model,
+        embedding_dimension: editingWorkspace.embedding_dimension,
+        extraction_model: editingWorkspace.extraction_model,
       };
     }
     return createRoomConfigTemplate(`workspace-${workspaces.length + 1}`);

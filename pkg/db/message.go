@@ -9,7 +9,7 @@ import (
 
 // Message represents a chat message (OpenAI-compatible format)
 // One Message.ID = one complete message visible to user
-// For agent multi-round scenarios, all rounds are stored in Parts
+// Chunks are stored in a separate table (message_chunks) for real-time persistence
 type Message struct {
 	ID             string `json:"id" gorm:"primaryKey;size:36"`
 	ConversationID string `json:"conversation_id" gorm:"index;size:36;not null"`
@@ -19,14 +19,13 @@ type Message struct {
 	BranchIndex int     `json:"branch_index" gorm:"default:0"`            // Index among siblings (0, 1, 2... for branches)
 
 	// Core fields
-	Role  string       `json:"role" gorm:"size:20;not null"`     // user, assistant, system
-	Parts MessageParts `json:"parts,omitempty" gorm:"type:text"` // JSON: []MessagePart - all content parts
-	Name  string       `json:"name,omitempty" gorm:"size:100"`   // Optional name
+	Role string `json:"role" gorm:"size:20;not null"`   // user, assistant, system
+	Name string `json:"name,omitempty" gorm:"size:100"` // Optional name (OpenAI compatible, typically for user name)
 
 	// Status and metadata
-	Status       string     `json:"status" gorm:"size:20;default:'completed'"` // pending, streaming, completed, error
-	FinishReason string     `json:"finish_reason,omitempty" gorm:"size:20"`    // stop, tool_calls, length, error
-	Usage        TokenUsage `json:"usage,omitempty" gorm:"type:text"`          // JSON
+	Status       string      `json:"status" gorm:"size:20;default:'completed'"` // pending, streaming, completed, error
+	FinishReason string      `json:"finish_reason,omitempty" gorm:"size:20"`    // stop, tool_calls, length, error
+	Usage        *TokenUsage `json:"usage,omitempty" gorm:"type:text"`          // JSON
 
 	// Compression-related fields
 	IsCompressed bool    `json:"is_compressed" gorm:"default:false"`
@@ -35,56 +34,135 @@ type Message struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Chunks loaded from message_chunks table (not stored in this table)
+	// Use gorm:"-" to exclude from database operations
+	Chunks []MessageChunk `json:"-" gorm:"-"`
+
+	// Parts is the merged/processed version of Chunks for API response
+	// Consecutive text chunks are merged, consecutive reasoning chunks are merged
+	// Not stored in database, populated when loading messages for API
+	Parts []MessagePart `json:"parts,omitempty" gorm:"-"`
 }
 
-func (Message) TableName() string {
+func (*Message) TableName() string {
 	return "messages"
 }
 
-// ========== MessagePart types ==========
+// ========== MessageChunk - Separate table for message chunks ==========
 
-// MessagePart type constants
+// MessageChunk type constants
 const (
-	PartTypeText       = "text"        // Text content
-	PartTypeReasoning  = "reasoning"   // Reasoning/thinking content
-	PartTypeToolCall   = "tool_call"   // Tool call request
-	PartTypeToolResult = "tool_result" // Tool call result
-	PartTypeImageURL   = "image_url"   // Image (eino compatible)
-	PartTypeAudioURL   = "audio_url"   // Audio
-	PartTypeVideoURL   = "video_url"   // Video
-	PartTypeFileURL    = "file_url"    // File
+	ChunkTypeText       = "text"        // Text content
+	ChunkTypeReasoning  = "reasoning"   // Reasoning/thinking content
+	ChunkTypeToolCall   = "tool_call"   // Tool call request
+	ChunkTypeToolResult = "tool_result" // Tool call result
+	ChunkTypeImageURL   = "image_url"   // Image (eino compatible)
+	ChunkTypeAudioURL   = "audio_url"   // Audio
+	ChunkTypeVideoURL   = "video_url"   // Video
+	ChunkTypeFileURL    = "file_url"    // File
 )
 
-// MessagePart represents a content part in a message
-type MessagePart struct {
-	Type  string `json:"type"`            // Part type
-	Index int    `json:"index,omitempty"` // Round index for agent multi-round scenarios
+// MessageChunk represents a single chunk of a message stored in database
+// Each chunk is stored as a separate row for real-time persistence during streaming
+type MessageChunk struct {
+	ID        string `json:"id,omitempty" gorm:"primaryKey;size:36"`
+	MessageID string `json:"message_id,omitempty" gorm:"index;size:36;not null"` // Foreign key to messages table
 
-	// Text content (for text, reasoning)
-	Text string `json:"text,omitempty"`
+	// Chunk metadata
+	Type       string `json:"type" gorm:"size:20;not null"`               // text, reasoning, tool_call, tool_result, image_url, etc.
+	RoundIndex int    `json:"round_index" gorm:"default:0"`               // Round index for agent multi-round scenarios
+	SeqIndex   int    `json:"seq_index" gorm:"default:0"`                 // Sequence index within the same round (for ordering)
+	AgentName  string `json:"agent_name,omitempty" gorm:"size:100;index"` // Name of the agent that generated this chunk
 
-	// Tool call (for tool_call)
-	ToolCall *ToolCallPart `json:"tool_call,omitempty"`
+	// Text content (for text, reasoning types)
+	Text string `json:"text,omitempty" gorm:"type:text"`
 
-	// Tool result (for tool_result)
-	ToolResult *ToolResultPart `json:"tool_result,omitempty"`
+	// Tool call fields (for tool_call type)
+	ToolCallID string `json:"tool_call_id,omitempty" gorm:"size:100"`
+	ToolName   string `json:"tool_name,omitempty" gorm:"size:100"`
+	ToolArgs   string `json:"tool_args,omitempty" gorm:"type:text"` // JSON string
 
-	// Media content (eino schema compatible)
-	ImageURL *ImageURL `json:"image_url,omitempty"`
-	AudioURL *AudioURL `json:"audio_url,omitempty"`
-	VideoURL *VideoURL `json:"video_url,omitempty"`
-	FileURL  *FileURL  `json:"file_url,omitempty"`
+	// Tool result fields (for tool_result type)
+	ToolResultContent string `json:"tool_result_content,omitempty" gorm:"type:text"`
+
+	// Media fields (for image_url, audio_url, video_url, file_url types)
+	MediaURL      string `json:"media_url,omitempty" gorm:"type:text"`
+	MediaMimeType string `json:"media_mime_type,omitempty" gorm:"size:100"`
+	MediaDetail   string `json:"media_detail,omitempty" gorm:"size:20"` // For image: high, low, auto
+	MediaDuration int    `json:"media_duration,omitempty"`              // For audio/video: duration in seconds
+	MediaName     string `json:"media_name,omitempty" gorm:"size:255"`  // For file: filename
+	MediaSize     int64  `json:"media_size,omitempty"`                  // For file: size in bytes
+
+	CreatedAt time.Time `json:"created_at,omitempty"`
 }
 
-// ToolCallPart represents a tool call in a message part
+func (*MessageChunk) TableName() string {
+	return "message_chunks"
+}
+
+// ========== MessagePart - Processed/merged version of chunks for API ==========
+
+// MessagePart represents a message part in API response (merged chunks)
+type MessagePart struct {
+	Type       string          `json:"type"`
+	Index      int             `json:"index,omitempty"` // Round index
+	Text       string          `json:"text,omitempty"`
+	ToolCall   *ToolCallPart   `json:"tool_call,omitempty"`
+	ToolResult *ToolResultPart `json:"tool_result,omitempty"`
+	ImageURL   *ImageURLPart   `json:"image_url,omitempty"`
+	AudioURL   *AudioURLPart   `json:"audio_url,omitempty"`
+	VideoURL   *VideoURLPart   `json:"video_url,omitempty"`
+	FileURL    *FileURLPart    `json:"file_url,omitempty"`
+}
+
 type ToolCallPart struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type ToolResultPart struct {
+	ToolCallID string `json:"tool_call_id"`
+	Name       string `json:"name,omitempty"`
+	Content    string `json:"content"`
+}
+
+type ImageURLPart struct {
+	URL    string `json:"url"`
+	Detail string `json:"detail,omitempty"`
+}
+
+type AudioURLPart struct {
+	URL      string `json:"url"`
+	MimeType string `json:"mime_type,omitempty"`
+	Duration int    `json:"duration,omitempty"`
+}
+
+type VideoURLPart struct {
+	URL      string `json:"url"`
+	MimeType string `json:"mime_type,omitempty"`
+	Duration int    `json:"duration,omitempty"`
+}
+
+type FileURLPart struct {
+	URL      string `json:"url"`
+	MimeType string `json:"mime_type,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+}
+
+// ========== Helper types for tool calls (used in MessageChunk) ==========
+
+// ToolCallChunk represents a tool call in a message chunk (for JSON serialization in API)
+type ToolCallChunk struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"` // JSON string
 }
 
-// ToolResultPart represents a tool result in a message part
-type ToolResultPart struct {
+// ToolResultChunk represents a tool result in a message chunk (for JSON serialization in API)
+type ToolResultChunk struct {
 	ToolCallID string `json:"tool_call_id"`
 	Name       string `json:"name,omitempty"` // Tool name for display
 	Content    string `json:"content"`
@@ -119,21 +197,71 @@ type FileURL struct {
 	Size     int64  `json:"size,omitempty"` // File size in bytes
 }
 
-// MessageParts is a slice of MessagePart that can be stored as JSON in database
-type MessageParts []MessagePart
+// ========== MessageChunk helper methods ==========
+
+// GetRole returns the role of this chunk based on its type
+func (p *MessageChunk) GetRole() string {
+	switch p.Type {
+	case ChunkTypeToolResult:
+		return RoleTool
+	default:
+		// text, reasoning, tool_call, image_url, etc. are all from assistant
+		return RoleAssistant
+	}
+}
+
+// GetToolCall returns tool call info from MessageChunk
+func (p *MessageChunk) GetToolCall() *ToolCallChunk {
+	if p.Type != ChunkTypeToolCall {
+		return nil
+	}
+	return &ToolCallChunk{
+		ID:        p.ToolCallID,
+		Name:      p.ToolName,
+		Arguments: p.ToolArgs,
+	}
+}
+
+// GetToolResult returns tool result info from MessageChunk
+func (p *MessageChunk) GetToolResult() *ToolResultChunk {
+	if p.Type != ChunkTypeToolResult {
+		return nil
+	}
+	return &ToolResultChunk{
+		ToolCallID: p.ToolCallID,
+		Name:       p.ToolName,
+		Content:    p.ToolResultContent,
+	}
+}
+
+// GetImageURL returns image URL info from MessageChunk
+func (p *MessageChunk) GetImageURL() *ImageURL {
+	if p.Type != ChunkTypeImageURL {
+		return nil
+	}
+	return &ImageURL{
+		URL:      p.MediaURL,
+		MimeType: p.MediaMimeType,
+		Detail:   p.MediaDetail,
+	}
+}
+
+// ========== Legacy MessageChunks type for backward compatibility ==========
+
+// MessageChunks is a slice of MessageChunk that can be stored as JSON in database
+type MessageChunks []MessageChunk
 
 // Value implements driver.Valuer for database storage
-func (p MessageParts) Value() (driver.Value, error) {
-	if p == nil || len(p) == 0 {
+func (p *MessageChunks) Value() (driver.Value, error) {
+	if p == nil || len(*p) == 0 {
 		return nil, nil
 	}
-	return json.Marshal(p)
+	return json.Marshal(*p)
 }
 
 // Scan implements sql.Scanner for database retrieval
-func (p *MessageParts) Scan(value interface{}) error {
+func (p *MessageChunks) Scan(value interface{}) error {
 	if value == nil {
-		*p = nil
 		return nil
 	}
 	bytes, ok := value.([]byte)
@@ -151,7 +279,10 @@ type TokenUsage struct {
 }
 
 // Value implements driver.Valuer for database storage
-func (t TokenUsage) Value() (driver.Value, error) {
+func (t *TokenUsage) Value() (driver.Value, error) {
+	if t == nil {
+		return nil, nil
+	}
 	if t.TotalTokens == 0 && t.PromptTokens == 0 && t.CompletionTokens == 0 {
 		return nil, nil
 	}
@@ -161,7 +292,6 @@ func (t TokenUsage) Value() (driver.Value, error) {
 // Scan implements sql.Scanner for database retrieval
 func (t *TokenUsage) Scan(value interface{}) error {
 	if value == nil {
-		*t = TokenUsage{}
 		return nil
 	}
 	bytes, ok := value.([]byte)
@@ -198,71 +328,65 @@ const (
 
 // ========== Message helper methods ==========
 
-// AddTextPart adds a text part to the message
-func (m *Message) AddTextPart(text string, index int) {
-	m.Parts = append(m.Parts, MessagePart{
-		Type:  PartTypeText,
-		Index: index,
-		Text:  text,
+// AddTextChunk adds a text chunk to the message (in-memory only)
+func (m *Message) AddTextChunk(text string, roundIndex int) {
+	m.Chunks = append(m.Chunks, MessageChunk{
+		Type:       ChunkTypeText,
+		RoundIndex: roundIndex,
+		Text:       text,
 	})
 }
 
-// AddReasoningPart adds a reasoning part to the message
-func (m *Message) AddReasoningPart(text string, index int) {
-	m.Parts = append(m.Parts, MessagePart{
-		Type:  PartTypeReasoning,
-		Index: index,
-		Text:  text,
+// AddReasoningChunk adds a reasoning chunk to the message (in-memory only)
+func (m *Message) AddReasoningChunk(text string, roundIndex int) {
+	m.Chunks = append(m.Chunks, MessageChunk{
+		Type:       ChunkTypeReasoning,
+		RoundIndex: roundIndex,
+		Text:       text,
 	})
 }
 
-// AddToolCallPart adds a tool call part to the message
-func (m *Message) AddToolCallPart(id, name, arguments string, index int) {
-	m.Parts = append(m.Parts, MessagePart{
-		Type:  PartTypeToolCall,
-		Index: index,
-		ToolCall: &ToolCallPart{
-			ID:        id,
-			Name:      name,
-			Arguments: arguments,
-		},
+// AddToolCallChunk adds a tool call chunk to the message (in-memory only)
+func (m *Message) AddToolCallChunk(id, name, arguments string, roundIndex int) {
+	m.Chunks = append(m.Chunks, MessageChunk{
+		Type:       ChunkTypeToolCall,
+		RoundIndex: roundIndex,
+		ToolCallID: id,
+		ToolName:   name,
+		ToolArgs:   arguments,
 	})
 }
 
-// AddToolResultPart adds a tool result part to the message
-func (m *Message) AddToolResultPart(toolCallID, name, content string, index int) {
-	m.Parts = append(m.Parts, MessagePart{
-		Type:  PartTypeToolResult,
-		Index: index,
-		ToolResult: &ToolResultPart{
-			ToolCallID: toolCallID,
-			Name:       name,
-			Content:    content,
-		},
+// AddToolResultChunk adds a tool result chunk to the message (in-memory only)
+func (m *Message) AddToolResultChunk(toolCallID, name, content string, roundIndex int) {
+	m.Chunks = append(m.Chunks, MessageChunk{
+		Type:              ChunkTypeToolResult,
+		RoundIndex:        roundIndex,
+		ToolCallID:        toolCallID,
+		ToolName:          name,
+		ToolResultContent: content,
 	})
 }
 
-// AddImagePart adds an image part to the message
-func (m *Message) AddImagePart(url, mimeType, detail string) {
-	m.Parts = append(m.Parts, MessagePart{
-		Type: PartTypeImageURL,
-		ImageURL: &ImageURL{
-			URL:      url,
-			MimeType: mimeType,
-			Detail:   detail,
-		},
+// AddImageChunk adds an image chunk to the message (in-memory only)
+func (m *Message) AddImageChunk(url, mimeType, detail string) {
+	m.Chunks = append(m.Chunks, MessageChunk{
+		Type:          ChunkTypeImageURL,
+		MediaURL:      url,
+		MediaMimeType: mimeType,
+		MediaDetail:   detail,
 	})
 }
 
 // GetTextContent returns all text content concatenated
 func (m *Message) GetTextContent() string {
 	var result string
-	for _, part := range m.Parts {
-		if part.Type == PartTypeText && part.Text != "" {
+	for _, chunk := range m.Chunks {
+		if chunk.Type == ChunkTypeText && chunk.Text != "" {
 			if result != "" {
 				result += "\n"
 			}
-			result += part.Text
+			result += chunk.Text
 		}
 	}
 	return result
@@ -271,28 +395,28 @@ func (m *Message) GetTextContent() string {
 // GetReasoningContent returns all reasoning content concatenated
 func (m *Message) GetReasoningContent() string {
 	var result string
-	for _, part := range m.Parts {
-		if part.Type == PartTypeReasoning && part.Text != "" {
+	for _, chunk := range m.Chunks {
+		if chunk.Type == ChunkTypeReasoning && chunk.Text != "" {
 			if result != "" {
 				result += "\n"
 			}
-			result += part.Text
+			result += chunk.Text
 		}
 	}
 	return result
 }
 
-// GetToolCalls returns all tool calls from parts (in OpenAI ToolCall format)
+// GetToolCalls returns all tool calls from chunks (in OpenAI ToolCall format)
 func (m *Message) GetToolCalls() []ToolCall {
 	var result []ToolCall
-	for _, part := range m.Parts {
-		if part.Type == PartTypeToolCall && part.ToolCall != nil {
+	for _, chunk := range m.Chunks {
+		if chunk.Type == ChunkTypeToolCall {
 			result = append(result, ToolCall{
-				ID:   part.ToolCall.ID,
+				ID:   chunk.ToolCallID,
 				Type: "function",
 				Function: FunctionCall{
-					Name:      part.ToolCall.Name,
-					Arguments: part.ToolCall.Arguments,
+					Name:      chunk.ToolName,
+					Arguments: chunk.ToolArgs,
 				},
 			})
 		}
@@ -302,20 +426,20 @@ func (m *Message) GetToolCalls() []ToolCall {
 
 // HasToolCalls returns true if message contains tool calls
 func (m *Message) HasToolCalls() bool {
-	for _, part := range m.Parts {
-		if part.Type == PartTypeToolCall {
+	for _, chunk := range m.Chunks {
+		if chunk.Type == ChunkTypeToolCall {
 			return true
 		}
 	}
 	return false
 }
 
-// GetMaxRoundIndex returns the maximum round index in parts
+// GetMaxRoundIndex returns the maximum round index in chunks
 func (m *Message) GetMaxRoundIndex() int {
 	maxIndex := 0
-	for _, part := range m.Parts {
-		if part.Index > maxIndex {
-			maxIndex = part.Index
+	for _, chunk := range m.Chunks {
+		if chunk.RoundIndex > maxIndex {
+			maxIndex = chunk.RoundIndex
 		}
 	}
 	return maxIndex
@@ -340,8 +464,8 @@ type FunctionCall struct {
 type ToolCalls []ToolCall
 
 // Value implements driver.Valuer for database storage
-func (t ToolCalls) Value() (driver.Value, error) {
-	if t == nil || len(t) == 0 {
+func (t *ToolCalls) Value() (driver.Value, error) {
+	if t == nil || len(*t) == 0 {
 		return nil, nil
 	}
 	return json.Marshal(t)
@@ -350,7 +474,6 @@ func (t ToolCalls) Value() (driver.Value, error) {
 // Scan implements sql.Scanner for database retrieval
 func (t *ToolCalls) Scan(value interface{}) error {
 	if value == nil {
-		*t = nil
 		return nil
 	}
 	bytes, ok := value.([]byte)

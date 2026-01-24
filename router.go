@@ -425,10 +425,6 @@ func (s *Server) SetupRoutes() {
 
 	// Initialize memory service for long-term memory storage
 	memoryConfig := service.DefaultMemoryConfig()
-	// Try to get OpenAI API key from environment for embeddings
-	if apiKey := os.Getenv("OPENAI_API_KEY"); apiKey != "" {
-		memoryConfig.OpenAIAPIKey = apiKey
-	}
 	memoryService, err := service.NewMemoryService(chatStoreService.DB(), memoryConfig)
 	if err != nil {
 		slog.Warn("Failed to initialize memory service, memory features disabled", "error", err)

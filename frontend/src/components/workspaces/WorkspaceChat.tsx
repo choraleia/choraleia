@@ -324,7 +324,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
         // Set default model if not set
         if (!selectedModel && models.length > 0) {
-          setSelectedModel(models[0].name);
+          setSelectedModel(`${models[0].provider}/${models[0].model}`);
         }
       }
     } catch (error) {
@@ -453,16 +453,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
                 }
               }
             }
-          }
-
-          // System event - display as notification in chat
-          if (choice.delta.system_event) {
-            const event = choice.delta.system_event;
-            // Add a system notification marker to content
-            contentParts.push({
-              type: "text",
-              text: `\n\n> 📌 **${event.type.replace(/_/g, " ")}**: ${event.message || ""}\n\n`,
-            });
           }
         }
 
@@ -699,15 +689,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
             }
           }
         }
-
-        // System event - display as notification in chat
-        if (choice.delta.system_event) {
-          const event = choice.delta.system_event;
-          contentParts.push({
-            type: "text",
-            text: `\n\n> 📌 **${event.type.replace(/_/g, " ")}**: ${event.message || ""}\n\n`,
-          });
-        }
       }
 
       // Update UI with content and agent name
@@ -760,7 +741,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         const conv = await createConversation({
           workspace_id: workspaceId,
           title: "New Chat",
-          model_id: selectedModel,
         });
         threadId = conv.id;
         setCurrentThreadId(threadId);

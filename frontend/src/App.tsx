@@ -115,74 +115,89 @@ const AppContent: React.FC = () => {
         <Box
           width={40}
           sx={(theme) => ({
-            bgcolor: theme.palette.background.default,
+            bgcolor: theme.palette.background.paper,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
-            py: 1,
-            gap: 1,
+            pt: 1,
             borderRight: `1px solid ${theme.palette.divider}`,
           })}
         >
           <IconButton
             onClick={handleAssetsClick}
             sx={(theme) => {
-              const assetActive = selectedMenu === "assets";
-              const shown = assetActive && assetsVisible;
+              const isActive = selectedMenu === "assets";
               return {
-                color: assetActive
-                  ? shown
-                    ? theme.palette.primary.main
-                    : theme.palette.text.secondary
+                width: 26,
+                height: 26,
+                p: 0.25,
+                mb: 1.5,
+                borderRadius: "5px",
+                color: isActive
+                  ? theme.palette.primary.main
                   : theme.palette.text.secondary,
-                bgcolor: shown ? theme.palette.action.selected : "transparent",
-                borderRadius: 6,
-                transition: "background-color 0.15s, color 0.15s",
-                "&:hover": { bgcolor: theme.palette.action.hover },
+                backgroundColor: isActive
+                  ? "#e8e8e8"
+                  : "transparent",
+                "&:hover": {
+                  backgroundColor: "#dedede",
+                },
               };
             }}
             title={assetsVisible && selectedMenu === "assets" ? "Hide Assets" : "Show Assets"}
           >
-            <DesktopMacIcon fontSize="small" />
+            <DesktopMacIcon sx={{ fontSize: 18 }} />
           </IconButton>
           <IconButton
             onClick={handleSpacesClick}
             sx={(theme) => {
-              const spacesActive = selectedMenu === "spaces";
+              const isActive = selectedMenu === "spaces";
               return {
-                color: spacesActive
+                width: 26,
+                height: 26,
+                p: 0.25,
+                mb: 1.5,
+                borderRadius: "5px",
+                color: isActive
                   ? theme.palette.primary.main
                   : theme.palette.text.secondary,
-                bgcolor: spacesActive ? theme.palette.action.selected : "transparent",
-                borderRadius: 6,
-                transition: "background-color 0.15s, color 0.15s",
-                "&:hover": { bgcolor: theme.palette.action.hover },
+                backgroundColor: isActive
+                  ? "#e8e8e8"
+                  : "transparent",
+                "&:hover": {
+                  backgroundColor: "#dedede",
+                },
               };
             }}
             title="Workspaces"
           >
-            <SpaceDashboardIcon fontSize="small" />
+            <SpaceDashboardIcon sx={{ fontSize: 18 }} />
           </IconButton>
           <Box flexGrow={1} />
           <IconButton
             onClick={() => setSelectedMenu("settings")}
-            sx={(theme) => ({
-              color:
-                selectedMenu === "settings"
+            sx={(theme) => {
+              const isActive = selectedMenu === "settings";
+              return {
+                width: 26,
+                height: 26,
+                p: 0.25,
+                mb: 1.5,
+                borderRadius: "5px",
+                color: isActive
                   ? theme.palette.primary.main
                   : theme.palette.text.secondary,
-              bgcolor:
-                selectedMenu === "settings"
-                  ? theme.palette.action.selected
+                backgroundColor: isActive
+                  ? "#e8e8e8"
                   : "transparent",
-              borderRadius: 6,
-              mt: "auto",
-              transition: "background-color 0.15s, color 0.15s",
-              "&:hover": { bgcolor: theme.palette.action.hover },
-            })}
+                "&:hover": {
+                  backgroundColor: "#dedede",
+                },
+              };
+            }}
             title="Settings"
           >
-            <SettingsIcon fontSize="small" />
+            <SettingsIcon sx={{ fontSize: 18 }} />
           </IconButton>
         </Box>
 

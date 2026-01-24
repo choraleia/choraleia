@@ -901,7 +901,7 @@ export default function AiAssistant({
             });
             setGroupedModelOptions(groups);
             if (data.data.length > 0 && !selectedModel)
-              setSelectedModel(data.data[0].name);
+              setSelectedModel(`${data.data[0].provider}/${data.data[0].model}`);
           }
         }
       } catch (e) {

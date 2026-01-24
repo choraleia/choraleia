@@ -160,6 +160,10 @@ func (s *ChatService) AutoMigrate() error {
 	if err := s.db.AutoMigrate(&models.Conversation{}, &models.Message{}); err != nil {
 		return err
 	}
+	// Migrate message chunks table for real-time persistence
+	if err := s.db.AutoMigrate(&db.MessageChunk{}); err != nil {
+		return err
+	}
 	// Migrate compression tables
 	if err := s.db.AutoMigrate(&db.ConversationSnapshot{}); err != nil {
 		return err
@@ -190,6 +194,147 @@ func (s *ChatService) CleanupStaleStreams() {
 	}
 }
 
+// ========== MessageChunk Management ==========
+
+// LoadMessagesWithChunks loads chunks for multiple messages in a single query
+// Returns a map of messageID -> []MessageChunk
+func (s *ChatService) LoadMessagesWithChunks(messageIDs []string) (map[string][]db.MessageChunk, error) {
+	if len(messageIDs) == 0 {
+		return make(map[string][]db.MessageChunk), nil
+	}
+
+	var allChunks []db.MessageChunk
+	if err := s.db.Where("message_id IN ?", messageIDs).
+		Order("message_id ASC, round_index ASC, seq_index ASC, created_at ASC").
+		Find(&allChunks).Error; err != nil {
+		return nil, err
+	}
+
+	// Group chunks by message ID
+	result := make(map[string][]db.MessageChunk)
+	for _, chunk := range allChunks {
+		result[chunk.MessageID] = append(result[chunk.MessageID], chunk)
+	}
+
+	return result, nil
+}
+
+// LoadMessageWithChunks loads a message and its chunks from the database
+func (s *ChatService) LoadMessageWithChunks(messageID string) (*models.Message, error) {
+	var msg models.Message
+	if err := s.db.First(&msg, "id = ?", messageID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrMessageNotFound
+		}
+		return nil, err
+	}
+
+	var chunks []db.MessageChunk
+	if err := s.db.Where("message_id = ?", messageID).
+		Order("round_index ASC, seq_index ASC, created_at ASC").
+		Find(&chunks).Error; err != nil {
+		return nil, err
+	}
+
+	msg.Chunks = chunks
+	return &msg, nil
+}
+
+// AddAndSaveTextChunk adds a text chunk to message and saves to database in real-time
+func (s *ChatService) AddAndSaveTextChunk(msg *models.Message, text string, roundIndex int, agentName string) error {
+	// Get sequence index (count of existing chunks in this round)
+	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	chunk := db.MessageChunk{
+		ID:         uuid.New().String(),
+		MessageID:  msg.ID,
+		Type:       db.ChunkTypeText,
+		RoundIndex: roundIndex,
+		SeqIndex:   seqIndex,
+		AgentName:  agentName,
+		Text:       text,
+		CreatedAt:  time.Now(),
+	}
+
+	// Add to in-memory message
+	msg.Chunks = append(msg.Chunks, chunk)
+
+	// Save to database
+	return s.db.Create(&chunk).Error
+}
+
+// AddAndSaveReasoningChunk adds a reasoning chunk to message and saves to database in real-time
+func (s *ChatService) AddAndSaveReasoningChunk(msg *models.Message, text string, roundIndex int, agentName string) error {
+	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	chunk := db.MessageChunk{
+		ID:         uuid.New().String(),
+		MessageID:  msg.ID,
+		Type:       db.ChunkTypeReasoning,
+		RoundIndex: roundIndex,
+		SeqIndex:   seqIndex,
+		AgentName:  agentName,
+		Text:       text,
+		CreatedAt:  time.Now(),
+	}
+
+	msg.Chunks = append(msg.Chunks, chunk)
+	return s.db.Create(&chunk).Error
+}
+
+// AddAndSaveToolCallChunk adds a tool call chunk to message and saves to database in real-time
+func (s *ChatService) AddAndSaveToolCallChunk(msg *models.Message, toolCallID, toolName, args string, roundIndex int, agentName string) error {
+	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	chunk := db.MessageChunk{
+		ID:         uuid.New().String(),
+		MessageID:  msg.ID,
+		Type:       db.ChunkTypeToolCall,
+		RoundIndex: roundIndex,
+		SeqIndex:   seqIndex,
+		AgentName:  agentName,
+		ToolCallID: toolCallID,
+		ToolName:   toolName,
+		ToolArgs:   args,
+		CreatedAt:  time.Now(),
+	}
+
+	msg.Chunks = append(msg.Chunks, chunk)
+	return s.db.Create(&chunk).Error
+}
+
+// AddAndSaveToolResultChunk adds a tool result chunk to message and saves to database in real-time
+func (s *ChatService) AddAndSaveToolResultChunk(msg *models.Message, toolCallID, toolName, content string, roundIndex int, agentName string) error {
+	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	chunk := db.MessageChunk{
+		ID:                uuid.New().String(),
+		MessageID:         msg.ID,
+		Type:              db.ChunkTypeToolResult,
+		RoundIndex:        roundIndex,
+		SeqIndex:          seqIndex,
+		AgentName:         agentName,
+		ToolCallID:        toolCallID,
+		ToolName:          toolName,
+		ToolResultContent: content,
+		CreatedAt:         time.Now(),
+	}
+
+	msg.Chunks = append(msg.Chunks, chunk)
+	return s.db.Create(&chunk).Error
+}
+
+// getNextSeqIndex returns the next sequence index for a given round
+func (s *ChatService) getNextSeqIndex(msg *models.Message, roundIndex int) int {
+	count := 0
+	for _, chunk := range msg.Chunks {
+		if chunk.RoundIndex == roundIndex {
+			count++
+		}
+	}
+	return count
+}
+
 // ========== Conversation Management ==========
 
 // CreateConversation creates a new conversation
@@ -204,7 +349,6 @@ func (s *ChatService) CreateConversation(req *models.CreateConversationRequest) 
 		WorkspaceID: req.WorkspaceID,
 		RoomID:      req.RoomID,
 		Title:       title,
-		ModelID:     req.ModelID,
 		Status:      models.ConversationStatusActive,
 	}
 
@@ -291,7 +435,143 @@ func (s *ChatService) DeleteConversation(id string) error {
 
 // ========== Message Management ==========
 
-// GetMessages retrieves all messages for a conversation
+// chunksToMessageParts converts database chunks to message parts (merged format)
+func (s *ChatService) chunksToMessageParts(chunks []db.MessageChunk) []db.MessagePart {
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	var parts []db.MessagePart
+	n := len(chunks)
+	i := 0
+
+	for i < n {
+		chunk := chunks[i]
+
+		switch chunk.Type {
+		case db.ChunkTypeText:
+			// Merge consecutive text chunks
+			var textBuilder strings.Builder
+			roundIndex := chunk.RoundIndex
+			for i < n && chunks[i].Type == db.ChunkTypeText {
+				if chunks[i].Text != "" {
+					if textBuilder.Len() > 0 {
+						textBuilder.WriteString("")
+					}
+					textBuilder.WriteString(chunks[i].Text)
+				}
+				i++
+			}
+			if textBuilder.Len() > 0 {
+				parts = append(parts, db.MessagePart{
+					Type:  "text",
+					Index: roundIndex,
+					Text:  textBuilder.String(),
+				})
+			}
+
+		case db.ChunkTypeReasoning:
+			// Merge consecutive reasoning chunks
+			var reasoningBuilder strings.Builder
+			roundIndex := chunk.RoundIndex
+			for i < n && chunks[i].Type == db.ChunkTypeReasoning {
+				if chunks[i].Text != "" {
+					if reasoningBuilder.Len() > 0 {
+						reasoningBuilder.WriteString("")
+					}
+					reasoningBuilder.WriteString(chunks[i].Text)
+				}
+				i++
+			}
+			if reasoningBuilder.Len() > 0 {
+				parts = append(parts, db.MessagePart{
+					Type:  "reasoning",
+					Index: roundIndex,
+					Text:  reasoningBuilder.String(),
+				})
+			}
+
+		case db.ChunkTypeToolCall:
+			parts = append(parts, db.MessagePart{
+				Type:  "tool_call",
+				Index: chunk.RoundIndex,
+				ToolCall: &db.ToolCallPart{
+					ID:        chunk.ToolCallID,
+					Name:      chunk.ToolName,
+					Arguments: chunk.ToolArgs,
+				},
+			})
+			i++
+
+		case db.ChunkTypeToolResult:
+			parts = append(parts, db.MessagePart{
+				Type:  "tool_result",
+				Index: chunk.RoundIndex,
+				ToolResult: &db.ToolResultPart{
+					ToolCallID: chunk.ToolCallID,
+					Name:       chunk.ToolName,
+					Content:    chunk.ToolResultContent,
+				},
+			})
+			i++
+
+		case db.ChunkTypeImageURL:
+			parts = append(parts, db.MessagePart{
+				Type:  "image_url",
+				Index: chunk.RoundIndex,
+				ImageURL: &db.ImageURLPart{
+					URL:    chunk.MediaURL,
+					Detail: chunk.MediaDetail,
+				},
+			})
+			i++
+
+		case db.ChunkTypeAudioURL:
+			parts = append(parts, db.MessagePart{
+				Type:  "audio_url",
+				Index: chunk.RoundIndex,
+				AudioURL: &db.AudioURLPart{
+					URL:      chunk.MediaURL,
+					MimeType: chunk.MediaMimeType,
+					Duration: chunk.MediaDuration,
+				},
+			})
+			i++
+
+		case db.ChunkTypeVideoURL:
+			parts = append(parts, db.MessagePart{
+				Type:  "video_url",
+				Index: chunk.RoundIndex,
+				VideoURL: &db.VideoURLPart{
+					URL:      chunk.MediaURL,
+					MimeType: chunk.MediaMimeType,
+					Duration: chunk.MediaDuration,
+				},
+			})
+			i++
+
+		case db.ChunkTypeFileURL:
+			parts = append(parts, db.MessagePart{
+				Type:  "file_url",
+				Index: chunk.RoundIndex,
+				FileURL: &db.FileURLPart{
+					URL:      chunk.MediaURL,
+					MimeType: chunk.MediaMimeType,
+					Name:     chunk.MediaName,
+					Size:     chunk.MediaSize,
+				},
+			})
+			i++
+
+		default:
+			i++
+		}
+	}
+
+	return parts
+}
+
+// GetMessages retrieves all messages for a conversation with their chunks and parts
 func (s *ChatService) GetMessages(conversationID string) ([]models.Message, error) {
 	var messages []models.Message
 
@@ -299,6 +579,24 @@ func (s *ChatService) GetMessages(conversationID string) ([]models.Message, erro
 		Order("created_at ASC").
 		Find(&messages).Error; err != nil {
 		return nil, err
+	}
+
+	// Collect message IDs for batch loading
+	messageIDs := make([]string, len(messages))
+	for i, msg := range messages {
+		messageIDs[i] = msg.ID
+	}
+
+	// Batch load all chunks in a single query
+	chunksMap, err := s.LoadMessagesWithChunks(messageIDs)
+	if err != nil {
+		s.logger.Warn("Failed to batch load chunks", "error", err)
+	} else {
+		for i := range messages {
+			messages[i].Chunks = chunksMap[messages[i].ID]
+			// Convert chunks to parts for API response
+			messages[i].Parts = s.chunksToMessageParts(messages[i].Chunks)
+		}
 	}
 
 	return messages, nil
@@ -344,24 +642,39 @@ func (s *ChatService) GetMessagesWithCompressionInfo(conversationID string) ([]M
 	return result, nil
 }
 
-// GetMessage retrieves a single message
+// GetMessage retrieves a single message with its chunks
 func (s *ChatService) GetMessage(id string) (*models.Message, error) {
-	var msg models.Message
-	if err := s.db.First(&msg, "id = ?", id).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrMessageNotFound
-		}
-		return nil, err
-	}
-	return &msg, nil
+	return s.LoadMessageWithChunks(id)
 }
 
-// SaveMessage saves a message to the database
+// SaveMessage saves a message and its chunks to the database
 func (s *ChatService) SaveMessage(msg *models.Message) error {
 	if msg.ID == "" {
 		msg.ID = uuid.New().String()
 	}
-	return s.db.Save(msg).Error
+
+	// Save the message first
+	if err := s.db.Save(msg).Error; err != nil {
+		return err
+	}
+
+	// Save chunks if present (chunks have gorm:"-" so they won't be saved automatically)
+	if len(msg.Chunks) > 0 {
+		for i := range msg.Chunks {
+			if msg.Chunks[i].ID == "" {
+				msg.Chunks[i].ID = uuid.New().String()
+			}
+			msg.Chunks[i].MessageID = msg.ID
+			if msg.Chunks[i].CreatedAt.IsZero() {
+				msg.Chunks[i].CreatedAt = time.Now()
+			}
+		}
+		if err := s.db.Save(&msg.Chunks).Error; err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // UpdateMessageStatus updates the status of a message
@@ -433,6 +746,7 @@ func (s *ChatService) Chat(ctx context.Context, req *models.ChatCompletionReques
 
 	// Load workspace tools
 	workspaceTools, err := s.loadWorkspaceTools(ctx, req.WorkspaceID, conv.ID)
+	//tools, err := s.toolLoader.LoadWorkspaceTools(ctx, workspaceID, conversationID, nil)
 	if err != nil {
 		s.logger.Warn("Failed to load workspace tools", "error", err)
 	}
@@ -446,7 +760,7 @@ func (s *ChatService) Chat(ctx context.Context, req *models.ChatCompletionReques
 	// Get model
 	modelID := req.Model
 	if modelID == "" {
-		modelID = conv.ModelID
+		return nil, ErrModelNotConfigured
 	}
 
 	// Create assistant message placeholder
@@ -604,12 +918,12 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 				// Convert error to user-friendly message
 				errorMsg := s.formatAgentError(err)
 
-				// Append error to existing content using Parts
+				// Append error to existing content using Chunks
 				existingText := targetMsg.GetTextContent()
 				if existingText != "" {
-					targetMsg.AddTextPart(errorMsg, targetMsg.GetMaxRoundIndex())
+					targetMsg.AddTextChunk(errorMsg, targetMsg.GetMaxRoundIndex())
 				} else {
-					targetMsg.AddTextPart(errorMsg, 0)
+					targetMsg.AddTextChunk(errorMsg, 0)
 				}
 				targetMsg.Status = models.MessageStatusError
 				targetMsg.FinishReason = models.FinishReasonStop
@@ -685,11 +999,11 @@ func (s *ChatService) handleNewAction(req *models.ChatCompletionRequest) (*model
 	// Save user message
 	userMsg := req.Messages[len(req.Messages)-1]
 	if userMsg.Role == models.RoleUser {
-		// Convert content to Parts
-		var parts []models.MessagePart
+		// Convert content to Chunks
+		var chunks []models.MessageChunk
 		if content, ok := userMsg.Content.(string); ok && content != "" {
-			parts = append(parts, models.MessagePart{
-				Type: models.PartTypeText,
+			chunks = append(chunks, models.MessageChunk{
+				Type: models.ChunkTypeText,
 				Text: content,
 			})
 		}
@@ -698,7 +1012,7 @@ func (s *ChatService) handleNewAction(req *models.ChatCompletionRequest) (*model
 			ID:             uuid.New().String(),
 			ConversationID: conv.ID,
 			Role:           models.RoleUser,
-			Parts:          parts,
+			Chunks:         chunks,
 			Name:           userMsg.Name,
 			Status:         models.MessageStatusCompleted,
 			ParentID:       parentID,
@@ -755,11 +1069,11 @@ func (s *ChatService) handleEditAction(req *models.ChatCompletionRequest) (*mode
 		}
 	}
 
-	// Convert content to Parts
-	var parts []models.MessagePart
+	// Convert content to Chunks
+	var chunks []models.MessageChunk
 	if newContent != "" {
-		parts = append(parts, models.MessagePart{
-			Type: models.PartTypeText,
+		chunks = append(chunks, models.MessageChunk{
+			Type: models.ChunkTypeText,
 			Text: newContent,
 		})
 	}
@@ -767,7 +1081,7 @@ func (s *ChatService) handleEditAction(req *models.ChatCompletionRequest) (*mode
 	newUserMsg := &models.Message{
 		ID:     uuid.New().String(),
 		Role:   models.RoleUser,
-		Parts:  parts,
+		Chunks: chunks,
 		Status: models.MessageStatusCompleted,
 	}
 
@@ -1010,17 +1324,16 @@ func (s *ChatService) getOrCreateConversation(req *models.ChatCompletionRequest)
 	return s.CreateConversation(&models.CreateConversationRequest{
 		WorkspaceID: req.WorkspaceID,
 		RoomID:      req.RoomID,
-		ModelID:     req.Model,
 		Title:       "New Chat",
 	})
 }
 
 func (s *ChatService) saveUserMessage(conversationID string, msg *models.ChatCompletionMessage) error {
-	// Convert content to Parts
-	var parts []models.MessagePart
+	// Convert content to Chunks
+	var chunks []models.MessageChunk
 	if content, ok := msg.Content.(string); ok && content != "" {
-		parts = append(parts, models.MessagePart{
-			Type: models.PartTypeText,
+		chunks = append(chunks, models.MessageChunk{
+			Type: models.ChunkTypeText,
 			Text: content,
 		})
 	}
@@ -1029,7 +1342,7 @@ func (s *ChatService) saveUserMessage(conversationID string, msg *models.ChatCom
 		ID:             uuid.New().String(),
 		ConversationID: conversationID,
 		Role:           models.RoleUser,
-		Parts:          parts,
+		Chunks:         chunks,
 		Name:           msg.Name,
 		Status:         models.MessageStatusCompleted,
 	}
@@ -1037,21 +1350,6 @@ func (s *ChatService) saveUserMessage(conversationID string, msg *models.ChatCom
 }
 
 func (s *ChatService) buildConversationHistory(conversationID string) ([]*schema.Message, error) {
-	// Get conversation to check workspace settings
-	conv, err := s.GetConversation(conversationID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if preemptive compression is needed
-	if s.compressionService != nil && s.compressionConfig != nil {
-		if err := s.checkAndPerformPreemptiveCompression(context.Background(), conversationID); err != nil {
-			s.logger.Warn("Preemptive compression failed, continuing without compression",
-				"conversationID", conversationID, "error", err)
-		}
-	}
-
-	// Get all non-compressed messages for the conversation
 	messages, err := s.GetUncompressedMessages(conversationID)
 	if err != nil {
 		return nil, err
@@ -1059,18 +1357,7 @@ func (s *ChatService) buildConversationHistory(conversationID string) ([]*schema
 
 	history := make([]*schema.Message, 0)
 
-	// If conversation has been compressed, prepend the summary as a system message
-	if conv.Summary != "" {
-		summaryContext := s.getCompressionSummaryContext(conversationID)
-		if summaryContext != "" {
-			history = append(history, &schema.Message{
-				Role:    schema.System,
-				Content: summaryContext,
-			})
-		}
-	}
-
-	// Add remaining messages
+	// Convert messages to schema messages
 	for _, msg := range messages {
 		// Convert each message to schema messages (may produce multiple for tool calls)
 		schemaMessages := s.messageToSchemaMessages(&msg)
@@ -1080,7 +1367,7 @@ func (s *ChatService) buildConversationHistory(conversationID string) ([]*schema
 	return history, nil
 }
 
-// GetUncompressedMessages retrieves non-compressed messages for a conversation
+// GetUncompressedMessages retrieves non-compressed messages for a conversation with their chunks
 func (s *ChatService) GetUncompressedMessages(conversationID string) ([]models.Message, error) {
 	var messages []models.Message
 
@@ -1090,37 +1377,23 @@ func (s *ChatService) GetUncompressedMessages(conversationID string) ([]models.M
 		return nil, err
 	}
 
-	return messages, nil
-}
-
-// checkAndPerformPreemptiveCompression checks token count and compresses if needed
-func (s *ChatService) checkAndPerformPreemptiveCompression(ctx context.Context, conversationID string) error {
-	if s.compressionService == nil || s.compressionConfig == nil {
-		return nil
+	// Collect message IDs for batch loading
+	messageIDs := make([]string, len(messages))
+	for i, msg := range messages {
+		messageIDs[i] = msg.ID
 	}
 
-	// Get all non-compressed messages
-	messages, err := s.GetUncompressedMessages(conversationID)
+	// Batch load all chunks in a single query
+	chunksMap, err := s.LoadMessagesWithChunks(messageIDs)
 	if err != nil {
-		return err
+		s.logger.Warn("Failed to batch load chunks", "error", err)
+	} else {
+		for i := range messages {
+			messages[i].Chunks = chunksMap[messages[i].ID]
+		}
 	}
 
-	// Estimate total tokens
-	totalTokens := s.estimateMessagesTokens(messages)
-	threshold := int(float64(s.compressionConfig.MaxContextTokens) * s.compressionConfig.CompressThreshold)
-
-	if totalTokens < threshold {
-		return nil // No compression needed
-	}
-
-	s.logger.Info("Preemptive compression triggered",
-		"conversationID", conversationID,
-		"estimatedTokens", totalTokens,
-		"threshold", threshold)
-
-	// Perform compression
-	_, err = s.compressionService.Compress(ctx, conversationID)
-	return err
+	return messages, nil
 }
 
 // estimateMessagesTokens estimates token count for messages
@@ -1136,27 +1409,21 @@ func (s *ChatService) estimateMessagesTokens(messages []models.Message) int {
 	return total
 }
 
-// messageToSchemaMessages converts a db.Message with Parts to one or more schema.Message
-// A single message with tool_call + tool_result parts produces: assistant (with tool_calls) + tool messages
+// messageToSchemaMessages converts a db.Message with Chunks to one or more schema.Message
 func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Message {
-	if msg.Parts == nil || len(msg.Parts) == 0 {
-		// Empty message - skip it entirely to avoid API errors
-		// (e.g., DeepSeek requires reasoning_content for all assistant messages)
-		s.logger.Debug("Skipping message with empty parts",
-			"messageID", msg.ID,
-			"role", msg.Role)
+	if msg.Chunks == nil || len(msg.Chunks) == 0 {
 		return []*schema.Message{}
 	}
 
-	// For user/system messages - simple text concatenation
-	if msg.Role == db.RoleUser || msg.Role == db.RoleSystem {
+	// For user messages - simple text concatenation
+	if msg.Role == db.RoleUser {
 		var content string
-		for _, part := range msg.Parts {
-			if part.Type == db.PartTypeText && part.Text != "" {
+		for _, chunk := range msg.Chunks {
+			if chunk.Type == db.ChunkTypeText && chunk.Text != "" {
 				if content != "" {
 					content += "\n"
 				}
-				content += part.Text
+				content += chunk.Text
 			}
 		}
 		return []*schema.Message{{
@@ -1166,115 +1433,119 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 		}}
 	}
 
-	// For assistant messages - may have multiple rounds with tool calls
+	// For assistant messages
 	result := make([]*schema.Message, 0)
+	chunks := msg.Chunks
+	n := len(chunks)
 
-	// First, build a map of tool_call_id -> tool_result for validation
-	// Skip transfer_to_agent as it's internal ADK mechanism
-	toolResultMap := make(map[string]*db.ToolResultPart)
-	for _, part := range msg.Parts {
-		if part.Type == db.PartTypeToolResult && part.ToolResult != nil {
-			if part.ToolResult.Name != "transfer_to_agent" {
-				toolResultMap[part.ToolResult.ToolCallID] = part.ToolResult
+	// Track tool_calls that have been added and tool_results that exist
+	toolCallsAdded := make(map[string]string) // tool_call_id -> tool_name
+	toolResultsExist := make(map[string]bool) // tool_call_id -> true
+
+	// First pass: collect all tool_result ids
+	for _, chunk := range chunks {
+		if chunk.Type == db.ChunkTypeToolResult && chunk.ToolName != "transfer_to_agent" {
+			toolResultsExist[chunk.ToolCallID] = true
+		}
+	}
+
+	// Second pass: process chunks
+	i := 0
+	for i < n {
+		chunk := chunks[i]
+
+		switch chunk.Type {
+		case db.ChunkTypeText:
+			// Merge consecutive text chunks
+			var content string
+			for i < n && chunks[i].Type == db.ChunkTypeText {
+				if chunks[i].Text != "" {
+					if content != "" {
+						content += "\n"
+					}
+					content += chunks[i].Text
+				}
+				i++
 			}
-		}
-	}
+			if content != "" {
+				result = append(result, &schema.Message{
+					Role:             schema.Assistant,
+					Content:          content,
+					ReasoningContent: " ",
+				})
+			}
 
-	// Group parts by round index
-	maxRound := 0
-	for _, part := range msg.Parts {
-		if part.Index > maxRound {
-			maxRound = part.Index
-		}
-	}
+		case db.ChunkTypeReasoning:
+			// Merge consecutive reasoning chunks
+			var reasoning string
+			for i < n && chunks[i].Type == db.ChunkTypeReasoning {
+				if chunks[i].Text != "" {
+					if reasoning != "" {
+						reasoning += "\n"
+					}
+					reasoning += chunks[i].Text
+				}
+				i++
+			}
+			if reasoning != "" {
+				result = append(result, &schema.Message{
+					Role:             schema.Assistant,
+					ReasoningContent: reasoning,
+				})
+			}
 
-	for round := 0; round <= maxRound; round++ {
-		// Collect parts for this round
-		var textContent, reasoningContent string
-		var toolCalls []schema.ToolCall
-		var toolResults []*schema.Message
-
-		for _, part := range msg.Parts {
-			if part.Index != round {
+		case db.ChunkTypeToolCall:
+			// Skip transfer_to_agent
+			if chunk.ToolName == "transfer_to_agent" {
+				i++
 				continue
 			}
-
-			switch part.Type {
-			case db.PartTypeText:
-				if part.Text != "" {
-					if textContent != "" {
-						textContent += "\n"
-					}
-					textContent += part.Text
-				}
-			case db.PartTypeReasoning:
-				if part.Text != "" {
-					if reasoningContent != "" {
-						reasoningContent += "\n"
-					}
-					reasoningContent += part.Text
-				}
-			case db.PartTypeToolCall:
-				// Only include tool_call if we have a corresponding tool_result
-				// Skip transfer_to_agent tool calls as they are internal ADK mechanism
-				if part.ToolCall != nil {
-					if part.ToolCall.Name == "transfer_to_agent" {
-						s.logger.Debug("Skipping transfer_to_agent tool_call",
-							"toolCallID", part.ToolCall.ID)
-						continue
-					}
-					if _, hasResult := toolResultMap[part.ToolCall.ID]; hasResult {
-						toolCalls = append(toolCalls, schema.ToolCall{
-							ID:   part.ToolCall.ID,
-							Type: "function",
-							Function: schema.FunctionCall{
-								Name:      part.ToolCall.Name,
-								Arguments: part.ToolCall.Arguments,
-							},
-						})
-					} else {
-						s.logger.Debug("Skipping tool_call without result",
-							"toolCallID", part.ToolCall.ID,
-							"toolName", part.ToolCall.Name)
-					}
-				}
-			case db.PartTypeToolResult:
-				// Skip transfer_to_agent tool results as they are internal ADK mechanism
-				if part.ToolResult != nil {
-					if part.ToolResult.Name == "transfer_to_agent" {
-						s.logger.Debug("Skipping transfer_to_agent tool_result",
-							"toolCallID", part.ToolResult.ToolCallID)
-						continue
-					}
-					toolResults = append(toolResults, &schema.Message{
-						Role:       schema.Tool,
-						ToolCallID: part.ToolResult.ToolCallID,
-						ToolName:   part.ToolResult.Name,
-						Content:    part.ToolResult.Content,
-					})
-				}
-			}
-		}
-
-		// Create assistant message for this round (if has content or tool calls)
-		if textContent != "" || reasoningContent != "" || len(toolCalls) > 0 {
-			// For models with thinking/reasoning mode (e.g., DeepSeek-R1), all assistant messages
-			// must have reasoning_content. Add a placeholder if missing to ensure compatibility.
-			if reasoningContent == "" && (textContent != "" || len(toolCalls) > 0) {
-				reasoningContent = "..."
-			}
-
-			assistantMsg := &schema.Message{
+			// Each tool_call is a separate assistant message
+			result = append(result, &schema.Message{
 				Role:             schema.Assistant,
-				Content:          textContent,
-				ReasoningContent: reasoningContent,
-				ToolCalls:        toolCalls,
-			}
-			result = append(result, assistantMsg)
-		}
+				ReasoningContent: " ",
+				ToolCalls: []schema.ToolCall{{
+					ID:   chunk.ToolCallID,
+					Type: "function",
+					Function: schema.FunctionCall{
+						Name:      chunk.ToolName,
+						Arguments: chunk.ToolArgs,
+					},
+				}},
+			})
+			toolCallsAdded[chunk.ToolCallID] = chunk.ToolName
+			i++
 
-		// Add tool result messages after the assistant message
-		result = append(result, toolResults...)
+		case db.ChunkTypeToolResult:
+			// Skip transfer_to_agent
+			if chunk.ToolName == "transfer_to_agent" {
+				i++
+				continue
+			}
+			// Each tool_result is a separate tool message
+			result = append(result, &schema.Message{
+				Role:       schema.Tool,
+				ToolCallID: chunk.ToolCallID,
+				ToolName:   chunk.ToolName,
+				Content:    chunk.ToolResultContent,
+			})
+			i++
+
+		default:
+			i++
+		}
+	}
+
+	// Final check: append empty tool_result for any tool_call without result
+	for toolCallID, toolName := range toolCallsAdded {
+		if !toolResultsExist[toolCallID] {
+			result = append(result, &schema.Message{
+				Role:       schema.Tool,
+				ToolCallID: toolCallID,
+				ToolName:   toolName,
+				Content:    "",
+			})
+		}
 	}
 
 	return result
@@ -1401,6 +1672,241 @@ func simplifyErrorMessage(errStr string) string {
 	return errStr
 }
 
+// createCompressionMiddlewares creates context reduction middlewares to prevent context length errors
+// Uses compression service to compress old messages instead of just clearing tool results
+// Threshold is calculated as 75% of the model's context window size
+// rootAgentName: only the root agent triggers compression to avoid duplicate compression in multi-agent scenarios
+func (s *ChatService) createCompressionMiddlewares(conversationID string, workspaceID string, rootAgentName string) []adk.AgentMiddleware {
+	var middlewares []adk.AgentMiddleware
+
+	// Create a middleware that checks context size and triggers compression if needed
+	if s.compressionService != nil && s.workspaceService != nil {
+		// Get compression model from workspace config
+		var compressionModelID string
+		var contextWindow int
+
+		workspace, err := s.workspaceService.GetWorkspace(workspaceID)
+		if err != nil {
+			s.logger.Warn("Failed to get workspace for compression config", "error", err)
+			return middlewares
+		}
+
+		if workspace.CompressionModel != nil && *workspace.CompressionModel != "" {
+			compressionModelID = *workspace.CompressionModel
+			// Get model's context window size
+			if modelConfig, err := s.modelService.GetModelConfig(compressionModelID); err == nil && modelConfig != nil {
+				if modelConfig.Limits != nil && modelConfig.Limits.ContextWindow > 0 {
+					contextWindow = modelConfig.Limits.ContextWindow
+				}
+			}
+		}
+
+		// Use default if model doesn't specify context window
+		if contextWindow <= 0 {
+			contextWindow = 128000 // Default fallback
+		}
+
+		// Calculate threshold as 75% of context window
+		threshold := int(float64(contextWindow) * 0.75)
+
+		s.logger.Debug("Compression middleware configured",
+			"compressionModelID", compressionModelID,
+			"contextWindow", contextWindow,
+			"threshold", threshold,
+			"rootAgentName", rootAgentName)
+
+		compressionMiddleware := adk.AgentMiddleware{
+			BeforeChatModel: func(ctx context.Context, state *adk.ChatModelAgentState) error {
+				// Get current agent name from State
+				// Only trigger compression for root agent to avoid duplicate compression
+				// when sub-agents receive copied history via transfer
+				var currentAgentName string
+				_ = compose.ProcessState(ctx, func(_ context.Context, st *adk.State) error {
+					currentAgentName = st.AgentName
+					return nil
+				})
+
+				// Skip compression for sub-agents (non-root agents)
+				if currentAgentName != "" && rootAgentName != "" && currentAgentName != rootAgentName {
+					s.logger.Debug("Skipping compression for sub-agent",
+						"currentAgent", currentAgentName,
+						"rootAgent", rootAgentName)
+					return nil
+				}
+
+				// Estimate current context size from state.Messages
+				totalTokens := 0
+				for _, msg := range state.Messages {
+					totalTokens += len(msg.Content) / 4
+					totalTokens += len(msg.ReasoningContent) / 4
+					for _, tc := range msg.ToolCalls {
+						totalTokens += len(tc.Function.Arguments) / 4
+					}
+					totalTokens += 10 // overhead
+				}
+
+				// If within limit, no action needed
+				if totalTokens <= threshold {
+					return nil
+				}
+
+				s.logger.Info("Context approaching limit, triggering compression",
+					"conversationID", conversationID,
+					"agentName", currentAgentName,
+					"estimatedTokens", totalTokens,
+					"threshold", threshold,
+					"contextWindow", contextWindow)
+
+				// Find the index where runtime messages start (messages not yet in database)
+				// These are typically recent tool calls and results that need to be preserved
+				dbHistory, err := s.buildConversationHistory(conversationID)
+				if err != nil {
+					s.logger.Warn("Failed to load conversation history for comparison", "error", err)
+					// Continue without updating state.Messages
+					return nil
+				}
+
+				// Identify runtime messages (messages in state but not in database)
+				// These are messages generated during the current agent run
+				runtimeStartIdx := len(dbHistory)
+				if runtimeStartIdx > len(state.Messages) {
+					runtimeStartIdx = len(state.Messages)
+				}
+
+				// Perform compression on database messages
+				maxCompressionRounds := 5
+				compressed := false
+				for round := 0; round < maxCompressionRounds; round++ {
+					snapshot, err := s.compressionService.Compress(ctx, conversationID, compressionModelID)
+					if err != nil {
+						s.logger.Warn("Compression failed", "error", err, "round", round+1)
+						break
+					}
+					if snapshot == nil || snapshot.MessageCount == 0 {
+						s.logger.Debug("No more messages to compress", "round", round+1)
+						break
+					}
+
+					compressed = true
+					s.logger.Info("Compression round completed",
+						"round", round+1,
+						"agentName", currentAgentName,
+						"compressedMessages", snapshot.MessageCount,
+						"originalTokens", snapshot.OriginalTokens,
+						"compressedTokens", snapshot.CompressedTokens)
+
+					// Re-estimate tokens after compression
+					totalTokens = totalTokens - snapshot.OriginalTokens + snapshot.CompressedTokens
+					if totalTokens <= threshold {
+						s.logger.Info("Compression sufficient",
+							"remainingTokens", totalTokens,
+							"threshold", threshold)
+						break
+					}
+				}
+
+				// If compression happened, rebuild state.Messages
+				// Combine compressed database history with runtime messages
+				if compressed {
+					newHistory, err := s.buildConversationHistory(conversationID)
+					if err != nil {
+						s.logger.Warn("Failed to rebuild history after compression", "error", err)
+						return nil
+					}
+
+					// Preserve runtime messages (tool calls/results from current run)
+					// These are messages after runtimeStartIdx in the original state
+					if runtimeStartIdx < len(state.Messages) {
+						runtimeMessages := state.Messages[runtimeStartIdx:]
+						s.logger.Debug("Preserving runtime messages",
+							"count", len(runtimeMessages),
+							"newHistoryCount", len(newHistory))
+						newHistory = append(newHistory, runtimeMessages...)
+					}
+
+					// Update state.Messages with compressed history + runtime messages
+					state.Messages = newHistory
+
+					// Log final state
+					finalTokens := 0
+					for _, msg := range state.Messages {
+						finalTokens += len(msg.Content) / 4
+						finalTokens += len(msg.ReasoningContent) / 4
+						for _, tc := range msg.ToolCalls {
+							finalTokens += len(tc.Function.Arguments) / 4
+						}
+						finalTokens += 10
+					}
+					s.logger.Info("State.Messages updated after compression",
+						"messageCount", len(state.Messages),
+						"estimatedTokens", finalTokens,
+						"threshold", threshold)
+				}
+
+				return nil
+			},
+		}
+		middlewares = append(middlewares, compressionMiddleware)
+	}
+
+	return middlewares
+}
+
+// createModelRetryConfig creates retry configuration for ChatModel
+// It handles transient errors like rate limits and network issues
+// For context length errors, it triggers compression before retry
+func (s *ChatService) createModelRetryConfig(conversationID string) *adk.ModelRetryConfig {
+	return &adk.ModelRetryConfig{
+		MaxRetries: 3,
+		IsRetryAble: func(ctx context.Context, err error) bool {
+			if err == nil {
+				return false
+			}
+
+			errStr := strings.ToLower(err.Error())
+
+			// Always retry on rate limit errors
+			if strings.Contains(errStr, "rate limit") ||
+				strings.Contains(errStr, "too many requests") ||
+				strings.Contains(errStr, "429") {
+				s.logger.Info("Rate limit error, will retry", "error", err)
+				return true
+			}
+
+			// Retry on temporary network errors
+			if strings.Contains(errStr, "connection refused") ||
+				strings.Contains(errStr, "timeout") ||
+				strings.Contains(errStr, "temporary") {
+				s.logger.Info("Temporary network error, will retry", "error", err)
+				return true
+			}
+
+			// For context length errors, don't retry here
+			// Compression is handled in BeforeChatModel middleware
+			if IsContextLengthError(err) {
+				s.logger.Warn("Context length error, compression should have been handled in BeforeChatModel",
+					"conversationID", conversationID,
+					"error", err)
+				return false
+			}
+
+			// Don't retry on other errors (invalid API key, model not found, etc.)
+			return false
+		},
+		BackoffFunc: func(ctx context.Context, attempt int) time.Duration {
+			// Exponential backoff: 1s, 2s, 4s, 8s...
+			baseDelay := time.Second
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			maxDelay := 30 * time.Second
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+			s.logger.Debug("Retry backoff", "attempt", attempt, "delay", delay)
+			return delay
+		},
+	}
+}
+
 // getChatModel creates a chat model based on modelID
 func (s *ChatService) getChatModel(ctx context.Context, modelID string) (model.ToolCallingChatModel, error) {
 	if modelID == "" {
@@ -1415,13 +1921,27 @@ func (s *ChatService) getChatModel(ctx context.Context, modelID string) (model.T
 		return nil, fmt.Errorf("model not found: %s", modelID)
 	}
 
+	s.logger.Debug("Creating chat model",
+		"modelID", modelID,
+		"provider", modelConfig.Provider,
+		"model", modelConfig.Model,
+		"baseURL", modelConfig.BaseUrl)
+
 	// Use ModelService to create the model
 	return s.modelService.CreateChatModel(ctx, modelConfig)
 }
 
-// getSystemPrompt returns the system prompt for the workspace
+// getSystemPrompt returns the static system prompt for the workspace
+// Returns only static instruction to maximize context cache utilization
+// Dynamic context should be injected separately when needed
 func (s *ChatService) getSystemPrompt(workspaceID string, conversationID string) string {
-	basePrompt := `You are a helpful AI assistant working in a development workspace.
+	return s.getStaticInstruction()
+}
+
+// getStaticInstruction returns the static system instruction that doesn't change
+// This content can be cached by LLM providers (context cache)
+func (s *ChatService) getStaticInstruction() string {
+	return `You are a helpful AI assistant working in a development workspace.
 
 LANGUAGE RULE (CRITICAL):
 - Always respond in the SAME language the user uses
@@ -1444,38 +1964,150 @@ When using tools:
 - Always verify results before reporting success
 
 Be professional, helpful, and concise in your responses.`
+}
+
+// Dynamic context markers for identification in message history
+const (
+	DynamicContextStartMarker = "<<<DYNAMIC_ENV_CONTEXT_START>>>"
+	DynamicContextEndMarker   = "<<<DYNAMIC_ENV_CONTEXT_END>>>"
+)
+
+// wrapDynamicContext wraps dynamic context with markers for identification
+func (s *ChatService) wrapDynamicContext(content string) string {
+	if content == "" {
+		return ""
+	}
+	return DynamicContextStartMarker + "\n" + content + "\n" + DynamicContextEndMarker
+}
+
+// extractDynamicContext extracts dynamic context from a message content
+// Returns the content between markers, or empty string if not found
+func (s *ChatService) extractDynamicContext(content string) string {
+	startIdx := strings.Index(content, DynamicContextStartMarker)
+	if startIdx == -1 {
+		return ""
+	}
+	endIdx := strings.Index(content, DynamicContextEndMarker)
+	if endIdx == -1 || endIdx <= startIdx {
+		return ""
+	}
+	// Extract content between markers (excluding the markers and surrounding newlines)
+	start := startIdx + len(DynamicContextStartMarker) + 1 // +1 for newline
+	end := endIdx - 1                                      // -1 for newline before end marker
+	if start >= end {
+		return ""
+	}
+	return content[start:end]
+}
+
+// isDynamicContextMessage checks if a message is a dynamic context injection message
+func (s *ChatService) isDynamicContextMessage(msg *schema.Message) bool {
+	if msg.Role != schema.User {
+		return false
+	}
+	return strings.Contains(msg.Content, DynamicContextStartMarker) &&
+		strings.Contains(msg.Content, DynamicContextEndMarker)
+}
+
+// getDynamicContext returns dynamic context that may change during conversation
+// This should be called sparingly to avoid invalidating context cache
+// Use cases: initial conversation, explicit refresh, after significant environment changes
+func (s *ChatService) getDynamicContext(workspaceID string, conversationID string) string {
+	var parts []string
 
 	// Add workspace info context
 	workspaceContext := s.getWorkspaceInfoContext(workspaceID)
 	if workspaceContext != "" {
-		basePrompt += "\n\n" + workspaceContext
+		parts = append(parts, workspaceContext)
 	}
 
 	// Add workspace asset context
 	assetContext := s.getWorkspaceAssetContext(workspaceID)
 	if assetContext != "" {
-		basePrompt += "\n\n" + assetContext
+		parts = append(parts, assetContext)
 	}
 
-	// Add memory context
+	// Add memory context (relevant memories for current conversation)
 	memoryContext := s.getMemoryContext(workspaceID, conversationID, nil, "")
 	if memoryContext != "" {
-		basePrompt += "\n\n" + memoryContext
+		parts = append(parts, memoryContext)
 	}
 
 	// Add compression summary context if available
 	summaryContext := s.getCompressionSummaryContext(conversationID)
 	if summaryContext != "" {
-		basePrompt += "\n\n" + summaryContext
+		parts = append(parts, summaryContext)
 	}
 
-	// Add browser context if there are active browsers
-	//browserContext := s.getBrowserContext(conversationID)
-	//if browserContext != "" {
-	//	basePrompt += "\n\n" + browserContext
-	//}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "\n\n")
+}
 
-	return basePrompt
+// createGenModelInput creates a GenModelInput function that intelligently injects dynamic context
+// It scans history for existing dynamic context, compares with current, and injects before last user message if changed
+func (s *ChatService) createGenModelInput(workspaceID string, conversationID string) adk.GenModelInput {
+	return func(ctx context.Context, instruction string, input *adk.AgentInput) ([]*schema.Message, error) {
+		messages := make([]*schema.Message, 0, len(input.Messages)+2)
+
+		// 1. Add static instruction as system message
+		if instruction != "" {
+			messages = append(messages, &schema.Message{
+				Role:    schema.System,
+				Content: instruction,
+			})
+		}
+
+		// 2. Get current dynamic context
+		currentDynamicContext := s.getDynamicContext(workspaceID, conversationID)
+
+		// 3. Find the latest dynamic context in history and locate last user message
+		var latestDynamicContext string
+		var lastUserMsgIdx = -1
+
+		for i, msg := range input.Messages {
+			if s.isDynamicContextMessage(msg) {
+				// Keep tracking the latest one
+				latestDynamicContext = s.extractDynamicContext(msg.Content)
+			}
+			if msg.Role == schema.User && !s.isDynamicContextMessage(msg) {
+				lastUserMsgIdx = i
+			}
+		}
+
+		// 4. Determine if we need to inject new dynamic context
+		// Only inject if current context is different from the latest one in history
+		needsInjection := currentDynamicContext != "" && currentDynamicContext != latestDynamicContext
+
+		// 5. Build final message list (keep all existing messages)
+		for i, msg := range input.Messages {
+
+			// Inject new dynamic context before last user message
+			if needsInjection && i == lastUserMsgIdx {
+				wrappedContext := s.wrapDynamicContext(currentDynamicContext)
+				messages = append(messages, &schema.Message{
+					Role:    schema.User,
+					Content: wrappedContext,
+				})
+				needsInjection = false // Mark as injected
+			}
+
+			messages = append(messages, msg)
+		}
+
+		// If we still need to inject (no user message found or it was the last one)
+		// This handles edge case where there's no user message yet
+		if needsInjection && currentDynamicContext != "" {
+			wrappedContext := s.wrapDynamicContext(currentDynamicContext)
+			messages = append(messages, &schema.Message{
+				Role:    schema.User,
+				Content: wrappedContext,
+			})
+		}
+
+		return messages, nil
+	}
 }
 
 // getCompressionSummaryContext retrieves compression summary for the conversation
@@ -1692,12 +2324,12 @@ func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*s
 		return nil, fmt.Errorf("failed to generate response: %w", err)
 	}
 
-	// Update assistant message using Parts
+	// Update assistant message using Chunks
 	if response.ReasoningContent != "" {
-		assistantMsg.AddReasoningPart(response.ReasoningContent, 0)
+		assistantMsg.AddReasoningChunk(response.ReasoningContent, 0)
 	}
 	if response.Content != "" {
-		assistantMsg.AddTextPart(response.Content, 0)
+		assistantMsg.AddTextChunk(response.Content, 0)
 	}
 	assistantMsg.Status = models.MessageStatusCompleted
 	assistantMsg.FinishReason = models.FinishReasonStop
@@ -1706,13 +2338,13 @@ func (s *ChatService) runAgent(ctx context.Context, modelID string, history []*s
 	if len(response.ToolCalls) > 0 {
 		assistantMsg.FinishReason = models.FinishReasonToolCalls
 		for _, tc := range response.ToolCalls {
-			assistantMsg.AddToolCallPart(tc.ID, tc.Function.Name, tc.Function.Arguments, 0)
+			assistantMsg.AddToolCallChunk(tc.ID, tc.Function.Name, tc.Function.Arguments, 0)
 		}
 	}
 
 	// Update usage if available
 	if response.ResponseMeta != nil && response.ResponseMeta.Usage != nil {
-		assistantMsg.Usage = db.TokenUsage{
+		assistantMsg.Usage = &db.TokenUsage{
 			PromptTokens:     response.ResponseMeta.Usage.PromptTokens,
 			CompletionTokens: response.ResponseMeta.Usage.CompletionTokens,
 			TotalTokens:      response.ResponseMeta.Usage.TotalTokens,
@@ -1777,9 +2409,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Get model ID
 	modelID := req.Model
 	if modelID == "" {
-		modelID = conv.ModelID
-	}
-	if modelID == "" {
 		return assistantMsg, ErrModelNotConfigured
 	}
 
@@ -1791,12 +2420,26 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 	// Build agent based on AgentID
 	var agent adk.Agent
+
+	// Determine root agent name for compression middleware
+	// This will be updated after building the workspace agent if AgentID is provided
+	rootAgentName := "chat" // Default agent name
+
+	// Create context reduction middlewares and retry config
+	// Note: rootAgentName may be updated after building workspace agent
+	middlewares := s.createCompressionMiddlewares(conv.ID, req.WorkspaceID, rootAgentName)
+	retryConfig := s.createModelRetryConfig(conv.ID)
+
 	if req.AgentID != "" {
 		// Load WorkspaceAgent from database
 		agent, err = s.buildWorkspaceAgent(ctx, req.AgentID, req.WorkspaceID, conv.ID, modelID, baseTools)
 		if err != nil {
 			return assistantMsg, fmt.Errorf("failed to build workspace agent: %w", err)
 		}
+		// Get the agent name from the built agent
+		rootAgentName = agent.Name(ctx)
+		// Recreate middlewares with correct root agent name
+		middlewares = s.createCompressionMiddlewares(conv.ID, req.WorkspaceID, rootAgentName)
 	} else {
 		// Default: create simple ChatModelAgent
 		chatModel, err := s.getChatModel(ctx, modelID)
@@ -1804,21 +2447,55 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			return assistantMsg, fmt.Errorf("failed to get chat model: %w", err)
 		}
 
-		systemPrompt := s.getSystemPrompt(req.WorkspaceID, conv.ID)
+		// Use static instruction for context cache optimization
+		staticInstruction := s.getStaticInstruction()
+		// Create GenModelInput for dynamic context injection
+		genModelInput := s.createGenModelInput(req.WorkspaceID, conv.ID)
+
+		s.logger.Debug("Creating ChatModelAgent", "toolCount", len(baseTools))
+
+		// Log tool information for debugging
+		for i, t := range baseTools {
+			info, err := t.Info(ctx)
+			if err != nil {
+				s.logger.Error("Failed to get tool info", "index", i, "error", err)
+				continue
+			}
+			descLen := len(info.Desc)
+			if descLen > 50 {
+				descLen = 50
+			}
+			s.logger.Debug("Tool info", "index", i, "name", info.Name, "descPreview", info.Desc[:descLen])
+
+			// Try to generate JSON schema to catch errors early
+			if info.ParamsOneOf != nil {
+				jsonSchema, schemaErr := info.ParamsOneOf.ToJSONSchema()
+				if schemaErr != nil {
+					s.logger.Error("Failed to generate tool JSON schema", "toolName", info.Name, "error", schemaErr)
+				} else {
+					s.logger.Debug("Tool JSON schema generated", "toolName", info.Name, "hasSchema", jsonSchema != nil)
+				}
+			}
+		}
+
 		agent, err = adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:        "Workspace Assistant",
-			Description: "An AI assistant that helps with coding and development tasks in the workspace",
-			Instruction: systemPrompt,
-			Model:       chatModel,
+			Name:          "Workspace Assistant",
+			Description:   "An AI assistant that helps with coding and development tasks in the workspace",
+			Instruction:   staticInstruction,
+			GenModelInput: genModelInput,
+			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: baseTools},
 				EmitInternalEvents: true, // Enable streaming from agent tools
 			},
-			MaxIterations: 50,
+			MaxIterations:    50,
+			Middlewares:      middlewares,
+			ModelRetryConfig: retryConfig,
 		})
 		if err != nil {
 			return assistantMsg, fmt.Errorf("failed to create agent: %w", err)
 		}
+		s.logger.Debug("ChatModelAgent created successfully", "agentName", agent.Name(ctx))
 	}
 
 	// Helper to send chunk and update buffer
@@ -1845,7 +2522,13 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	})
 
 	// Run agent with streaming
+	s.logger.Debug("Running agent", "historyLen", len(history))
+	for i, h := range history {
+		s.logger.Debug("History message", "index", i, "role", h.Role, "contentLen", len(h.Content))
+	}
+	s.logger.Debug("Calling agent.Run...")
 	iter := agent.Run(ctx, &adk.AgentInput{Messages: history, EnableStreaming: true})
+	s.logger.Debug("agent.Run returned, starting iteration loop")
 
 	// Track current assistantMsg
 	currentAssistantMsg := assistantMsg
@@ -1856,10 +2539,15 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Track current agent name for display
 	currentAgentName := ""
 
+	iterCount := 0
 	for {
-		// Check for cancellation before getting next part
+		iterCount++
+		s.logger.Debug("Loop iteration", "count", iterCount)
+
+		// Check for cancellation before getting next chunk
 		select {
 		case <-ctx.Done():
+			s.logger.Debug("Context cancelled")
 			if !cancelled {
 				cancelled = true
 				currentAssistantMsg.Status = models.MessageStatusCompleted
@@ -1870,103 +2558,51 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		default:
 		}
 
-		part, ok := iter.Next()
+		s.logger.Debug("Calling iter.Next()...")
+		chunk, ok := iter.Next()
+		s.logger.Debug("iter.Next() returned", "ok", ok, "hasChunk", chunk != nil)
 		if !ok {
+			s.logger.Debug("iter.Next() returned false, breaking loop")
 			break
 		}
-		if part.Err != nil {
+		if chunk.Err != nil {
+			s.logger.Error("Chunk has error", "error", chunk.Err)
 			// Check if this is a cancellation error
-			if errors.Is(part.Err, context.Canceled) || errors.Is(part.Err, context.DeadlineExceeded) {
+			if errors.Is(chunk.Err, context.Canceled) || errors.Is(chunk.Err, context.DeadlineExceeded) {
 				if !cancelled {
 					cancelled = true
 					currentAssistantMsg.Status = models.MessageStatusCompleted
 					currentAssistantMsg.FinishReason = models.FinishReasonCancelled
 					s.SaveMessage(currentAssistantMsg)
 				}
-				return currentAssistantMsg, part.Err
+				return currentAssistantMsg, chunk.Err
 			}
 
-			// Check if this is a context length error - attempt compression and retry
-			if IsContextLengthError(part.Err) && s.compressionService != nil {
-				s.logger.Warn("Context length exceeded, attempting compression",
-					"conversationID", conv.ID,
-					"error", part.Err)
-
-				// Perform compression
-				snapshot, compressErr := s.compressionService.Compress(ctx, conv.ID)
-				if compressErr != nil {
-					s.logger.Error("Compression failed", "error", compressErr)
-					return currentAssistantMsg, fmt.Errorf("context length exceeded and compression failed: %w", part.Err)
-				}
-
-				if snapshot != nil {
-					// Notify frontend about compression
-					sendChunk(&models.ChatCompletionChunk{
-						ID:             currentAssistantMsg.ID,
-						Object:         "chat.completion.chunk",
-						Created:        time.Now().Unix(),
-						Model:          modelID,
-						ConversationID: conv.ID,
-						Choices: []models.ChatCompletionChunkChoice{{
-							Index: 0,
-							Delta: models.ChatCompletionChunkDelta{
-								SystemEvent: &models.SystemEvent{
-									Type:    "conversation_compressed",
-									Message: fmt.Sprintf("Conversation history compressed (%d messages)", snapshot.MessageCount),
-								},
-							},
-						}},
-					})
-
-					// Rebuild history and retry (return error to trigger retry at caller level)
-					s.logger.Info("Compression completed, caller should retry",
-						"compressedMessages", snapshot.MessageCount)
-				}
-
-				return currentAssistantMsg, fmt.Errorf("context_compressed_retry_needed: %w", part.Err)
-			}
-
-			s.logger.Error("Agent iteration error", "error", part.Err)
-			return currentAssistantMsg, fmt.Errorf("agent error: %w", part.Err)
+			// Other errors (including context length) are handled by ModelRetryConfig
+			// If we reach here, all retries have been exhausted
+			s.logger.Error("Agent iteration error", "error", chunk.Err)
+			return currentAssistantMsg, fmt.Errorf("agent error: %w", chunk.Err)
 		}
 
-		// Update current agent name if changed
-		if part.AgentName != "" && part.AgentName != currentAgentName {
-			currentAgentName = part.AgentName
-			s.logger.Debug("Agent switched", "agentName", currentAgentName)
-
-			// Send agent switch notification to frontend
-			sendChunk(&models.ChatCompletionChunk{
-				ID:             currentAssistantMsg.ID,
-				Object:         "chat.completion.chunk",
-				Created:        time.Now().Unix(),
-				Model:          modelID,
-				ConversationID: conv.ID,
-				Choices: []models.ChatCompletionChunkChoice{
-					{
-						Index: 0,
-						Delta: models.ChatCompletionChunkDelta{
-							AgentName: currentAgentName,
-						},
-					},
-				},
-			})
+		// Update current agent name from chunk (each chunk carries its agent name)
+		if chunk.AgentName != "" {
+			currentAgentName = chunk.AgentName
 		}
 
 		// Skip events with no output (e.g., transfer actions)
-		if part.Output == nil || part.Output.MessageOutput == nil {
+		if chunk.Output == nil || chunk.Output.MessageOutput == nil {
 			s.logger.Debug("Skipping event with no message output",
-				"agentName", part.AgentName,
-				"hasAction", part.Action != nil)
+				"agentName", chunk.AgentName,
+				"hasAction", chunk.Action != nil)
 			continue
 		}
 
 		// Check the role of this message output
-		msgRole := part.Output.MessageOutput.Role
+		msgRole := chunk.Output.MessageOutput.Role
 
 		if msgRole == schema.Tool {
 			// This is a tool execution result
-			fullMsg, err := part.Output.MessageOutput.GetMessage()
+			fullMsg, err := chunk.Output.MessageOutput.GetMessage()
 			if err != nil {
 				s.logger.Error("Failed to get tool result message", "error", err)
 				continue
@@ -1977,9 +2613,10 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			// Get current round index from the assistant message
 			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
 
-			// Add tool result to current assistant message's parts
-			currentAssistantMsg.AddToolResultPart(fullMsg.ToolCallID, fullMsg.ToolName, fullMsg.Content, roundIndex)
-			s.SaveMessage(currentAssistantMsg)
+			// Add tool result to current assistant message's chunks and save to database
+			if err := s.AddAndSaveToolResultChunk(currentAssistantMsg, fullMsg.ToolCallID, fullMsg.ToolName, fullMsg.Content, roundIndex, currentAgentName); err != nil {
+				s.logger.Warn("Failed to save tool result chunk", "error", err)
+			}
 
 			// Send tool result chunk to frontend
 			sendChunk(&models.ChatCompletionChunk{
@@ -2007,26 +2644,18 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			var streamedMsg *schema.Message
 			var err error
 
+			// Get current round index for this response
+			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
+
 			// Check if this is a streaming message
-			if part.Output.MessageOutput.IsStreaming && part.Output.MessageOutput.MessageStream != nil {
-				var iterChunks []*schema.Message
+			if chunk.Output.MessageOutput.IsStreaming && chunk.Output.MessageOutput.MessageStream != nil {
+				// Collect all chunks for concatenation at the end (to get tool calls)
+				var allChunks []*schema.Message
+
 				for {
 					// Check for cancellation during streaming
 					select {
 					case <-ctx.Done():
-						// Concat accumulated chunks and save before returning
-						if len(iterChunks) > 0 {
-							concatMsg, concatErr := schema.ConcatMessages(iterChunks)
-							if concatErr == nil {
-								roundIndex := currentAssistantMsg.GetMaxRoundIndex()
-								if concatMsg.ReasoningContent != "" {
-									currentAssistantMsg.AddReasoningPart(concatMsg.ReasoningContent, roundIndex)
-								}
-								if concatMsg.Content != "" {
-									currentAssistantMsg.AddTextPart(concatMsg.Content, roundIndex)
-								}
-							}
-						}
 						if !cancelled {
 							cancelled = true
 							currentAssistantMsg.Status = models.MessageStatusCompleted
@@ -2037,26 +2666,13 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					default:
 					}
 
-					chunk, recvErr := part.Output.MessageOutput.MessageStream.Recv()
+					chunk, recvErr := chunk.Output.MessageOutput.MessageStream.Recv()
 					if errors.Is(recvErr, io.EOF) {
 						break
 					}
 					if recvErr != nil {
 						// Check if error is due to context cancellation
 						if ctx.Err() != nil || errors.Is(recvErr, context.Canceled) {
-							// Save accumulated content before returning
-							if len(iterChunks) > 0 {
-								concatMsg, concatErr := schema.ConcatMessages(iterChunks)
-								if concatErr == nil {
-									roundIndex := currentAssistantMsg.GetMaxRoundIndex()
-									if concatMsg.ReasoningContent != "" {
-										currentAssistantMsg.AddReasoningPart(concatMsg.ReasoningContent, roundIndex)
-									}
-									if concatMsg.Content != "" {
-										currentAssistantMsg.AddTextPart(concatMsg.Content, roundIndex)
-									}
-								}
-							}
 							if !cancelled {
 								cancelled = true
 								currentAssistantMsg.Status = models.MessageStatusCompleted
@@ -2069,10 +2685,17 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 						return currentAssistantMsg, fmt.Errorf("stream error: %w", recvErr)
 					}
 
-					iterChunks = append(iterChunks, chunk)
+					// Collect chunk for tool calls extraction at the end
+					allChunks = append(allChunks, chunk)
 
-					// Send content and reasoning deltas to client
+					// Real-time save each chunk to database and send to client
 					if chunk.Content != "" {
+						// Save chunk to database and add to message.Chunks
+						if err := s.AddAndSaveTextChunk(currentAssistantMsg, chunk.Content, roundIndex, currentAgentName); err != nil {
+							s.logger.Warn("Failed to save streaming text chunk", "error", err)
+						}
+
+						// Send to client
 						sendChunk(&models.ChatCompletionChunk{
 							ID:             currentAssistantMsg.ID,
 							Object:         "chat.completion.chunk",
@@ -2091,6 +2714,12 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 						})
 					}
 					if chunk.ReasoningContent != "" {
+						// Save chunk to database and add to message.Chunks
+						if err := s.AddAndSaveReasoningChunk(currentAssistantMsg, chunk.ReasoningContent, roundIndex, currentAgentName); err != nil {
+							s.logger.Warn("Failed to save streaming reasoning chunk", "error", err)
+						}
+
+						// Send to client
 						sendChunk(&models.ChatCompletionChunk{
 							ID:             currentAssistantMsg.ID,
 							Object:         "chat.completion.chunk",
@@ -2110,24 +2739,30 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					}
 				}
 
-				// Concat streaming chunks to get the full message
-				if len(iterChunks) > 0 {
-					streamedMsg, err = schema.ConcatMessages(iterChunks)
+				// Concat all chunks to get the complete message (including tool calls)
+				if len(allChunks) > 0 {
+					streamedMsg, err = schema.ConcatMessages(allChunks)
 					if err != nil {
-						s.logger.Error("Failed to concat messages", "error", err)
-						return currentAssistantMsg, fmt.Errorf("failed to concat messages: %w", err)
+						s.logger.Error("Failed to concat streaming messages", "error", err)
+						streamedMsg = &schema.Message{Role: schema.Assistant}
 					}
+				} else {
+					streamedMsg = &schema.Message{Role: schema.Assistant}
 				}
 			} else {
 				// Non-streaming message - get it directly
-				streamedMsg, err = part.Output.MessageOutput.GetMessage()
+				streamedMsg, err = chunk.Output.MessageOutput.GetMessage()
 				if err != nil {
 					s.logger.Error("Failed to get message", "error", err)
 					continue
 				}
 
-				// Send non-streaming content to client
+				// Save and send non-streaming content
 				if streamedMsg.Content != "" {
+					if err := s.AddAndSaveTextChunk(currentAssistantMsg, streamedMsg.Content, roundIndex, currentAgentName); err != nil {
+						s.logger.Warn("Failed to save text chunk", "error", err)
+					}
+
 					sendChunk(&models.ChatCompletionChunk{
 						ID:             currentAssistantMsg.ID,
 						Object:         "chat.completion.chunk",
@@ -2146,6 +2781,10 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					})
 				}
 				if streamedMsg.ReasoningContent != "" {
+					if err := s.AddAndSaveReasoningChunk(currentAssistantMsg, streamedMsg.ReasoningContent, roundIndex, currentAgentName); err != nil {
+						s.logger.Warn("Failed to save reasoning chunk", "error", err)
+					}
+
 					sendChunk(&models.ChatCompletionChunk{
 						ID:             currentAssistantMsg.ID,
 						Object:         "chat.completion.chunk",
@@ -2163,64 +2802,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 						},
 					})
 				}
-			}
-
-			// Skip if no message
-			if streamedMsg == nil {
-				continue
-			}
-
-			// Get current round index
-			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
-
-			// Update current assistant message parts
-			if streamedMsg.ReasoningContent != "" {
-				currentAssistantMsg.AddReasoningPart(streamedMsg.ReasoningContent, roundIndex)
-			}
-			if streamedMsg.Content != "" {
-				currentAssistantMsg.AddTextPart(streamedMsg.Content, roundIndex)
-			}
-
-			// Handle tool calls if present
-			if len(streamedMsg.ToolCalls) > 0 {
-				// Add tool calls to parts
-				for i, tc := range streamedMsg.ToolCalls {
-					currentAssistantMsg.AddToolCallPart(tc.ID, tc.Function.Name, tc.Function.Arguments, roundIndex)
-
-					// Send tool call chunk to client with index
-					tcIndex := i
-					sendChunk(&models.ChatCompletionChunk{
-						ID:             currentAssistantMsg.ID,
-						Object:         "chat.completion.chunk",
-						Created:        time.Now().Unix(),
-						Model:          modelID,
-						ConversationID: conv.ID,
-						Choices: []models.ChatCompletionChunkChoice{
-							{
-								Index: 0,
-								Delta: models.ChatCompletionChunkDelta{
-									AgentName: currentAgentName,
-									ToolCalls: []models.ToolCall{{
-										Index: &tcIndex,
-										ID:    tc.ID,
-										Type:  tc.Type,
-										Function: models.FunctionCall{
-											Name:      tc.Function.Name,
-											Arguments: tc.Function.Arguments,
-										},
-									}},
-								},
-							},
-						},
-					})
-				}
-				// Save current state - tool execution will happen in next iteration
-				s.SaveMessage(currentAssistantMsg)
-			} else {
-				// No tool calls - this is the final response
-				currentAssistantMsg.Status = models.MessageStatusCompleted
-				currentAssistantMsg.FinishReason = models.FinishReasonStop
-				s.SaveMessage(currentAssistantMsg)
 			}
 		}
 	}
@@ -2250,10 +2831,12 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 	// Trigger async memory extraction after conversation round completes
 	if s.memoryExtractionService != nil {
+		// Capture modelID for the goroutine
+		extractModelID := modelID
 		go func() {
 			extractCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := s.memoryExtractionService.AnalyzeAndUpdateConversation(extractCtx, conv.WorkspaceID, conv.ID); err != nil {
+			if err := s.memoryExtractionService.AnalyzeAndUpdateConversation(extractCtx, conv.WorkspaceID, conv.ID, extractModelID); err != nil {
 				s.logger.Debug("Async memory extraction failed", "error", err)
 			}
 		}()
@@ -2271,11 +2854,11 @@ func (s *ChatService) ToAPIMessage(msg *models.Message) models.ChatCompletionMes
 		Name: msg.Name,
 	}
 
-	// Extract content from Parts
+	// Extract content from Chunks
 	apiMsg.Content = msg.GetTextContent()
 	apiMsg.ReasoningContent = msg.GetReasoningContent()
 
-	// Extract tool calls from Parts and convert to models.ToolCall
+	// Extract tool calls from Chunks and convert to models.ToolCall
 	dbToolCalls := msg.GetToolCalls()
 	if len(dbToolCalls) > 0 {
 		apiMsg.ToolCalls = make([]models.ToolCall, len(dbToolCalls))
@@ -2292,15 +2875,6 @@ func (s *ChatService) ToAPIMessage(msg *models.Message) models.ChatCompletionMes
 	}
 
 	return apiMsg
-}
-
-// ToAPIMessages converts database Messages to API format
-func (s *ChatService) ToAPIMessages(messages []models.Message) []models.ChatCompletionMessage {
-	result := make([]models.ChatCompletionMessage, len(messages))
-	for i, msg := range messages {
-		result[i] = s.ToAPIMessage(&msg)
-	}
-	return result
 }
 
 // buildWorkspaceAgent builds an ADK Agent from a WorkspaceAgent configuration
@@ -2356,10 +2930,12 @@ func (s *ChatService) buildWorkspaceAgent(ctx context.Context, agentID, workspac
 
 // buildAgentFromConfig builds an ADK Agent from an Agent configuration
 func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *models.Agent, defaultModelID string, baseTools []tool.BaseTool, wsAgent *models.WorkspaceAgent, workspaceID string, conversationID string) (adk.Agent, error) {
-	// Determine model ID
+	// Determine model ID (format: provider/model)
 	modelID := defaultModelID
-	if agentConfig.ModelName != nil && *agentConfig.ModelName != "" {
-		modelID = *agentConfig.ModelName
+	if agentConfig.ModelProvider != nil && *agentConfig.ModelProvider != "" &&
+		agentConfig.ModelName != nil && *agentConfig.ModelName != "" {
+		// Use agent's configured provider and model
+		modelID = *agentConfig.ModelProvider + "/" + *agentConfig.ModelName
 	}
 
 	// Get chat model
@@ -2368,31 +2944,14 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		return nil, fmt.Errorf("failed to get chat model for agent %s: %w", agentConfig.Name, err)
 	}
 
-	// Build instruction
+	// Build static instruction (for context cache optimization)
 	instruction := ""
 	if agentConfig.Instruction != nil {
 		instruction = *agentConfig.Instruction
 	}
 
-	// Append built-in workspace context to instruction
-	// This ensures workspace info, assets, and browser context are always available
-	if workspaceID != "" {
-		workspaceContext := s.getWorkspaceInfoContext(workspaceID)
-		if workspaceContext != "" {
-			if instruction != "" {
-				instruction += "\n\n"
-			}
-			instruction += workspaceContext
-		}
-
-		assetContext := s.getWorkspaceAssetContext(workspaceID)
-		if assetContext != "" {
-			if instruction != "" {
-				instruction += "\n\n"
-			}
-			instruction += assetContext
-		}
-	}
+	// Create GenModelInput for dynamic context injection
+	genModelInput := s.createGenModelInput(workspaceID, conversationID)
 
 	// Filter tools based on agent's toolIds
 	agentTools := baseTools
@@ -2419,19 +2978,27 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		maxIterations = *agentConfig.MaxIterations
 	}
 
+	// Create context reduction middleware and retry config
+	// Pass agentConfig.Name as rootAgentName to ensure only root agent triggers compression
+	middlewares := s.createCompressionMiddlewares(conversationID, workspaceID, agentConfig.Name)
+	retryConfig := s.createModelRetryConfig(conversationID)
+
 	// Build agent based on type
 	switch agentConfig.Type {
 	case "chat_model":
 		return adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:        agentConfig.Name,
-			Description: ptrToString(agentConfig.Description),
-			Instruction: instruction,
-			Model:       chatModel,
+			Name:          agentConfig.Name,
+			Description:   ptrToString(agentConfig.Description),
+			Instruction:   instruction,
+			GenModelInput: genModelInput,
+			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
 				EmitInternalEvents: true, // Enable streaming from agent tools
 			},
-			MaxIterations: maxIterations,
+			MaxIterations:    maxIterations,
+			Middlewares:      middlewares,
+			ModelRetryConfig: retryConfig,
 		})
 
 	case "supervisor":
@@ -2452,15 +3019,18 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 		}
 		// Create the supervisor agent itself (a ChatModelAgent)
 		supervisorAgent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:        agentConfig.Name,
-			Description: ptrToString(agentConfig.Description),
-			Instruction: instruction,
-			Model:       chatModel,
+			Name:          agentConfig.Name,
+			Description:   ptrToString(agentConfig.Description),
+			Instruction:   instruction,
+			GenModelInput: genModelInput,
+			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
 				EmitInternalEvents: true, // Enable streaming from sub-agents
 			},
-			MaxIterations: maxIterations,
+			MaxIterations:    maxIterations,
+			Middlewares:      middlewares,
+			ModelRetryConfig: retryConfig,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create supervisor agent: %w", err)
@@ -2562,15 +3132,18 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 
 		// Create executor agent - a ChatModelAgent with tools
 		executor, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
-			Name:        agentConfig.Name + "_executor",
-			Description: "Executes individual steps of the plan",
-			Instruction: instruction,
-			Model:       chatModel,
+			Name:          agentConfig.Name + "_executor",
+			Description:   "Executes individual steps of the plan",
+			Instruction:   instruction,
+			GenModelInput: genModelInput,
+			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
 				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
 				EmitInternalEvents: true, // Enable streaming from agent tools
 			},
-			MaxIterations: maxIterations,
+			MaxIterations:    maxIterations,
+			Middlewares:      middlewares,
+			ModelRetryConfig: retryConfig,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create executor: %w", err)

@@ -45,12 +45,13 @@ interface ModelCapabilities {
   context_caching?: boolean;
   realtime?: boolean;
   batch?: boolean;
-  fine_tuning?: boolean;
 }
 
 interface ModelLimits {
   context_window?: number;
   max_tokens?: number;
+  dimensions?: number[];  // Embedding output dimensions (first is default)
+  batch_size?: number;    // Max batch size for embedding
 }
 
 interface ModelPreset {
@@ -93,6 +94,82 @@ const MODEL_CAPABILITY_OPTIONS: { key: keyof ModelCapabilities; label: string }[
   { key: "batch", label: "Batch" },
 ];
 
+// Task type to capabilities mapping
+const TASK_TYPE_CAPABILITY_MAPPING: Record<string, (keyof ModelCapabilities)[]> = {
+  chat: ["reasoning", "function_call", "streaming", "json_mode", "system_prompt", "context_caching", "batch"],
+  text_embedding: ["batch"],
+  rerank: ["batch"],
+  image_understanding: ["streaming", "batch"],
+  image_generation: ["batch"],
+  speech_to_text: ["streaming", "batch", "realtime"],
+  text_to_speech: ["streaming", "batch"],
+  video_understanding: ["streaming", "batch"],
+  video_generation: ["batch"],
+};
+
+// Get capability options based on task types
+function getCapabilityOptionsForTaskTypes(taskTypes?: string[]): { key: keyof ModelCapabilities; label: string }[] {
+  if (!taskTypes || taskTypes.length === 0) {
+    return MODEL_CAPABILITY_OPTIONS;
+  }
+
+  const allowedCaps = new Set<keyof ModelCapabilities>();
+  for (const task of taskTypes) {
+    const caps = TASK_TYPE_CAPABILITY_MAPPING[task];
+    if (caps) {
+      caps.forEach(c => allowedCaps.add(c));
+    }
+  }
+
+  if (allowedCaps.size === 0) {
+    return MODEL_CAPABILITY_OPTIONS;
+  }
+
+  return MODEL_CAPABILITY_OPTIONS.filter(cap => allowedCaps.has(cap.key));
+}
+
+// Limits configuration for dynamic rendering
+interface LimitsConfig {
+  showContextWindow: boolean;
+  showMaxTokens: boolean;
+  showBatchSize: boolean;
+  showDimensions: boolean;
+  contextWindowLabel?: string;
+}
+
+// Get limits config based on task types and capabilities
+function getLimitsConfigForTaskTypes(taskTypes?: string[], capabilities?: ModelCapabilities): LimitsConfig {
+  const hasBatch = capabilities?.batch ?? false;
+  const tasks = new Set(taskTypes || []);
+
+  // Check what kind of tasks are selected
+  const hasChat = tasks.has("chat");
+  const hasEmbedding = tasks.has("text_embedding") || tasks.has("rerank");
+  const hasUnderstanding = tasks.has("image_understanding") || tasks.has("video_understanding");
+  const hasAudio = tasks.has("speech_to_text") || tasks.has("text_to_speech");
+
+  // Determine what to show
+  const showContextWindow = hasChat || hasEmbedding || hasUnderstanding || tasks.has("text_to_speech");
+  const showMaxTokens = hasChat || hasUnderstanding; // Output token limit for generation tasks
+  const showDimensions = hasEmbedding; // Dimensions is inherent to embedding models
+
+  // Determine label
+  let contextWindowLabel = "Context Window";
+  if (hasEmbedding && !hasChat) {
+    contextWindowLabel = "Max Input Tokens";
+  } else if (hasAudio && !hasChat) {
+    contextWindowLabel = "Max Input Length";
+  }
+
+  return {
+    showContextWindow,
+    showMaxTokens,
+    showBatchSize: hasBatch,
+    showDimensions,
+    contextWindowLabel,
+  };
+}
+
 // Domain definitions
 const DOMAINS: { value: ModelDomain; label: string }[] = [
   { value: "language", label: "Language" },
@@ -103,49 +180,43 @@ const DOMAINS: { value: ModelDomain; label: string }[] = [
   { value: "multimodal", label: "Multimodal" },
 ];
 
-// Task type definitions grouped by domain
-const TASK_TYPES: { value: string; label: string; domain: ModelDomain }[] = [
-  // Language
-  { value: "chat", label: "Chat / Completion", domain: "language" },
-  // Embedding
-  { value: "text_embedding", label: "Text Embedding", domain: "embedding" },
-  { value: "rerank", label: "Rerank", domain: "embedding" },
-  // Vision
-  { value: "image_understanding", label: "Image Understanding", domain: "vision" },
-  { value: "image_generation", label: "Image Generation", domain: "vision" },
-  // Audio
-  { value: "speech_to_text", label: "Speech to Text", domain: "audio" },
-  { value: "text_to_speech", label: "Text to Speech", domain: "audio" },
-  // Video
-  { value: "video_understanding", label: "Video Understanding", domain: "video" },
-  { value: "video_generation", label: "Video Generation", domain: "video" },
+// Task type definitions
+const TASK_TYPES: { value: string; label: string }[] = [
+  { value: "chat", label: "Chat / Completion" },
+  { value: "text_embedding", label: "Text Embedding" },
+  { value: "rerank", label: "Rerank" },
+  { value: "image_understanding", label: "Image Understanding" },
+  { value: "image_generation", label: "Image Generation" },
+  { value: "speech_to_text", label: "Speech to Text" },
+  { value: "text_to_speech", label: "Text to Speech" },
+  { value: "video_understanding", label: "Video Understanding" },
+  { value: "video_generation", label: "Video Generation" },
 ];
 
 // Domain to task types mapping
 const DOMAIN_TASK_MAPPING: Record<ModelDomain, string[]> = {
   language: ["chat"],
   embedding: ["text_embedding", "rerank"],
-  vision: ["image_understanding", "image_generation"],
-  audio: ["speech_to_text", "text_to_speech"],
-  video: ["video_understanding", "video_generation"],
-  multimodal: ["chat", "image_understanding", "speech_to_text", "text_to_speech", "video_understanding"],
+  vision: ["chat", "image_understanding", "image_generation"],
+  audio: ["chat", "speech_to_text", "text_to_speech"],
+  video: ["chat", "video_understanding", "video_generation"],
+  multimodal: ["chat", "image_understanding", "image_generation", "speech_to_text", "text_to_speech", "video_understanding", "video_generation"],
 };
 
 // ============================================================
 // Helper Functions
 // ============================================================
 
-function formatTaskTypes(taskTypes?: string[]) {
-  if (!taskTypes?.length) return "-";
-  return taskTypes.map(t => {
-    const task = TASK_TYPES.find(tt => tt.value === t);
-    return task?.label || t;
-  }).join(", ");
-}
 
 function getTaskTypeLabel(taskType: string) {
   const task = TASK_TYPES.find(t => t.value === taskType);
   return task?.label || taskType;
+}
+
+// Get task types for a specific domain
+function getTaskTypesForDomain(domain: string): { value: string; label: string }[] {
+  const allowedTasks = DOMAIN_TASK_MAPPING[domain as ModelDomain] || DOMAIN_TASK_MAPPING.language;
+  return TASK_TYPES.filter(t => allowedTasks.includes(t.value));
 }
 
 function getDomainLabel(domain: string) {
@@ -153,11 +224,6 @@ function getDomainLabel(domain: string) {
   return d?.label || domain;
 }
 
-// Check if domain needs limits and capabilities configuration
-// Only language/multimodal/vision models need context_window, max_tokens, and capabilities
-function needsLimitsAndCapabilities(domain: string): boolean {
-  return ["language", "multimodal", "vision"].includes(domain);
-}
 
 // ============================================================
 // Main Component
@@ -333,7 +399,7 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
     domain: "language",
     task_types: ["chat"],
     capabilities: { streaming: true, system_prompt: true },
-    limits: { context_window: 128000, max_tokens: 4096 },
+    limits: { context_window: 128000, max_tokens: 4096, dimensions: [] },
     base_url: "",
     extra: {},
   });
@@ -383,7 +449,7 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
       domain: "language",
       task_types: ["chat"],
       capabilities: { streaming: true, system_prompt: true },
-      limits: { context_window: 128000, max_tokens: 4096 },
+      limits: { context_window: 128000, max_tokens: 4096, dimensions: [] },
       base_url: provider?.base_url || "",
       extra: {},
     });
@@ -401,24 +467,19 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
     setSaving(true);
     setError("");
     const overrides = presetOverrides[preset.model] || {};
-    const domain = overrides.domain || preset.domain;
-    const needsConfig = needsLimitsAndCapabilities(domain);
 
     const payload: Record<string, unknown> = {
       provider: selectedProvider,
       model: overrides.model || preset.model,
       name: overrides.name || preset.name,
-      domain: domain,
+      domain: overrides.domain || preset.domain,
       task_types: overrides.task_types || preset.task_types,
       base_url: customModel.base_url || provider?.base_url || "",
       api_key: apiKey,
       extra: customModel.extra,
+      capabilities: overrides.capabilities || preset.capabilities,
+      limits: overrides.limits || preset.limits,
     };
-    // Only include limits and capabilities for domains that need them
-    if (needsConfig) {
-      payload.capabilities = overrides.capabilities || preset.capabilities;
-      payload.limits = overrides.limits || preset.limits;
-    }
     try {
       const res = await fetch(getApiUrl("/api/models"), {
         method: "POST",
@@ -449,7 +510,6 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
     setSaving(true);
     setError("");
 
-    const needsConfig = needsLimitsAndCapabilities(customModel.domain);
     const payload: Record<string, unknown> = {
       provider: selectedProvider,
       model: customModel.model,
@@ -459,12 +519,9 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
       base_url: customModel.base_url || provider?.base_url || "",
       api_key: apiKey,
       extra: customModel.extra,
+      capabilities: customModel.capabilities,
+      limits: customModel.limits,
     };
-    // Only include limits and capabilities for domains that need them
-    if (needsConfig) {
-      payload.capabilities = customModel.capabilities;
-      payload.limits = customModel.limits;
-    }
     try {
       const res = await fetch(getApiUrl("/api/models"), {
         method: "POST",
@@ -698,125 +755,84 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                       <Collapse in={isExpanded}>
                         <Box px={2} pb={2} pt={1} bgcolor="#fafafa" borderTop="1px solid #eee">
                           <Box display="flex" flexDirection="column" gap={1.5}>
-                            <Box>
-                              <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                Model ID
-                              </Typography>
-                              <TextField
-                                size="small"
-                                fullWidth
-                                value={override.model ?? preset.model}
-                                onChange={(e) => updatePresetOverride(preset.model, "model", e.target.value)}
-                              />
+                            <Box display="flex" gap={2}>
+                              <Box flex={1}>
+                                <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                  Model ID
+                                </Typography>
+                                <TextField
+                                  size="small"
+                                  fullWidth
+                                  value={override.model ?? preset.model}
+                                  onChange={(e) => updatePresetOverride(preset.model, "model", e.target.value)}
+                                />
+                              </Box>
+                              <Box flex={1}>
+                                <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                  Display Name
+                                </Typography>
+                                <TextField
+                                  size="small"
+                                  fullWidth
+                                  value={override.name ?? preset.name}
+                                  onChange={(e) => updatePresetOverride(preset.model, "name", e.target.value)}
+                                />
+                              </Box>
+                            </Box>
+                            <Box display="flex" gap={2}>
+                              <Box flex={1}>
+                                <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                  Model Domain
+                                </Typography>
+                                <FormControl size="small" fullWidth>
+                                  <Select
+                                    value={override.domain ?? preset.domain}
+                                    onChange={(e) => {
+                                      const newDomain = e.target.value as ModelDomain;
+                                      updatePresetOverride(preset.model, "domain", newDomain);
+                                      // Reset task_types to default for new domain
+                                      updatePresetOverride(preset.model, "task_types", DOMAIN_TASK_MAPPING[newDomain]?.slice(0, 1) || ["chat"]);
+                                    }}
+                                  >
+                                    {DOMAINS.map((d) => (
+                                      <MenuItem key={d.value} value={d.value} sx={{ fontSize: 13 }}>
+                                        {d.label}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              </Box>
+                              <Box flex={1}>
+                                <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                  Task Types
+                                </Typography>
+                                <FormControl size="small" fullWidth>
+                                  <Select
+                                    multiple
+                                    value={override.task_types ?? preset.task_types ?? []}
+                                    renderValue={(selected) => {
+                                      const arr = selected as string[];
+                                      if (arr.length === 0) return "-";
+                                      if (arr.length === 1) return getTaskTypeLabel(arr[0]);
+                                      return `${arr.length} selected`;
+                                    }}
+                                    onChange={(e) => updatePresetOverride(preset.model, "task_types", e.target.value as string[])}
+                                  >
+                                    {getTaskTypesForDomain(override.domain ?? preset.domain).map((t) => (
+                                      <MenuItem key={t.value} value={t.value} sx={{ fontSize: 13 }}>
+                                        {t.label}
+                                      </MenuItem>
+                                    ))}
+                                  </Select>
+                                </FormControl>
+                              </Box>
                             </Box>
                             <Box>
                               <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                Display Name
+                                Capabilities
                               </Typography>
-                              <TextField
-                                size="small"
-                                fullWidth
-                                value={override.name ?? preset.name}
-                                onChange={(e) => updatePresetOverride(preset.model, "name", e.target.value)}
-                              />
-                            </Box>
-                            <Box>
-                              <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                Model Domain
-                              </Typography>
-                              <FormControl size="small" fullWidth>
-                                <Select
-                                  value={override.domain ?? preset.domain}
-                                  onChange={(e) => {
-                                    const newDomain = e.target.value as ModelDomain;
-                                    const needsConfig = needsLimitsAndCapabilities(newDomain);
-                                    updatePresetOverride(preset.model, "domain", newDomain);
-                                    // Reset task_types to default for new domain
-                                    updatePresetOverride(preset.model, "task_types", DOMAIN_TASK_MAPPING[newDomain]?.slice(0, 1) || ["chat"]);
-                                    // Clear limits and capabilities for non-chat domains
-                                    if (!needsConfig) {
-                                      updatePresetOverride(preset.model, "limits", { context_window: 0, max_tokens: 0 });
-                                      updatePresetOverride(preset.model, "capabilities", {});
-                                    }
-                                  }}
-                                >
-                                  {DOMAINS.map((d) => (
-                                    <MenuItem key={d.value} value={d.value} sx={{ fontSize: 13 }}>
-                                      {d.label}
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
-                            </Box>
-                            <Box>
-                              <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                Task Types
-                              </Typography>
-                              <FormControl size="small" fullWidth>
-                                <Select
-                                  multiple
-                                  value={override.task_types ?? preset.task_types ?? []}
-                                  renderValue={(selected) => (selected as string[]).map(t => getTaskTypeLabel(t)).join(", ")}
-                                  onChange={(e) => updatePresetOverride(preset.model, "task_types", e.target.value as string[])}
-                                >
-                                  {TASK_TYPES.map((t) => (
-                                    <MenuItem key={t.value} value={t.value} sx={{ fontSize: 13 }}>
-                                      {t.label}
-                                    </MenuItem>
-                                  ))}
-                                </Select>
-                              </FormControl>
-                            </Box>
-                            {needsLimitsAndCapabilities(override.domain ?? preset.domain) && (
-                              <>
-                                <Box>
-                                  <Box display="flex" gap={1}>
-                                    <Box flex={1}>
-                                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                        Context Window
-                                      </Typography>
-                                      <TextField
-                                        size="small"
-                                        fullWidth
-                                        type="number"
-                                        value={(override.limits ?? preset.limits)?.context_window || 0}
-                                        onChange={(e) => {
-                                          const currentLimits = override.limits ?? preset.limits ?? {};
-                                          updatePresetOverride(preset.model, "limits", {
-                                            ...currentLimits,
-                                            context_window: parseInt(e.target.value) || 0,
-                                          });
-                                        }}
-                                        inputProps={{ min: 0 }}
-                                      />
-                                    </Box>
-                                    <Box flex={1}>
-                                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                        Max Tokens
-                                      </Typography>
-                                      <TextField
-                                        size="small"
-                                        fullWidth
-                                        type="number"
-                                        value={(override.limits ?? preset.limits)?.max_tokens || 0}
-                                        onChange={(e) => {
-                                          const currentLimits = override.limits ?? preset.limits ?? {};
-                                          updatePresetOverride(preset.model, "limits", {
-                                            ...currentLimits,
-                                            max_tokens: parseInt(e.target.value) || 0,
-                                          });
-                                        }}
-                                        inputProps={{ min: 0 }}
-                                      />
-                                    </Box>
-                                  </Box>
-                                </Box>
-                                <Box>
-                                  <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                                    Capabilities
-                                  </Typography>
-                                  <Box display="flex" flexWrap="wrap" gap={0.5}>
-                                    {MODEL_CAPABILITY_OPTIONS.map((cap) => {
+                              <Box display="flex" flexWrap="wrap" gap={0.5}>
+                                {getCapabilityOptionsForTaskTypes(override.task_types ?? preset.task_types).map((cap) => {
                                       const caps = override.capabilities ?? preset.capabilities;
                                       const isActive = caps[cap.key];
                                       return (
@@ -835,9 +851,132 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                                       );
                                     })}
                                   </Box>
-                                </Box>
-                              </>
-                            )}
+                            </Box>
+                            {(() => {
+                              const limitsConfig = getLimitsConfigForTaskTypes(
+                                override.task_types ?? preset.task_types,
+                                override.capabilities ?? preset.capabilities
+                              );
+                                  const hasAnyLimit = limitsConfig.showContextWindow || limitsConfig.showMaxTokens || limitsConfig.showBatchSize;
+                                  if (!hasAnyLimit) return null;
+                                  return (
+                                    <Box>
+                                      <Box display="flex" gap={1}>
+                                        {limitsConfig.showContextWindow && (
+                                          <Box flex={1}>
+                                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                              {limitsConfig.contextWindowLabel || "Context Window"}
+                                            </Typography>
+                                            <TextField
+                                              size="small"
+                                              fullWidth
+                                              type="number"
+                                              value={(override.limits ?? preset.limits)?.context_window || 0}
+                                              onChange={(e) => {
+                                                const currentLimits = override.limits ?? preset.limits ?? {};
+                                                updatePresetOverride(preset.model, "limits", {
+                                                  ...currentLimits,
+                                                  context_window: parseInt(e.target.value) || 0,
+                                                });
+                                              }}
+                                              inputProps={{ min: 0 }}
+                                            />
+                                          </Box>
+                                        )}
+                                        {limitsConfig.showBatchSize && (
+                                          <Box flex={1}>
+                                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                              Batch Size
+                                            </Typography>
+                                            <TextField
+                                              size="small"
+                                              fullWidth
+                                              type="number"
+                                              value={(override.limits ?? preset.limits)?.batch_size || 0}
+                                              onChange={(e) => {
+                                                const currentLimits = override.limits ?? preset.limits ?? {};
+                                                updatePresetOverride(preset.model, "limits", {
+                                                  ...currentLimits,
+                                                  batch_size: parseInt(e.target.value) || 0,
+                                                });
+                                              }}
+                                              inputProps={{ min: 0 }}
+                                            />
+                                          </Box>
+                                        )}
+                                        {limitsConfig.showMaxTokens && (
+                                          <Box flex={1}>
+                                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                              Max Tokens
+                                            </Typography>
+                                            <TextField
+                                              size="small"
+                                              fullWidth
+                                              type="number"
+                                              value={(override.limits ?? preset.limits)?.max_tokens || 0}
+                                              onChange={(e) => {
+                                                const currentLimits = override.limits ?? preset.limits ?? {};
+                                                updatePresetOverride(preset.model, "limits", {
+                                                  ...currentLimits,
+                                                  max_tokens: parseInt(e.target.value) || 0,
+                                                });
+                                              }}
+                                              inputProps={{ min: 0 }}
+                                            />
+                                          </Box>
+                                        )}
+                                      </Box>
+                                    </Box>
+                                  );
+                                })()}
+                            {(() => {
+                              const limitsConfig = getLimitsConfigForTaskTypes(
+                                override.task_types ?? preset.task_types,
+                                override.capabilities ?? preset.capabilities
+                              );
+                              if (!limitsConfig.showDimensions) return null;
+                                  return (
+                                    <Box>
+                                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                        Dimensions
+                                      </Typography>
+                                      <Autocomplete
+                                        multiple
+                                        freeSolo
+                                        size="small"
+                                        options={[]}
+                                        value={((override.limits ?? preset.limits)?.dimensions || []).map(String)}
+                                        onChange={(_, newValue) => {
+                                          const currentLimits = override.limits ?? preset.limits ?? {};
+                                          const dims = newValue
+                                            .map(v => parseInt(String(v).trim()))
+                                            .filter(n => !isNaN(n) && n > 0);
+                                          updatePresetOverride(preset.model, "limits", {
+                                            ...currentLimits,
+                                            dimensions: dims,
+                                          });
+                                        }}
+                                        renderTags={(value, getTagProps) =>
+                                          value.map((option, index) => (
+                                            <Chip
+                                              {...getTagProps({ index })}
+                                              key={option}
+                                              label={option}
+                                              size="small"
+                                              sx={{ fontSize: 11 }}
+                                            />
+                                          ))
+                                        }
+                                        renderInput={(params) => (
+                                          <TextField
+                                            {...params}
+                                            placeholder={((override.limits ?? preset.limits)?.dimensions || []).length === 0 ? "Enter dimension and press Enter" : ""}
+                                          />
+                                        )}
+                                      />
+                                    </Box>
+                                  );
+                                })()}
                             <Box display="flex" justifyContent="flex-end" gap={1} mt={1}>
                               <Button
                                 size="small"
@@ -912,101 +1051,62 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                       />
                     </Box>
                   </Box>
-                  <Box>
-                    <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                      Domain
-                    </Typography>
-                    <FormControl size="small" fullWidth>
-                      <Select
-                        value={customModel.domain}
-                        onChange={(e) => {
-                          const newDomain = e.target.value as ModelDomain;
-                          const needsConfig = needsLimitsAndCapabilities(newDomain);
-                          setCustomModel((m) => ({
-                            ...m,
-                            domain: newDomain,
-                            task_types: DOMAIN_TASK_MAPPING[newDomain]?.slice(0, 1) || ["chat"],
-                            // Clear limits and capabilities for non-chat domains
-                            limits: needsConfig ? m.limits : { context_window: 0, max_tokens: 0 },
-                            capabilities: needsConfig ? m.capabilities : {},
-                          }));
-                        }}
-                      >
-                        {DOMAINS.map((d) => (
-                          <MenuItem key={d.value} value={d.value} sx={{ fontSize: 13 }}>
-                            {d.label}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
+                  <Box display="flex" gap={2}>
+                    <Box flex={1}>
+                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                        Domain
+                      </Typography>
+                      <FormControl size="small" fullWidth>
+                        <Select
+                          value={customModel.domain}
+                          onChange={(e) => {
+                            const newDomain = e.target.value as ModelDomain;
+                            setCustomModel((m) => ({
+                              ...m,
+                              domain: newDomain,
+                              task_types: DOMAIN_TASK_MAPPING[newDomain]?.slice(0, 1) || ["chat"],
+                            }));
+                          }}
+                        >
+                          {DOMAINS.map((d) => (
+                            <MenuItem key={d.value} value={d.value} sx={{ fontSize: 13 }}>
+                              {d.label}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
+                    <Box flex={1}>
+                      <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                        Task Types
+                      </Typography>
+                      <FormControl size="small" fullWidth>
+                        <Select
+                          multiple
+                          value={customModel.task_types}
+                          renderValue={(selected) => {
+                            const arr = selected as string[];
+                            if (arr.length === 0) return "-";
+                            if (arr.length === 1) return getTaskTypeLabel(arr[0]);
+                            return `${arr.length} selected`;
+                          }}
+                          onChange={(e) => setCustomModel((m) => ({ ...m, task_types: e.target.value as string[] }))}
+                        >
+                          {getTaskTypesForDomain(customModel.domain).map((t) => (
+                            <MenuItem key={t.value} value={t.value} sx={{ fontSize: 13 }}>
+                              {t.label}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Box>
                   </Box>
                   <Box>
                     <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                      Task Types
+                      Capabilities
                     </Typography>
-                    <FormControl size="small" fullWidth>
-                      <Select
-                        multiple
-                        value={customModel.task_types}
-                        renderValue={(selected) => (selected as string[]).map(t => getTaskTypeLabel(t)).join(", ")}
-                        onChange={(e) => setCustomModel((m) => ({ ...m, task_types: e.target.value as string[] }))}
-                      >
-                        {TASK_TYPES.map((t) => (
-                          <MenuItem key={t.value} value={t.value} sx={{ fontSize: 13 }}>
-                            {t.label}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </Box>
-                  {needsLimitsAndCapabilities(customModel.domain) && (
-                    <>
-                      <Box>
-                        <Box display="flex" gap={1}>
-                          <Box flex={1}>
-                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                              Context Window
-                            </Typography>
-                            <TextField
-                              size="small"
-                              fullWidth
-                              type="number"
-                              value={customModel.limits.context_window || 0}
-                              onChange={(e) =>
-                                setCustomModel((m) => ({
-                                  ...m,
-                                  limits: { ...m.limits, context_window: parseInt(e.target.value) || 0 },
-                                }))
-                              }
-                              inputProps={{ min: 0 }}
-                            />
-                          </Box>
-                          <Box flex={1}>
-                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                              Max Tokens
-                            </Typography>
-                            <TextField
-                              size="small"
-                              fullWidth
-                              type="number"
-                              value={customModel.limits.max_tokens || 0}
-                              onChange={(e) =>
-                                setCustomModel((m) => ({
-                                  ...m,
-                                  limits: { ...m.limits, max_tokens: parseInt(e.target.value) || 0 },
-                                }))
-                              }
-                              inputProps={{ min: 0 }}
-                            />
-                          </Box>
-                        </Box>
-                      </Box>
-                      <Box>
-                        <Typography fontSize={11} color="text.secondary" mb={0.5}>
-                          Capabilities
-                        </Typography>
-                        <Box display="flex" flexWrap="wrap" gap={0.5}>
-                          {MODEL_CAPABILITY_OPTIONS.map((cap) => {
+                    <Box display="flex" flexWrap="wrap" gap={0.5}>
+                      {getCapabilityOptionsForTaskTypes(customModel.task_types).map((cap) => {
                             const isActive = customModel.capabilities[cap.key];
                             return (
                               <Chip
@@ -1025,10 +1125,123 @@ const AddModelDialog: React.FC<AddModelDialogProps> = ({ open, onClose, provider
                               />
                             );
                           })}
-                        </Box>
-                      </Box>
-                    </>
-                  )}
+                    </Box>
+                  </Box>
+                  {(() => {
+                    const limitsConfig = getLimitsConfigForTaskTypes(customModel.task_types, customModel.capabilities);
+                    const hasAnyLimit = limitsConfig.showContextWindow || limitsConfig.showMaxTokens || limitsConfig.showBatchSize;
+                    if (!hasAnyLimit) return null;
+                        return (
+                          <Box>
+                            <Box display="flex" gap={1}>
+                              {limitsConfig.showContextWindow && (
+                                <Box flex={1}>
+                                  <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                    {limitsConfig.contextWindowLabel || "Context Window"}
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    type="number"
+                                    value={customModel.limits.context_window || 0}
+                                    onChange={(e) =>
+                                      setCustomModel((m) => ({
+                                        ...m,
+                                        limits: { ...m.limits, context_window: parseInt(e.target.value) || 0 },
+                                      }))
+                                    }
+                                    inputProps={{ min: 0 }}
+                                  />
+                                </Box>
+                              )}
+                              {limitsConfig.showBatchSize && (
+                                <Box flex={1}>
+                                  <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                    Batch Size
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    type="number"
+                                    value={customModel.limits.batch_size || 0}
+                                    onChange={(e) =>
+                                      setCustomModel((m) => ({
+                                        ...m,
+                                        limits: { ...m.limits, batch_size: parseInt(e.target.value) || 0 },
+                                      }))
+                                    }
+                                    inputProps={{ min: 0 }}
+                                  />
+                                </Box>
+                              )}
+                              {limitsConfig.showMaxTokens && (
+                                <Box flex={1}>
+                                  <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                                    Max Tokens
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    type="number"
+                                    value={customModel.limits.max_tokens || 0}
+                                    onChange={(e) =>
+                                      setCustomModel((m) => ({
+                                        ...m,
+                                        limits: { ...m.limits, max_tokens: parseInt(e.target.value) || 0 },
+                                      }))
+                                    }
+                                    inputProps={{ min: 0 }}
+                                  />
+                                </Box>
+                              )}
+                            </Box>
+                          </Box>
+                        );
+                      })()}
+                      {(() => {
+                        const limitsConfig = getLimitsConfigForTaskTypes(customModel.task_types, customModel.capabilities);
+                        if (!limitsConfig.showDimensions) return null;
+                        return (
+                          <Box>
+                            <Typography fontSize={11} color="text.secondary" mb={0.5}>
+                              Dimensions
+                            </Typography>
+                            <Autocomplete
+                              multiple
+                              freeSolo
+                              size="small"
+                              options={[]}
+                              value={(customModel.limits.dimensions || []).map(String)}
+                              onChange={(_, newValue) => {
+                                const dims = newValue
+                                  .map(v => parseInt(String(v).trim()))
+                                  .filter(n => !isNaN(n) && n > 0);
+                                setCustomModel((m) => ({
+                                  ...m,
+                                  limits: { ...m.limits, dimensions: dims },
+                                }));
+                              }}
+                              renderTags={(value, getTagProps) =>
+                                value.map((option, index) => (
+                                  <Chip
+                                    {...getTagProps({ index })}
+                                    key={option}
+                                    label={option}
+                                    size="small"
+                                    sx={{ fontSize: 11 }}
+                                  />
+                                ))
+                              }
+                              renderInput={(params) => (
+                                <TextField
+                                  {...params}
+                                  placeholder={(customModel.limits.dimensions || []).length === 0 ? "Enter dimension and press Enter" : ""}
+                                />
+                              )}
+                            />
+                          </Box>
+                        );
+                      })()}
                   <Box display="flex" justifyContent="flex-end" gap={1}>
                     <Button
                       variant="outlined"

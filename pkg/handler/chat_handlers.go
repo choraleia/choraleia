@@ -254,7 +254,6 @@ func (h *ChatHandler) GetMessages(c *gin.Context) {
 		return
 	}
 
-	// Return messages directly - db.Message structure matches API contract
 	c.JSON(http.StatusOK, gin.H{
 		"messages": messages,
 	})

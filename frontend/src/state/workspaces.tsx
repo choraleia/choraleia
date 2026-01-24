@@ -466,10 +466,14 @@ export type SpaceConfigInput = {
   assets: SpaceAssetsConfig;
   tools: ToolConfig[];
   agents: workspacesApi.WorkspaceAgent[];
+  // Compression configuration
+  compression_enabled?: boolean;
+  compression_model?: string;
   // Memory configuration
   memory_enabled?: boolean;
-  embedding_provider?: string;
   embedding_model?: string;
+  embedding_dimension?: number;
+  extraction_model?: string;
 };
 
 // Validate workspace name for K8s/DNS compatibility
@@ -875,10 +879,14 @@ export type Workspace = {
   agents: workspacesApi.WorkspaceAgent[];
   rooms: Room[];
   activeRoomId: string;
+  // Compression configuration
+  compression_enabled?: boolean;
+  compression_model?: string;
   // Memory configuration
   memory_enabled?: boolean;
-  embedding_provider?: string;
   embedding_model?: string;
+  embedding_dimension?: number;
+  extraction_model?: string;
   // File tree loaded from runtime environment (not persisted)
   fileTree: FileNode[];
   fileTreeLoading?: boolean;
@@ -993,8 +1001,6 @@ const createWorkspace = (name: string, colorIndex: number): Workspace => {
   };
 };
 
-const seedWorkspaces = (): Workspace[] => [createWorkspace("ops-research", 0)];
-
 export const createRoomConfigTemplate = (name = "new-space"): SpaceConfigInput => ({
   name: sanitizeWorkspaceName(name),
   description: "",
@@ -1006,9 +1012,12 @@ export const createRoomConfigTemplate = (name = "new-space"): SpaceConfigInput =
   },
   tools: [],
   agents: [],
+  compression_enabled: false,
+  compression_model: undefined,
   memory_enabled: false,
-  embedding_provider: undefined,
   embedding_model: undefined,
+  embedding_dimension: undefined,
+  extraction_model: undefined,
 });
 
 const findFileNode = (nodes: FileNode[], path: string): FileNode | undefined => {
@@ -1207,10 +1216,14 @@ const convertBackendWorkspace = (ws: workspacesApi.Workspace): Workspace => {
     agents: [],
     rooms,
     activeRoomId: ws.active_room_id || rooms[0]?.id || "",
+    // Compression configuration
+    compression_enabled: ws.compression_enabled,
+    compression_model: ws.compression_model,
     // Memory configuration
     memory_enabled: ws.memory_enabled,
-    embedding_provider: ws.embedding_provider,
     embedding_model: ws.embedding_model,
+    embedding_dimension: ws.embedding_dimension,
+    extraction_model: ws.extraction_model,
     workMode: "chat",  // Default to chat mode
     fileTree: [],  // Will be loaded from runtime environment
     fileTreeLoading: false,
@@ -1223,10 +1236,14 @@ const convertToBackendRequest = (ws: Workspace): workspacesApi.CreateWorkspaceRe
     name: ws.name,
     description: ws.description,
     color: ws.color,
+    // Compression configuration
+    compression_enabled: ws.compression_enabled,
+    compression_model: ws.compression_model,
     // Memory configuration
     memory_enabled: ws.memory_enabled,
-    embedding_provider: ws.embedding_provider,
     embedding_model: ws.embedding_model,
+    embedding_dimension: ws.embedding_dimension,
+    extraction_model: ws.extraction_model,
     runtime: ws.runtime ? {
       type: ws.runtime.type,
       docker_asset_id: ws.runtime.dockerAssetId,
@@ -1295,23 +1312,20 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
             setWorkspaces(validWorkspaces);
             setActiveWorkspaceId(validWorkspaces[0].id);
           } else {
-            // All fetches failed, use seed
-            const seeded = seedWorkspaces();
-            setWorkspaces(seeded);
-            setActiveWorkspaceId(seeded[0].id);
+            // All fetches failed, set empty list
+            setWorkspaces([]);
+            setActiveWorkspaceId(null);
           }
         } else {
-          // No workspaces in backend, use seed
-          const seeded = seedWorkspaces();
-          setWorkspaces(seeded);
-          setActiveWorkspaceId(seeded[0].id);
+          // No workspaces in backend, set empty list
+          setWorkspaces([]);
+          setActiveWorkspaceId(null);
         }
       } catch (err) {
         console.warn("Failed to load workspaces from backend:", err);
-        // Fallback to seed workspace
-        const seeded = seedWorkspaces();
-        setWorkspaces(seeded);
-        setActiveWorkspaceId(seeded[0].id);
+        // Fallback to empty list
+        setWorkspaces([]);
+        setActiveWorkspaceId(null);
       } finally {
         setIsLoading(false);
       }
@@ -1747,10 +1761,14 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         assets: config.assets,
         tools: config.tools,
         agents: config.agents || [],
+        // Compression configuration
+        compression_enabled: config.compression_enabled,
+        compression_model: config.compression_model,
         // Memory configuration
         memory_enabled: config.memory_enabled,
-        embedding_provider: config.embedding_provider,
         embedding_model: config.embedding_model,
+        embedding_dimension: config.embedding_dimension,
+        extraction_model: config.extraction_model,
         rooms: [newRoom],
         activeRoomId: newRoom.id,
         fileTree: [],
@@ -1799,10 +1817,14 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
                 runtime: config.runtime,
                 assets: config.assets,
                 tools: config.tools,
+                // Compression configuration
+                compression_enabled: config.compression_enabled,
+                compression_model: config.compression_model,
                 // Memory configuration
                 memory_enabled: config.memory_enabled,
-                embedding_provider: config.embedding_provider,
                 embedding_model: config.embedding_model,
+                embedding_dimension: config.embedding_dimension,
+                extraction_model: config.extraction_model,
               }
             : workspace,
         ),
@@ -1813,10 +1835,14 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
         const requestPayload = {
           name: config.name,
           description: config.description,
+          // Compression configuration
+          compression_enabled: config.compression_enabled,
+          compression_model: config.compression_model,
           // Memory configuration
           memory_enabled: config.memory_enabled,
-          embedding_provider: config.embedding_provider,
           embedding_model: config.embedding_model,
+          embedding_dimension: config.embedding_dimension,
+          extraction_model: config.extraction_model,
           runtime: config.runtime ? {
             type: config.runtime.type,
             docker_asset_id: config.runtime.dockerAssetId,
