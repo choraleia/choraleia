@@ -949,96 +949,31 @@ func (s *ChatService) ChatStream(ctx context.Context, req *models.ChatCompletion
 		}()
 		defer cancel()
 
-		// runStreamingAgent returns the final message being processed
+		// runStreamingAgent handles chunk saving and streaming
+		// Returns the final message and error (if any)
 		finalMsg, err := s.runStreamingAgent(streamCtx, req, conv, assistantMsg, chunks)
+
+		// Use finalMsg if available, otherwise use original assistantMsg
+		targetMsg := finalMsg
+		if targetMsg == nil {
+			targetMsg = assistantMsg
+		}
+
+		// Update final message status based on error
 		if err != nil {
 			s.logger.Error("Streaming agent error", "error", err, "conversationID", conv.ID)
-
-			// Use the final message returned by runStreamingAgent
-			targetMsg := finalMsg
-			if targetMsg == nil {
-				targetMsg = assistantMsg
-			}
-
-			// Check if this is a cancellation
 			if errors.Is(err, context.Canceled) {
-				// Ensure message status is updated (in case runStreamingAgent didn't save)
-				if targetMsg.Status != models.MessageStatusCompleted {
-					targetMsg.Status = models.MessageStatusCompleted
-					targetMsg.FinishReason = models.FinishReasonCancelled
-					s.SaveMessage(targetMsg)
-				}
-
-				// Send finish chunk with cancelled reason
-				finishChunk := &models.ChatCompletionChunk{
-					ID:             targetMsg.ID,
-					Object:         "chat.completion.chunk",
-					Created:        time.Now().Unix(),
-					Model:          req.Model,
-					ConversationID: conv.ID,
-					Choices: []models.ChatCompletionChunkChoice{
-						{
-							Index:        0,
-							Delta:        models.ChatCompletionChunkDelta{},
-							FinishReason: models.FinishReasonCancelled,
-						},
-					},
-				}
-				s.updateStreamBuffer(conv.ID, finishChunk)
-				chunks <- finishChunk
+				targetMsg.Status = models.MessageStatusCompleted
+				targetMsg.FinishReason = models.FinishReasonCancelled
 			} else {
-				// Convert error to user-friendly message
-				errorMsg := s.formatAgentError(err)
-
-				// Append error to existing content using Chunks
-				existingText := targetMsg.GetTextContent()
-				if existingText != "" {
-					targetMsg.AddTextChunk(errorMsg, targetMsg.GetMaxRoundIndex())
-				} else {
-					targetMsg.AddTextChunk(errorMsg, 0)
-				}
 				targetMsg.Status = models.MessageStatusError
 				targetMsg.FinishReason = models.FinishReasonStop
-				s.SaveMessage(targetMsg)
-
-				// Send error content chunk so it displays in the chat
-				errorChunk := &models.ChatCompletionChunk{
-					ID:             targetMsg.ID,
-					Object:         "chat.completion.chunk",
-					Created:        time.Now().Unix(),
-					Model:          req.Model,
-					ConversationID: conv.ID,
-					Choices: []models.ChatCompletionChunkChoice{
-						{
-							Index: 0,
-							Delta: models.ChatCompletionChunkDelta{
-								Content: "\n\n" + errorMsg,
-							},
-						},
-					},
-				}
-				s.updateStreamBuffer(conv.ID, errorChunk)
-				chunks <- errorChunk
-
-				// Send finish chunk with stop reason (OpenAI compatible)
-				finishChunk := &models.ChatCompletionChunk{
-					ID:             targetMsg.ID,
-					Object:         "chat.completion.chunk",
-					Created:        time.Now().Unix(),
-					Model:          req.Model,
-					ConversationID: conv.ID,
-					Choices: []models.ChatCompletionChunkChoice{
-						{
-							Index:        0,
-							Delta:        models.ChatCompletionChunkDelta{},
-							FinishReason: models.FinishReasonStop,
-						},
-					},
-				}
-				s.updateStreamBuffer(conv.ID, finishChunk)
-				chunks <- finishChunk
 			}
+		} else {
+			targetMsg.Status = models.MessageStatusCompleted
+			targetMsg.FinishReason = models.FinishReasonStop
 		}
+		s.SaveMessage(targetMsg)
 
 		// Update conversation timestamp
 		s.db.Model(&models.Conversation{}).Where("id = ?", conv.ID).Update("updated_at", time.Now())
@@ -1510,18 +1445,15 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 	chunks := msg.Chunks
 	n := len(chunks)
 
-	// Track tool_calls that have been added and tool_results that exist
-	toolCallsAdded := make(map[string]string) // tool_call_id -> tool_name
-	toolResultsExist := make(map[string]bool) // tool_call_id -> true
-
-	// First pass: collect all tool_result ids
-	for _, chunk := range chunks {
-		if chunk.Type == db.ChunkTypeToolResult {
-			toolResultsExist[chunk.ToolCallID] = true
+	// Build a map of tool_call_id -> tool_result for quick lookup
+	toolResultMap := make(map[string]*db.MessageChunk)
+	for i := range chunks {
+		if chunks[i].Type == db.ChunkTypeToolResult {
+			toolResultMap[chunks[i].ToolCallID] = &chunks[i]
 		}
 	}
 
-	// Second pass: process chunks
+	// Process chunks
 	i := 0
 	for i < n {
 		chunk := chunks[i]
@@ -1567,7 +1499,7 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 			}
 
 		case db.ChunkTypeToolCall:
-			// Each tool_call is a separate assistant message
+			// Add tool_call as assistant message
 			result = append(result, &schema.Message{
 				Role:             schema.Assistant,
 				ReasoningContent: " ",
@@ -1580,17 +1512,28 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 					},
 				}},
 			})
-			toolCallsAdded[chunk.ToolCallID] = chunk.ToolName
+
+			// Immediately add corresponding tool_result (or empty one if missing)
+			if toolResult, exists := toolResultMap[chunk.ToolCallID]; exists {
+				result = append(result, &schema.Message{
+					Role:       schema.Tool,
+					ToolCallID: toolResult.ToolCallID,
+					ToolName:   toolResult.ToolName,
+					Content:    toolResult.ToolResultContent,
+				})
+			} else {
+				// No tool_result found - add empty one to satisfy API requirement
+				result = append(result, &schema.Message{
+					Role:       schema.Tool,
+					ToolCallID: chunk.ToolCallID,
+					ToolName:   chunk.ToolName,
+					Content:    "",
+				})
+			}
 			i++
 
 		case db.ChunkTypeToolResult:
-			// Each tool_result is a separate tool message
-			result = append(result, &schema.Message{
-				Role:       schema.Tool,
-				ToolCallID: chunk.ToolCallID,
-				ToolName:   chunk.ToolName,
-				Content:    chunk.ToolResultContent,
-			})
+			// Skip - already handled when processing tool_call
 			i++
 
 		default:
@@ -1598,17 +1541,6 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 		}
 	}
 
-	// Final check: append empty tool_result for any tool_call without result
-	for toolCallID, toolName := range toolCallsAdded {
-		if !toolResultsExist[toolCallID] {
-			result = append(result, &schema.Message{
-				Role:       schema.Tool,
-				ToolCallID: toolCallID,
-				ToolName:   toolName,
-				Content:    "",
-			})
-		}
-	}
 	return result
 }
 
@@ -2433,13 +2365,14 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			GenModelInput: genModelInput,
 			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: baseTools},
-				EmitInternalEvents: true, // Enable streaming from agent tools
+				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: baseTools},
+				//EmitInternalEvents: true, // Enable streaming from agent tools
 			},
 			MaxIterations:    50,
 			Middlewares:      middlewares,
 			ModelRetryConfig: retryConfig,
 		})
+		rootAgentName = agent.Name(ctx)
 		if err != nil {
 			return assistantMsg, fmt.Errorf("failed to create agent: %w", err)
 		}
@@ -2474,23 +2407,29 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Track current assistantMsg
 	currentAssistantMsg := assistantMsg
 
-	// Track if we've already handled cancellation (to avoid double save)
-	cancelled := false
-
 	// Track current agent name and run path for multi-agent scenarios
-	currentAgentName := ""
+	currentAgentName := rootAgentName
 	currentRunPath := []string{}
 
 	for {
 		// Check for cancellation before getting next chunk
 		select {
 		case <-ctx.Done():
-			if !cancelled {
-				cancelled = true
-				currentAssistantMsg.Status = models.MessageStatusCompleted
-				currentAssistantMsg.FinishReason = models.FinishReasonCancelled
-				s.SaveMessage(currentAssistantMsg)
-			}
+			// Send finish chunk with cancelled reason
+			sendChunk(&models.ChatCompletionChunk{
+				ID:             currentAssistantMsg.ID,
+				Object:         "chat.completion.chunk",
+				Created:        time.Now().Unix(),
+				Model:          modelID,
+				ConversationID: conv.ID,
+				Choices: []models.ChatCompletionChunkChoice{
+					{
+						Index:        0,
+						Delta:        models.ChatCompletionChunkDelta{},
+						FinishReason: models.FinishReasonCancelled,
+					},
+				},
+			})
 			return currentAssistantMsg, ctx.Err()
 		default:
 		}
@@ -2502,27 +2441,88 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 		if chunk.Err != nil {
 			// Check if this is a cancellation error
 			if errors.Is(chunk.Err, context.Canceled) || errors.Is(chunk.Err, context.DeadlineExceeded) {
-				if !cancelled {
-					cancelled = true
-					currentAssistantMsg.Status = models.MessageStatusCompleted
-					currentAssistantMsg.FinishReason = models.FinishReasonCancelled
-					s.SaveMessage(currentAssistantMsg)
-				}
+				// Send finish chunk with cancelled reason
+				sendChunk(&models.ChatCompletionChunk{
+					ID:             currentAssistantMsg.ID,
+					Object:         "chat.completion.chunk",
+					Created:        time.Now().Unix(),
+					Model:          modelID,
+					ConversationID: conv.ID,
+					Choices: []models.ChatCompletionChunkChoice{
+						{
+							Index:        0,
+							Delta:        models.ChatCompletionChunkDelta{},
+							FinishReason: models.FinishReasonCancelled,
+						},
+					},
+				})
 				return currentAssistantMsg, chunk.Err
 			}
 
-			// Other errors (including context length) are handled by ModelRetryConfig
-			// If we reach here, all retries have been exhausted
+			// Other errors (including context length, tool errors, etc.)
+			// Save error message to database so it appears in chat history
 			s.logger.Error("Agent iteration error", "error", chunk.Err)
+
+			// Format error message
+			errorMsg := s.formatAgentError(chunk.Err)
+
+			// Get current round index
+			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
+			if roundIndex < 0 {
+				roundIndex = 0
+			}
+
+			// Save error message chunk to database
+			if err := s.AddAndSaveTextChunk(currentAssistantMsg, errorMsg, roundIndex, currentAgentName, currentRunPath); err != nil {
+				s.logger.Error("Failed to save error chunk", "error", err)
+			}
+
+			// Send error chunk to frontend
+			sendChunk(&models.ChatCompletionChunk{
+				ID:             currentAssistantMsg.ID,
+				Object:         "chat.completion.chunk",
+				Created:        time.Now().Unix(),
+				Model:          modelID,
+				ConversationID: conv.ID,
+				Choices: []models.ChatCompletionChunkChoice{
+					{
+						Index: 0,
+						Delta: models.ChatCompletionChunkDelta{
+							Content: "\n\n" + errorMsg,
+						},
+					},
+				},
+			})
+
+			// Send finish chunk with stop reason
+			sendChunk(&models.ChatCompletionChunk{
+				ID:             currentAssistantMsg.ID,
+				Object:         "chat.completion.chunk",
+				Created:        time.Now().Unix(),
+				Model:          modelID,
+				ConversationID: conv.ID,
+				Choices: []models.ChatCompletionChunkChoice{
+					{
+						Index:        0,
+						Delta:        models.ChatCompletionChunkDelta{},
+						FinishReason: models.FinishReasonStop,
+					},
+				},
+			})
+
 			return currentAssistantMsg, fmt.Errorf("agent error: %w", chunk.Err)
 		}
 
-		// Debug: log chunk agent info
+		// Debug: log chunk agent info with full run_path
+		var chunkRunPathStrs []string
+		for _, step := range chunk.RunPath {
+			chunkRunPathStrs = append(chunkRunPathStrs, step.String())
+		}
 		s.logger.Debug("Received chunk from agent",
 			"chunkAgentName", chunk.AgentName,
-			"chunkRunPathLen", len(chunk.RunPath),
+			"chunkRunPath", chunkRunPathStrs,
 			"currentAgentName", currentAgentName,
-			"currentRunPathLen", len(currentRunPath),
+			"currentRunPath", currentRunPath,
 		)
 
 		// Update current agent name and run path from chunk
@@ -2535,10 +2535,6 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			for i, step := range chunk.RunPath {
 				currentRunPath[i] = step.String()
 			}
-			// If we have RunPath but no AgentName, derive from RunPath
-			if chunk.AgentName == "" && len(currentRunPath) > 0 {
-				currentAgentName = currentRunPath[len(currentRunPath)-1]
-			}
 		}
 
 		// Check for TransferToAgent action - this indicates we're about to switch to a new agent
@@ -2548,11 +2544,8 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				"destAgent", destAgent,
 				"currentAgentName", currentAgentName,
 			)
-			// Note: The actual switch happens when we receive chunks from the new agent
-			// with the new AgentName/RunPath
 		}
 
-		// Skip events with no output (e.g., transfer actions)
 		if chunk.Output == nil || chunk.Output.MessageOutput == nil {
 			continue
 		}
@@ -2615,12 +2608,21 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					// Check for cancellation during streaming
 					select {
 					case <-ctx.Done():
-						if !cancelled {
-							cancelled = true
-							currentAssistantMsg.Status = models.MessageStatusCompleted
-							currentAssistantMsg.FinishReason = models.FinishReasonCancelled
-							s.SaveMessage(currentAssistantMsg)
-						}
+						// Send finish chunk with cancelled reason
+						sendChunk(&models.ChatCompletionChunk{
+							ID:             currentAssistantMsg.ID,
+							Object:         "chat.completion.chunk",
+							Created:        time.Now().Unix(),
+							Model:          modelID,
+							ConversationID: conv.ID,
+							Choices: []models.ChatCompletionChunkChoice{
+								{
+									Index:        0,
+									Delta:        models.ChatCompletionChunkDelta{},
+									FinishReason: models.FinishReasonCancelled,
+								},
+							},
+						})
 						return currentAssistantMsg, ctx.Err()
 					default:
 					}
@@ -2632,15 +2634,50 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					if recvErr != nil {
 						// Check if error is due to context cancellation
 						if ctx.Err() != nil || errors.Is(recvErr, context.Canceled) {
-							if !cancelled {
-								cancelled = true
-								currentAssistantMsg.Status = models.MessageStatusCompleted
-								currentAssistantMsg.FinishReason = models.FinishReasonCancelled
-								s.SaveMessage(currentAssistantMsg)
-							}
+							// Send finish chunk with cancelled reason
+							sendChunk(&models.ChatCompletionChunk{
+								ID:             currentAssistantMsg.ID,
+								Object:         "chat.completion.chunk",
+								Created:        time.Now().Unix(),
+								Model:          modelID,
+								ConversationID: conv.ID,
+								Choices: []models.ChatCompletionChunkChoice{
+									{
+										Index:        0,
+										Delta:        models.ChatCompletionChunkDelta{},
+										FinishReason: models.FinishReasonCancelled,
+									},
+								},
+							})
 							return currentAssistantMsg, ctx.Err()
 						}
+						// Other stream errors - save error chunk and send to frontend
 						s.logger.Error("Agent stream error", "error", recvErr)
+						errorMsg := s.formatAgentError(recvErr)
+						if err := s.AddAndSaveTextChunk(currentAssistantMsg, errorMsg, roundIndex, currentAgentName, currentRunPath); err != nil {
+							s.logger.Error("Failed to save stream error chunk", "error", err)
+						}
+						// Send error and finish chunks
+						sendChunk(&models.ChatCompletionChunk{
+							ID:             currentAssistantMsg.ID,
+							Object:         "chat.completion.chunk",
+							Created:        time.Now().Unix(),
+							Model:          modelID,
+							ConversationID: conv.ID,
+							Choices: []models.ChatCompletionChunkChoice{
+								{Index: 0, Delta: models.ChatCompletionChunkDelta{Content: "\n\n" + errorMsg}},
+							},
+						})
+						sendChunk(&models.ChatCompletionChunk{
+							ID:             currentAssistantMsg.ID,
+							Object:         "chat.completion.chunk",
+							Created:        time.Now().Unix(),
+							Model:          modelID,
+							ConversationID: conv.ID,
+							Choices: []models.ChatCompletionChunkChoice{
+								{Index: 0, Delta: models.ChatCompletionChunkDelta{}, FinishReason: models.FinishReasonStop},
+							},
+						})
 						return currentAssistantMsg, fmt.Errorf("stream error: %w", recvErr)
 					}
 
@@ -2710,6 +2747,44 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 				} else {
 					streamedMsg = &schema.Message{Role: schema.Assistant}
 				}
+
+				// Process tool calls from streaming message
+				if len(streamedMsg.ToolCalls) > 0 {
+					for _, tc := range streamedMsg.ToolCalls {
+						// Save tool call to database
+						if err := s.AddAndSaveToolCallChunk(currentAssistantMsg, tc.ID, tc.Function.Name, tc.Function.Arguments, roundIndex, currentAgentName, currentRunPath); err != nil {
+							s.logger.Warn("Failed to save streaming tool call chunk", "error", err)
+						}
+
+						// Send tool call to frontend
+						sendChunk(&models.ChatCompletionChunk{
+							ID:             currentAssistantMsg.ID,
+							Object:         "chat.completion.chunk",
+							Created:        time.Now().Unix(),
+							Model:          modelID,
+							ConversationID: conv.ID,
+							Choices: []models.ChatCompletionChunkChoice{
+								{
+									Index: 0,
+									Delta: models.ChatCompletionChunkDelta{
+										ToolCalls: []models.ToolCall{
+											{
+												ID:   tc.ID,
+												Type: "function",
+												Function: models.FunctionCall{
+													Name:      tc.Function.Name,
+													Arguments: tc.Function.Arguments,
+												},
+											},
+										},
+										AgentName: currentAgentName,
+										RunPath:   currentRunPath,
+									},
+								},
+							},
+						})
+					}
+				}
 			} else {
 				// Non-streaming message - get it directly
 				streamedMsg, err = chunk.Output.MessageOutput.GetMessage()
@@ -2765,18 +2840,49 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 						},
 					})
 				}
+
+				// Process tool calls from non-streaming message
+				if len(streamedMsg.ToolCalls) > 0 {
+					for _, tc := range streamedMsg.ToolCalls {
+						// Save tool call to database
+						if err := s.AddAndSaveToolCallChunk(currentAssistantMsg, tc.ID, tc.Function.Name, tc.Function.Arguments, roundIndex, currentAgentName, currentRunPath); err != nil {
+							s.logger.Warn("Failed to save non-streaming tool call chunk", "error", err)
+						}
+
+						// Send tool call to frontend
+						sendChunk(&models.ChatCompletionChunk{
+							ID:             currentAssistantMsg.ID,
+							Object:         "chat.completion.chunk",
+							Created:        time.Now().Unix(),
+							Model:          modelID,
+							ConversationID: conv.ID,
+							Choices: []models.ChatCompletionChunkChoice{
+								{
+									Index: 0,
+									Delta: models.ChatCompletionChunkDelta{
+										ToolCalls: []models.ToolCall{
+											{
+												ID:   tc.ID,
+												Type: "function",
+												Function: models.FunctionCall{
+													Name:      tc.Function.Name,
+													Arguments: tc.Function.Arguments,
+												},
+											},
+										},
+										AgentName: currentAgentName,
+										RunPath:   currentRunPath,
+									},
+								},
+							},
+						})
+					}
+				}
 			}
 		}
 	}
 
-	// After loop ends, ensure message is properly finalized
-	if currentAssistantMsg.Status != models.MessageStatusCompleted {
-		currentAssistantMsg.Status = models.MessageStatusCompleted
-		currentAssistantMsg.FinishReason = models.FinishReasonStop
-		s.SaveMessage(currentAssistantMsg)
-	}
-
-	// Send final chunk
+	// Send final chunk (message status will be updated externally)
 	sendChunk(&models.ChatCompletionChunk{
 		ID:             currentAssistantMsg.ID,
 		Object:         "chat.completion.chunk",
@@ -2956,8 +3062,8 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 			GenModelInput: genModelInput,
 			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
-				EmitInternalEvents: true, // Enable streaming from agent tools
+				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools},
+				//EmitInternalEvents: true, // Enable streaming from agent tools
 			},
 			MaxIterations:    maxIterations,
 			Middlewares:      middlewares,
@@ -2978,8 +3084,8 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 			GenModelInput: genModelInput,
 			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
-				EmitInternalEvents: true, // Enable streaming from sub-agents
+				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools},
+				//EmitInternalEvents: true, // Enable streaming from sub-agents
 			},
 			MaxIterations:    maxIterations,
 			Middlewares:      middlewares,
@@ -3022,12 +3128,14 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 			ChatModel:   chatModel,
 			SubAgents:   subAgents,
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
-				EmitInternalEvents: true, // Enable streaming from sub-agents
+				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools},
+				//EmitInternalEvents: true, // Enable streaming from sub-agents
 			},
 			MaxIteration:           maxIterations,
 			WithoutWriteTodos:      withoutWriteTodos,
 			WithoutGeneralSubAgent: withoutGeneralSubAgent,
+			Middlewares:            middlewares,
+			ModelRetryConfig:       retryConfig,
 		})
 
 	case "sequential":
@@ -3091,8 +3199,8 @@ func (s *ChatService) buildAgentFromConfig(ctx context.Context, agentConfig *mod
 			GenModelInput: genModelInput,
 			Model:         chatModel,
 			ToolsConfig: adk.ToolsConfig{
-				ToolsNodeConfig:    compose.ToolsNodeConfig{Tools: agentTools},
-				EmitInternalEvents: true, // Enable streaming from agent tools
+				ToolsNodeConfig: compose.ToolsNodeConfig{Tools: agentTools},
+				//EmitInternalEvents: true, // Enable streaming from agent tools
 			},
 			MaxIterations:    maxIterations,
 			Middlewares:      middlewares,

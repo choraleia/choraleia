@@ -321,10 +321,9 @@ func (m *ModelService) TestModelConnection(c *gin.Context) {
 
 	case "anthropic":
 		chatModel, err := claude.NewChatModel(ctx, &claude.Config{
-			BaseURL:   &req.BaseUrl,
-			APIKey:    req.ApiKey,
-			Model:     req.Model,
-			MaxTokens: 1024,
+			BaseURL: &req.BaseUrl,
+			APIKey:  req.ApiKey,
+			Model:   req.Model,
 		})
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{"code": 200, "success": false, "message": "Model init failed: " + err.Error()})
@@ -470,10 +469,9 @@ func (m *ModelService) CreateChatModel(ctx context.Context, config *models.Model
 
 	case "anthropic":
 		chatModel, err := claude.NewChatModel(ctx, &claude.Config{
-			BaseURL:   &config.BaseUrl,
-			APIKey:    config.ApiKey,
-			Model:     config.Model,
-			MaxTokens: 8192,
+			BaseURL: &config.BaseUrl,
+			APIKey:  config.ApiKey,
+			Model:   config.Model,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create Claude model: %w", err)

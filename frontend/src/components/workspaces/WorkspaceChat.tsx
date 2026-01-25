@@ -57,21 +57,15 @@ type UIMessage = {
   createdAt: Date;
   parentId: string | null;
   status?: "running" | "complete" | "error" | "cancelled";
-  agentName?: string; // Name of the agent that generated this message
 };
 
 // Convert MessagePart to UI content format
 function partToUIContent(part: MessagePart, toolResultsMap: Map<string, string>): any | null {
-  const baseFields = {
-    agent_name: part.agent_name,
-    run_path: part.run_path,
-  };
-
   switch (part.type) {
     case "text":
-      return part.text ? { type: "text", text: part.text, ...baseFields } : null;
+      return part.text ? { type: "text", text: part.text } : null;
     case "reasoning":
-      return part.text ? { type: "reasoning", text: part.text, ...baseFields } : null;
+      return part.text ? { type: "reasoning", text: part.text } : null;
     case "tool_call":
       if (part.tool_call) {
         return {
@@ -80,7 +74,6 @@ function partToUIContent(part: MessagePart, toolResultsMap: Map<string, string>)
           toolName: part.tool_call.name,
           argsText: part.tool_call.arguments,
           result: toolResultsMap.get(part.tool_call.id),
-          ...baseFields,
         };
       }
       return null;
@@ -88,13 +81,13 @@ function partToUIContent(part: MessagePart, toolResultsMap: Map<string, string>)
       // Tool results are merged into tool-call parts, not displayed separately
       return null;
     case "image_url":
-      return part.image_url ? { type: "image", url: part.image_url.url, detail: part.image_url.detail, ...baseFields } : null;
+      return part.image_url ? { type: "image", url: part.image_url.url, detail: part.image_url.detail } : null;
     case "audio_url":
-      return part.audio_url ? { type: "audio", url: part.audio_url.url, ...baseFields } : null;
+      return part.audio_url ? { type: "audio", url: part.audio_url.url } : null;
     case "video_url":
-      return part.video_url ? { type: "video", url: part.video_url.url, ...baseFields } : null;
+      return part.video_url ? { type: "video", url: part.video_url.url } : null;
     case "file_url":
-      return part.file_url ? { type: "file", url: part.file_url.url, name: part.file_url.name, ...baseFields } : null;
+      return part.file_url ? { type: "file", url: part.file_url.url, name: part.file_url.name } : null;
     default:
       return null;
   }
@@ -260,7 +253,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
     // Pick most recent leaf
     return targetLeaves.reduce((latest, msg) =>
-      msg.createdAt > latest.createdAt ? msg : latest
+        msg.createdAt > latest.createdAt ? msg : latest
     ).id;
   }, [allMessages, currentHeadId]);
 
@@ -277,16 +270,14 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         content: msg.content,
         createdAt: msg.createdAt,
         status: msg.status === "running"
-          ? { type: "running" as const }
-          : { type: "complete" as const, reason: "stop" as const },
+            ? { type: "running" as const }
+            : { type: "complete" as const, reason: "stop" as const },
         metadata: {
           unstable_state: undefined,
           unstable_annotations: undefined,
           unstable_data: undefined,
           steps: undefined,
-          custom: {
-            agentName: msg.agentName,
-          },
+          custom: {},
         },
       } as ThreadMessageLike,
       parentId: msg.parentId,
@@ -388,37 +379,16 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
   // Process streaming chunks and update UI - same logic as streamChat
   const processStreamChunks = useCallback(async (
-    messageId: string,
-    stream: AsyncIterable<ChatCompletionChunk>
+      messageId: string,
+      stream: AsyncIterable<ChatCompletionChunk>
   ) => {
     const contentParts: any[] = [];
-    let currentAgentName: string | undefined;
-    let currentRunPath: string[] | undefined;
-
-    // Helper to check if run_path arrays are equal
-    const runPathEqual = (a?: string[], b?: string[]): boolean => {
-      if (!a && !b) return true;
-      if (!a || !b) return false;
-      if (a.length !== b.length) return false;
-      return a.every((v, i) => v === b[i]);
-    };
 
     try {
       for await (const chunk of stream) {
         if (abortControllerRef.current?.signal.aborted) break;
 
         for (const choice of chunk.choices) {
-          const deltaAgentName = choice.delta.agent_name;
-          const deltaRunPath = choice.delta.run_path;
-
-          // Track agent context changes
-          if (deltaAgentName) {
-            currentAgentName = deltaAgentName;
-          }
-          if (deltaRunPath) {
-            currentRunPath = deltaRunPath;
-          }
-
           // New assistant round marker - skip
           if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls && !choice.delta.reasoning_content) {
             continue;
@@ -428,7 +398,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           if (choice.delta.role === "tool" && choice.delta.tool_call_id) {
             const toolCallId = choice.delta.tool_call_id;
             const toolCallPart = contentParts.find(
-              p => p.type === "tool-call" && p.toolCallId === toolCallId
+                p => p.type === "tool-call" && p.toolCallId === toolCallId
             );
             if (toolCallPart) {
               toolCallPart.result = choice.delta.content || "";
@@ -436,43 +406,23 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
             continue;
           }
 
-          // Reasoning - append to last if also reasoning AND same agent context, otherwise create new
+          // Reasoning - append to last if also reasoning, otherwise create new
           if (choice.delta.reasoning_content) {
             const lastPart = contentParts[contentParts.length - 1];
-            const canAppend = lastPart &&
-              lastPart.type === "reasoning" &&
-              lastPart.agent_name === currentAgentName &&
-              runPathEqual(lastPart.run_path, currentRunPath);
-
-            if (canAppend) {
+            if (lastPart && lastPart.type === "reasoning") {
               lastPart.text += choice.delta.reasoning_content;
             } else {
-              contentParts.push({
-                type: "reasoning",
-                text: choice.delta.reasoning_content,
-                agent_name: currentAgentName,
-                run_path: currentRunPath,
-              });
+              contentParts.push({ type: "reasoning", text: choice.delta.reasoning_content });
             }
           }
 
-          // Content - append to last if also text AND same agent context, otherwise create new
+          // Content - append to last if also text, otherwise create new
           if (choice.delta.content && choice.delta.role !== "tool") {
             const lastPart = contentParts[contentParts.length - 1];
-            const canAppend = lastPart &&
-              lastPart.type === "text" &&
-              lastPart.agent_name === currentAgentName &&
-              runPathEqual(lastPart.run_path, currentRunPath);
-
-            if (canAppend) {
+            if (lastPart && lastPart.type === "text") {
               lastPart.text += choice.delta.content;
             } else {
-              contentParts.push({
-                type: "text",
-                text: choice.delta.content,
-                agent_name: currentAgentName,
-                run_path: currentRunPath,
-              });
+              contentParts.push({ type: "text", text: choice.delta.content });
             }
           }
 
@@ -483,7 +433,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
               if (toolCallId) {
                 // Check if this tool call already exists (streaming updates)
                 let existingPart = contentParts.find(
-                  p => p.type === "tool-call" && p.toolCallId === toolCallId
+                    p => p.type === "tool-call" && p.toolCallId === toolCallId
                 );
                 if (existingPart) {
                   // Update existing tool call (streaming arguments)
@@ -496,8 +446,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
                     toolCallId,
                     toolName: tc.function?.name || "",
                     argsText: tc.function?.arguments || "",
-                    agent_name: currentAgentName,
-                    run_path: currentRunPath,
                   });
                 }
               }
@@ -507,24 +455,24 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
         // Update UI
         const newContent = contentParts.filter(p =>
-          (p.type === "text" && p.text.length > 0) ||
-          (p.type === "reasoning" && p.text.length > 0) ||
-          (p.type === "tool-call" && p.toolName.length > 0)
+            (p.type === "text" && p.text.length > 0) ||
+            (p.type === "reasoning" && p.text.length > 0) ||
+            (p.type === "tool-call" && p.toolName.length > 0)
         );
         if (newContent.length === 0) newContent.push({ type: "text", text: "" });
 
         setAllMessages((prev) =>
-          prev.map((msg) => msg.id === messageId ? { ...msg, content: [...newContent], agentName: currentAgentName } : msg)
+            prev.map((msg) => msg.id === messageId ? { ...msg, content: [...newContent] } : msg)
         );
       }
 
       // Mark complete
       setAllMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === messageId
-            ? { ...msg, status: "complete" as const }
-            : msg
-        )
+          prev.map((msg) =>
+              msg.id === messageId
+                  ? { ...msg, status: "complete" as const }
+                  : msg
+          )
       );
     } catch (error) {
       console.error("Error processing stream chunks:", error);
@@ -630,13 +578,13 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
   // Shared streaming handler - used by onNew, onEdit, onReload
   const streamChat = useCallback(async (
-    threadId: string,
-    assistantMessageId: string,
-    request: {
-      messages: { role: "user" | "assistant" | "system" | "tool"; content: string }[];
-      action?: "edit" | "regenerate";
-      source_id?: string;
-    }
+      threadId: string,
+      assistantMessageId: string,
+      request: {
+        messages: { role: "user" | "assistant" | "system" | "tool"; content: string }[];
+        action?: "edit" | "regenerate";
+        source_id?: string;
+      }
   ) => {
     const stream = chatCompletionStream({
       workspace_id: workspaceId,
@@ -651,23 +599,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
     const contentParts: any[] = [];
     let finishReason: string | undefined;
-    let currentAgentName: string | undefined;
-    let currentRunPath: string[] | undefined;
-
-    // Helper to check if run_path arrays are equal
-    const runPathEqual = (a?: string[], b?: string[]): boolean => {
-      if (!a && !b) return true;
-      if (!a || !b) return false;
-      if (a.length !== b.length) return false;
-      return a.every((v, i) => v === b[i]);
-    };
-
-    // Helper to check if agent context changed
-    const agentContextChanged = (agentName?: string, runPath?: string[]): boolean => {
-      if (agentName !== currentAgentName) return true;
-      if (!runPathEqual(runPath, currentRunPath)) return true;
-      return false;
-    };
 
     for await (const chunk of stream) {
 
@@ -680,15 +611,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           continue;
         }
 
-        const deltaAgentName = choice.delta.agent_name;
-        const deltaRunPath = choice.delta.run_path;
-
-        // Track agent context changes (no longer insert marker text, blocks handle display)
-        if (deltaAgentName && agentContextChanged(deltaAgentName, deltaRunPath)) {
-          currentAgentName = deltaAgentName;
-          currentRunPath = deltaRunPath;
-        }
-
         // New assistant round marker - skip
         if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls && !choice.delta.reasoning_content) {
           continue;
@@ -698,7 +620,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         if (choice.delta.role === "tool" && choice.delta.tool_call_id) {
           const toolCallId = choice.delta.tool_call_id;
           const toolCallPart = contentParts.find(
-            p => p.type === "tool-call" && p.toolCallId === toolCallId
+              p => p.type === "tool-call" && p.toolCallId === toolCallId
           );
           if (toolCallPart) {
             toolCallPart.result = choice.delta.content || "";
@@ -706,43 +628,23 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           continue;
         }
 
-        // Reasoning - append to last if also reasoning AND same agent context, otherwise create new
+        // Reasoning - append to last if also reasoning, otherwise create new
         if (choice.delta.reasoning_content) {
           const lastPart = contentParts[contentParts.length - 1];
-          const canAppend = lastPart &&
-            lastPart.type === "reasoning" &&
-            lastPart.agent_name === currentAgentName &&
-            runPathEqual(lastPart.run_path, currentRunPath);
-
-          if (canAppend) {
+          if (lastPart && lastPart.type === "reasoning") {
             lastPart.text += choice.delta.reasoning_content;
           } else {
-            contentParts.push({
-              type: "reasoning",
-              text: choice.delta.reasoning_content,
-              agent_name: currentAgentName,
-              run_path: currentRunPath,
-            });
+            contentParts.push({ type: "reasoning", text: choice.delta.reasoning_content });
           }
         }
 
-        // Content - append to last if also text AND same agent context, otherwise create new
+        // Content - append to last if also text, otherwise create new
         if (choice.delta.content && choice.delta.role !== "tool") {
           const lastPart = contentParts[contentParts.length - 1];
-          const canAppend = lastPart &&
-            lastPart.type === "text" &&
-            lastPart.agent_name === currentAgentName &&
-            runPathEqual(lastPart.run_path, currentRunPath);
-
-          if (canAppend) {
+          if (lastPart && lastPart.type === "text") {
             lastPart.text += choice.delta.content;
           } else {
-            contentParts.push({
-              type: "text",
-              text: choice.delta.content,
-              agent_name: currentAgentName,
-              run_path: currentRunPath,
-            });
+            contentParts.push({ type: "text", text: choice.delta.content });
           }
         }
 
@@ -753,7 +655,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
             if (toolCallId) {
               // Check if this tool call already exists (streaming updates)
               let existingPart = contentParts.find(
-                p => p.type === "tool-call" && p.toolCallId === toolCallId
+                  p => p.type === "tool-call" && p.toolCallId === toolCallId
               );
               if (existingPart) {
                 // Update existing tool call (streaming arguments)
@@ -766,8 +668,6 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
                   toolCallId,
                   toolName: tc.function?.name || "",
                   argsText: tc.function?.arguments || "",
-                  agent_name: currentAgentName,
-                  run_path: currentRunPath,
                 });
               }
             }
@@ -775,29 +675,29 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         }
       }
 
-      // Update UI with content and agent name
+      // Update UI with content
       const newContent = contentParts.filter(p =>
-        (p.type === "text" && p.text.length > 0) ||
-        (p.type === "reasoning" && p.text.length > 0) ||
-        (p.type === "tool-call" && p.toolName.length > 0)
+          (p.type === "text" && p.text.length > 0) ||
+          (p.type === "reasoning" && p.text.length > 0) ||
+          (p.type === "tool-call" && p.toolName.length > 0)
       );
       if (newContent.length === 0) newContent.push({ type: "text", text: "" });
 
       setAllMessages((prev) =>
-        prev.map((msg) => msg.id === assistantMessageId ? { ...msg, content: [...newContent], agentName: currentAgentName } : msg)
+          prev.map((msg) => msg.id === assistantMessageId ? { ...msg, content: [...newContent] } : msg)
       );
     }
 
     // Determine final status based on finish reason
     const finalStatus = finishReason === "cancelled" ? "cancelled" : "complete";
 
-    // Mark message with final status (keep agentName)
+    // Mark message with final status
     setAllMessages((prev) =>
-      prev.map((msg) =>
-        msg.id === assistantMessageId
-          ? { ...msg, status: finalStatus as "complete" | "cancelled" }
-          : msg
-      )
+        prev.map((msg) =>
+            msg.id === assistantMessageId
+                ? { ...msg, status: finalStatus as "complete" | "cancelled" }
+                : msg
+        )
     );
   }, [workspaceId, selectedModel, selectedAgentId]);
 
@@ -811,9 +711,9 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
 
 
     const textContent = appendMessage.content
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("\n");
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
 
     if (!textContent.trim()) return;
 
@@ -872,11 +772,11 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     } catch (error) {
       console.error("Streaming error:", error);
       setAllMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : "Unknown error"}` }], status: "error" as const }
-            : msg
-        )
+          prev.map((msg) =>
+              msg.id === assistantMessageId
+                  ? { ...msg, content: [{ type: "text", text: `Error: ${error instanceof Error ? error.message : "Unknown error"}` }], status: "error" as const }
+                  : msg
+          )
       );
     } finally {
       setIsRunning(false);
@@ -952,9 +852,9 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   // Edit handler - user edits a previous message, creating a new branch
   const onEdit = useCallback(async (message: AppendMessage) => {
     const textContent = message.content
-      .filter((part): part is { type: "text"; text: string } => part.type === "text")
-      .map((part) => part.text)
-      .join("\n");
+        .filter((part): part is { type: "text"; text: string } => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
 
     if (!textContent.trim() || !currentThreadId || !message.sourceId) return;
 
@@ -1007,12 +907,12 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   const threadList: ExternalStoreThreadListAdapter = useMemo(() => ({
     threadId: currentThreadId,
     threads: threads
-      .filter((t) => t.status === "regular")
-      .map((t) => ({
-        id: t.id,
-        title: t.title,
-        status: "regular" as const,
-      })),
+        .filter((t) => t.status === "regular")
+        .map((t) => ({
+          id: t.id,
+          title: t.title,
+          status: "regular" as const,
+        })),
     isLoading,
     onSwitchToNewThread: async () => {
       // Just reset state for new chat, don't create conversation yet
@@ -1083,148 +983,148 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
   });
 
   return (
-    <AssistantRuntimeProvider runtime={runtime}>
-      <Box
-        ref={containerRef}
-        className="aui-root"
-        display="flex"
-        height="100%"
-        width="100%"
-      >
-        {/* Thread list sidebar */}
-        {showThreadList && (
-          <>
-            <Box
+      <AssistantRuntimeProvider runtime={runtime}>
+        <Box
+            ref={containerRef}
+            className="aui-root"
+            display="flex"
+            height="100%"
+            width="100%"
+        >
+          {/* Thread list sidebar */}
+          {showThreadList && (
+              <>
+                <Box
+                    sx={{
+                      width: threadListWidth,
+                      minWidth: threadListWidth,
+                      maxWidth: threadListWidth,
+                      flexShrink: 0,
+                      flexGrow: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      overflow: "hidden",
+                    }}
+                >
+                  <ThreadList />
+                </Box>
+                {/* Resizer for thread list */}
+                <Box
+                    onMouseDown={handleThreadListResize}
+                    sx={{
+                      width: 5,
+                      cursor: "col-resize",
+                      flexShrink: 0,
+                      borderLeft: "1px solid",
+                      borderColor: "divider",
+                      "&:hover": {
+                        borderColor: "primary.main",
+                        borderLeftWidth: 2,
+                      },
+                    }}
+                />
+              </>
+          )}
+
+          {/* Main chat area - fills remaining space */}
+          <Box
               sx={{
-                width: threadListWidth,
-                minWidth: threadListWidth,
-                maxWidth: threadListWidth,
-                flexShrink: 0,
-                flexGrow: 0,
+                flex: 1,
+                minWidth: 0,
                 display: "flex",
                 flexDirection: "column",
                 overflow: "hidden",
+                position: "relative",
               }}
-            >
-              <ThreadList />
-            </Box>
-            {/* Resizer for thread list */}
-            <Box
-              onMouseDown={handleThreadListResize}
-              sx={{
-                width: 5,
-                cursor: "col-resize",
-                flexShrink: 0,
-                borderLeft: "1px solid",
-                borderColor: "divider",
-                "&:hover": {
-                  borderColor: "primary.main",
-                  borderLeftWidth: 2,
-                },
-              }}
-            />
-          </>
-        )}
-
-        {/* Main chat area - fills remaining space */}
-        <Box
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            position: "relative",
-          }}
-        >
-          {/* Top toolbar - replaces floating buttons */}
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.5,
-              px: 1,
-              height: 37,
-              minHeight: 37,
-              maxHeight: 37,
-              borderBottom: "1px solid",
-              borderColor: "divider",
-              bgcolor: "background.paper",
-              flexShrink: 0,
-              boxSizing: "border-box",
-            }}
           >
-            {/* Left side: Thread list toggle + New chat */}
-            <Box display="flex" alignItems="center" gap={0.5} sx={{ minWidth: 72 }}>
-              <Tooltip title={showThreadList ? "Hide conversations" : "Show conversations"}>
-                <IconButton
-                  size="small"
-                  onClick={() => setShowThreadList(!showThreadList)}
-                  color={showThreadList ? "primary" : "default"}
-                >
-                  <FormatListBulletedIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title={isNewChat ? "Already in new chat" : "New conversation"}>
+            {/* Top toolbar - replaces floating buttons */}
+            <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  px: 1,
+                  height: 37,
+                  minHeight: 37,
+                  maxHeight: 37,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  bgcolor: "background.paper",
+                  flexShrink: 0,
+                  boxSizing: "border-box",
+                }}
+            >
+              {/* Left side: Thread list toggle + New chat */}
+              <Box display="flex" alignItems="center" gap={0.5} sx={{ minWidth: 72 }}>
+                <Tooltip title={showThreadList ? "Hide conversations" : "Show conversations"}>
+                  <IconButton
+                      size="small"
+                      onClick={() => setShowThreadList(!showThreadList)}
+                      color={showThreadList ? "primary" : "default"}
+                  >
+                    <FormatListBulletedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title={isNewChat ? "Already in new chat" : "New conversation"}>
                 <span>
                   <IconButton
-                    size="small"
-                    disabled={isNewChat}
-                    onClick={() => {
-                      // Just reset state for new chat, don't create conversation yet
-                      setCurrentThreadId("");
-                      setAllMessages([]);
-                      setCurrentHeadId(null);
-                      setIsRunning(false);
-                      setIsNewChat(true);
-                    }}
+                      size="small"
+                      disabled={isNewChat}
+                      onClick={() => {
+                        // Just reset state for new chat, don't create conversation yet
+                        setCurrentThreadId("");
+                        setAllMessages([]);
+                        setCurrentHeadId(null);
+                        setIsRunning(false);
+                        setIsNewChat(true);
+                      }}
                   >
                     <AddIcon fontSize="small" />
                   </IconButton>
                 </span>
-              </Tooltip>
-            </Box>
-
-            {/* Center: Current thread title */}
-            <Box flex={1} display="flex" justifyContent="center" overflow="hidden" px={1}>
-              <Typography
-                variant="body2"
-                noWrap
-                sx={{
-                  color: "text.secondary",
-                  fontWeight: 500,
-                  maxWidth: "100%",
-                }}
-              >
-                {threads.find(t => t.id === currentThreadId)?.title || "New Chat"}
-              </Typography>
-            </Box>
-
-            {/* Right side placeholder for symmetry */}
-            <Box sx={{ minWidth: 72 }} />
-          </Box>
-
-          {/* Chat content */}
-          <Box flex={1} display="flex" flexDirection="column" overflow="hidden">
-            {isThreadLoading ? (
-              <Box display="flex" alignItems="center" justifyContent="center" height="100%">
-                <CircularProgress size={24} />
+                </Tooltip>
               </Box>
-            ) : (
-              <WorkspaceChatThread
-                selectedModel={selectedModel}
-                setSelectedModel={setSelectedModel}
-                groupedModelOptions={groupedModelOptions}
-                isLoading={isLoading}
-                selectedAgentId={selectedAgentId}
-                setSelectedAgentId={setSelectedAgentId}
-                workspaceAgents={workspaceAgents}
-              />
-            )}
+
+              {/* Center: Current thread title */}
+              <Box flex={1} display="flex" justifyContent="center" overflow="hidden" px={1}>
+                <Typography
+                    variant="body2"
+                    noWrap
+                    sx={{
+                      color: "text.secondary",
+                      fontWeight: 500,
+                      maxWidth: "100%",
+                    }}
+                >
+                  {threads.find(t => t.id === currentThreadId)?.title || "New Chat"}
+                </Typography>
+              </Box>
+
+              {/* Right side placeholder for symmetry */}
+              <Box sx={{ minWidth: 72 }} />
+            </Box>
+
+            {/* Chat content */}
+            <Box flex={1} display="flex" flexDirection="column" overflow="hidden">
+              {isThreadLoading ? (
+                  <Box display="flex" alignItems="center" justifyContent="center" height="100%">
+                    <CircularProgress size={24} />
+                  </Box>
+              ) : (
+                  <WorkspaceChatThread
+                      selectedModel={selectedModel}
+                      setSelectedModel={setSelectedModel}
+                      groupedModelOptions={groupedModelOptions}
+                      isLoading={isLoading}
+                      selectedAgentId={selectedAgentId}
+                      setSelectedAgentId={setSelectedAgentId}
+                      workspaceAgents={workspaceAgents}
+                  />
+              )}
+            </Box>
           </Box>
         </Box>
-      </Box>
-    </AssistantRuntimeProvider>
+      </AssistantRuntimeProvider>
   );
 }
 

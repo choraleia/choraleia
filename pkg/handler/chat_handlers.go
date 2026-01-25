@@ -2,6 +2,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -90,7 +91,9 @@ func (h *ChatHandler) handleStreamingChat(c *gin.Context, req *models.ChatComple
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no") // Disable nginx buffering
 
-	chunks, err := h.chatService.ChatStream(c.Request.Context(), req)
+	// Use background context so agent continues running even if client disconnects
+	// Client can reconnect using continueStream endpoint
+	chunks, err := h.chatService.ChatStream(context.Background(), req)
 	if err != nil {
 		// For SSE, we need to send error as event
 		c.SSEvent("error", gin.H{"error": err.Error()})
