@@ -3,7 +3,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
 } from "./icons";
-import { useEffect, useRef, useState, useMemo } from "react";
+import { FC, useEffect, useRef, useState, useMemo } from "react";
 import Paper from "@mui/material/Paper";
 import Box from "@mui/material/Box";
 import Collapse from "@mui/material/Collapse";
@@ -22,7 +22,15 @@ import { useTheme, alpha } from "@mui/material/styles";
 // Tool status type
 type ToolStatus = "running" | "success" | "error";
 
-export const ToolFallback: ToolCallMessagePartComponent = ({
+// Props for the simple tool fallback component
+interface SimpleToolFallbackProps {
+  toolName: string;
+  argsText?: string;
+  result?: unknown;
+}
+
+// Internal implementation shared by both components
+const ToolFallbackImpl: FC<SimpleToolFallbackProps> = ({
   toolName,
   argsText,
   result,
@@ -352,3 +360,10 @@ export const ToolFallback: ToolCallMessagePartComponent = ({
   );
 };
 
+// Export for use with MessagePrimitive.Parts (assistant-ui component)
+export const ToolFallback: ToolCallMessagePartComponent = (props) => {
+  return <ToolFallbackImpl toolName={props.toolName} argsText={props.argsText} result={props.result} />;
+};
+
+// Export for direct use with custom props (e.g., in AgentBlock)
+export const SimpleToolFallback: FC<SimpleToolFallbackProps> = ToolFallbackImpl;

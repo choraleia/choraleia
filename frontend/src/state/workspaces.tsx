@@ -1314,18 +1314,18 @@ export const WorkspaceProvider: React.FC<React.PropsWithChildren> = ({
           } else {
             // All fetches failed, set empty list
             setWorkspaces([]);
-            setActiveWorkspaceId(null);
+            setActiveWorkspaceId("");
           }
         } else {
           // No workspaces in backend, set empty list
           setWorkspaces([]);
-          setActiveWorkspaceId(null);
+          setActiveWorkspaceId("");
         }
       } catch (err) {
         console.warn("Failed to load workspaces from backend:", err);
         // Fallback to empty list
         setWorkspaces([]);
-        setActiveWorkspaceId(null);
+        setActiveWorkspaceId("");
       } finally {
         setIsLoading(false);
       }

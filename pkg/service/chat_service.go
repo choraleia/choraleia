@@ -3,6 +3,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -241,9 +242,17 @@ func (s *ChatService) LoadMessageWithChunks(messageID string) (*models.Message, 
 }
 
 // AddAndSaveTextChunk adds a text chunk to message and saves to database in real-time
-func (s *ChatService) AddAndSaveTextChunk(msg *models.Message, text string, roundIndex int, agentName string) error {
+func (s *ChatService) AddAndSaveTextChunk(msg *models.Message, text string, roundIndex int, agentName string, runPath []string) error {
 	// Get sequence index (count of existing chunks in this round)
 	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	// Serialize runPath to JSON string
+	runPathJSON := ""
+	if len(runPath) > 0 {
+		if b, err := json.Marshal(runPath); err == nil {
+			runPathJSON = string(b)
+		}
+	}
 
 	chunk := db.MessageChunk{
 		ID:         uuid.New().String(),
@@ -252,6 +261,7 @@ func (s *ChatService) AddAndSaveTextChunk(msg *models.Message, text string, roun
 		RoundIndex: roundIndex,
 		SeqIndex:   seqIndex,
 		AgentName:  agentName,
+		RunPath:    runPathJSON,
 		Text:       text,
 		CreatedAt:  time.Now(),
 	}
@@ -264,8 +274,16 @@ func (s *ChatService) AddAndSaveTextChunk(msg *models.Message, text string, roun
 }
 
 // AddAndSaveReasoningChunk adds a reasoning chunk to message and saves to database in real-time
-func (s *ChatService) AddAndSaveReasoningChunk(msg *models.Message, text string, roundIndex int, agentName string) error {
+func (s *ChatService) AddAndSaveReasoningChunk(msg *models.Message, text string, roundIndex int, agentName string, runPath []string) error {
 	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	// Serialize runPath to JSON string
+	runPathJSON := ""
+	if len(runPath) > 0 {
+		if b, err := json.Marshal(runPath); err == nil {
+			runPathJSON = string(b)
+		}
+	}
 
 	chunk := db.MessageChunk{
 		ID:         uuid.New().String(),
@@ -274,6 +292,7 @@ func (s *ChatService) AddAndSaveReasoningChunk(msg *models.Message, text string,
 		RoundIndex: roundIndex,
 		SeqIndex:   seqIndex,
 		AgentName:  agentName,
+		RunPath:    runPathJSON,
 		Text:       text,
 		CreatedAt:  time.Now(),
 	}
@@ -283,8 +302,16 @@ func (s *ChatService) AddAndSaveReasoningChunk(msg *models.Message, text string,
 }
 
 // AddAndSaveToolCallChunk adds a tool call chunk to message and saves to database in real-time
-func (s *ChatService) AddAndSaveToolCallChunk(msg *models.Message, toolCallID, toolName, args string, roundIndex int, agentName string) error {
+func (s *ChatService) AddAndSaveToolCallChunk(msg *models.Message, toolCallID, toolName, args string, roundIndex int, agentName string, runPath []string) error {
 	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	// Serialize runPath to JSON string
+	runPathJSON := ""
+	if len(runPath) > 0 {
+		if b, err := json.Marshal(runPath); err == nil {
+			runPathJSON = string(b)
+		}
+	}
 
 	chunk := db.MessageChunk{
 		ID:         uuid.New().String(),
@@ -293,6 +320,7 @@ func (s *ChatService) AddAndSaveToolCallChunk(msg *models.Message, toolCallID, t
 		RoundIndex: roundIndex,
 		SeqIndex:   seqIndex,
 		AgentName:  agentName,
+		RunPath:    runPathJSON,
 		ToolCallID: toolCallID,
 		ToolName:   toolName,
 		ToolArgs:   args,
@@ -304,8 +332,16 @@ func (s *ChatService) AddAndSaveToolCallChunk(msg *models.Message, toolCallID, t
 }
 
 // AddAndSaveToolResultChunk adds a tool result chunk to message and saves to database in real-time
-func (s *ChatService) AddAndSaveToolResultChunk(msg *models.Message, toolCallID, toolName, content string, roundIndex int, agentName string) error {
+func (s *ChatService) AddAndSaveToolResultChunk(msg *models.Message, toolCallID, toolName, content string, roundIndex int, agentName string, runPath []string) error {
 	seqIndex := s.getNextSeqIndex(msg, roundIndex)
+
+	// Serialize runPath to JSON string
+	runPathJSON := ""
+	if len(runPath) > 0 {
+		if b, err := json.Marshal(runPath); err == nil {
+			runPathJSON = string(b)
+		}
+	}
 
 	chunk := db.MessageChunk{
 		ID:                uuid.New().String(),
@@ -314,6 +350,7 @@ func (s *ChatService) AddAndSaveToolResultChunk(msg *models.Message, toolCallID,
 		RoundIndex:        roundIndex,
 		SeqIndex:          seqIndex,
 		AgentName:         agentName,
+		RunPath:           runPathJSON,
 		ToolCallID:        toolCallID,
 		ToolName:          toolName,
 		ToolResultContent: content,
@@ -441,119 +478,158 @@ func (s *ChatService) chunksToMessageParts(chunks []db.MessageChunk) []db.Messag
 		return nil
 	}
 
+	// Helper to parse RunPath JSON string to []string
+	parseRunPath := func(runPathJSON string) []string {
+		if runPathJSON == "" {
+			return nil
+		}
+		var runPath []string
+		if err := json.Unmarshal([]byte(runPathJSON), &runPath); err != nil {
+			return nil
+		}
+		return runPath
+	}
+
+	// Helper to check if a chunk can be appended to the last part
+	// Only text and reasoning types can be merged, and only if they have the same agent context
+	canAppendToLastPart := func(parts []db.MessagePart, chunk *db.MessageChunk) bool {
+		if len(parts) == 0 {
+			return false
+		}
+		lastPart := &parts[len(parts)-1]
+
+		// Only text and reasoning can be merged
+		if chunk.Type != db.ChunkTypeText && chunk.Type != db.ChunkTypeReasoning {
+			return false
+		}
+
+		// Type must match
+		if (chunk.Type == db.ChunkTypeText && lastPart.Type != "text") ||
+			(chunk.Type == db.ChunkTypeReasoning && lastPart.Type != "reasoning") {
+			return false
+		}
+
+		// Agent name must match
+		if chunk.AgentName != lastPart.AgentName {
+			return false
+		}
+
+		// RunPath must match (compare JSON string with parsed slice)
+		chunkRunPath := parseRunPath(chunk.RunPath)
+		if len(chunkRunPath) != len(lastPart.RunPath) {
+			return false
+		}
+		for i, v := range chunkRunPath {
+			if v != lastPart.RunPath[i] {
+				return false
+			}
+		}
+
+		return true
+	}
+
 	var parts []db.MessagePart
-	n := len(chunks)
-	i := 0
 
-	for i < n {
-		chunk := chunks[i]
+	for _, chunk := range chunks {
+		// Check if we can append to the last part
+		if canAppendToLastPart(parts, &chunk) {
+			// Append text to the last part
+			if chunk.Text != "" {
+				parts[len(parts)-1].Text += chunk.Text
+			}
+			continue
+		}
 
+		// Create a new part based on chunk type
 		switch chunk.Type {
 		case db.ChunkTypeText:
-			// Merge consecutive text chunks
-			var textBuilder strings.Builder
-			roundIndex := chunk.RoundIndex
-			for i < n && chunks[i].Type == db.ChunkTypeText {
-				if chunks[i].Text != "" {
-					if textBuilder.Len() > 0 {
-						textBuilder.WriteString("")
-					}
-					textBuilder.WriteString(chunks[i].Text)
-				}
-				i++
-			}
-			if textBuilder.Len() > 0 {
-				parts = append(parts, db.MessagePart{
-					Type:  "text",
-					Index: roundIndex,
-					Text:  textBuilder.String(),
-				})
-			}
+			parts = append(parts, db.MessagePart{
+				Type:      "text",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
+				Text:      chunk.Text,
+			})
 
 		case db.ChunkTypeReasoning:
-			// Merge consecutive reasoning chunks
-			var reasoningBuilder strings.Builder
-			roundIndex := chunk.RoundIndex
-			for i < n && chunks[i].Type == db.ChunkTypeReasoning {
-				if chunks[i].Text != "" {
-					if reasoningBuilder.Len() > 0 {
-						reasoningBuilder.WriteString("")
-					}
-					reasoningBuilder.WriteString(chunks[i].Text)
-				}
-				i++
-			}
-			if reasoningBuilder.Len() > 0 {
-				parts = append(parts, db.MessagePart{
-					Type:  "reasoning",
-					Index: roundIndex,
-					Text:  reasoningBuilder.String(),
-				})
-			}
+			parts = append(parts, db.MessagePart{
+				Type:      "reasoning",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
+				Text:      chunk.Text,
+			})
 
 		case db.ChunkTypeToolCall:
 			parts = append(parts, db.MessagePart{
-				Type:  "tool_call",
-				Index: chunk.RoundIndex,
+				Type:      "tool_call",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
 				ToolCall: &db.ToolCallPart{
 					ID:        chunk.ToolCallID,
 					Name:      chunk.ToolName,
 					Arguments: chunk.ToolArgs,
 				},
 			})
-			i++
 
 		case db.ChunkTypeToolResult:
 			parts = append(parts, db.MessagePart{
-				Type:  "tool_result",
-				Index: chunk.RoundIndex,
+				Type:      "tool_result",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
 				ToolResult: &db.ToolResultPart{
 					ToolCallID: chunk.ToolCallID,
 					Name:       chunk.ToolName,
 					Content:    chunk.ToolResultContent,
 				},
 			})
-			i++
 
 		case db.ChunkTypeImageURL:
 			parts = append(parts, db.MessagePart{
-				Type:  "image_url",
-				Index: chunk.RoundIndex,
+				Type:      "image_url",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
 				ImageURL: &db.ImageURLPart{
 					URL:    chunk.MediaURL,
 					Detail: chunk.MediaDetail,
 				},
 			})
-			i++
 
 		case db.ChunkTypeAudioURL:
 			parts = append(parts, db.MessagePart{
-				Type:  "audio_url",
-				Index: chunk.RoundIndex,
+				Type:      "audio_url",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
 				AudioURL: &db.AudioURLPart{
 					URL:      chunk.MediaURL,
 					MimeType: chunk.MediaMimeType,
 					Duration: chunk.MediaDuration,
 				},
 			})
-			i++
 
 		case db.ChunkTypeVideoURL:
 			parts = append(parts, db.MessagePart{
-				Type:  "video_url",
-				Index: chunk.RoundIndex,
+				Type:      "video_url",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
 				VideoURL: &db.VideoURLPart{
 					URL:      chunk.MediaURL,
 					MimeType: chunk.MediaMimeType,
 					Duration: chunk.MediaDuration,
 				},
 			})
-			i++
 
 		case db.ChunkTypeFileURL:
 			parts = append(parts, db.MessagePart{
-				Type:  "file_url",
-				Index: chunk.RoundIndex,
+				Type:      "file_url",
+				Index:     chunk.RoundIndex,
+				AgentName: chunk.AgentName,
+				RunPath:   parseRunPath(chunk.RunPath),
 				FileURL: &db.FileURLPart{
 					URL:      chunk.MediaURL,
 					MimeType: chunk.MediaMimeType,
@@ -561,10 +637,6 @@ func (s *ChatService) chunksToMessageParts(chunks []db.MessageChunk) []db.Messag
 					Size:     chunk.MediaSize,
 				},
 			})
-			i++
-
-		default:
-			i++
 		}
 	}
 
@@ -1444,7 +1516,7 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 
 	// First pass: collect all tool_result ids
 	for _, chunk := range chunks {
-		if chunk.Type == db.ChunkTypeToolResult && chunk.ToolName != "transfer_to_agent" {
+		if chunk.Type == db.ChunkTypeToolResult {
 			toolResultsExist[chunk.ToolCallID] = true
 		}
 	}
@@ -1495,11 +1567,6 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 			}
 
 		case db.ChunkTypeToolCall:
-			// Skip transfer_to_agent
-			if chunk.ToolName == "transfer_to_agent" {
-				i++
-				continue
-			}
 			// Each tool_call is a separate assistant message
 			result = append(result, &schema.Message{
 				Role:             schema.Assistant,
@@ -1517,11 +1584,6 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 			i++
 
 		case db.ChunkTypeToolResult:
-			// Skip transfer_to_agent
-			if chunk.ToolName == "transfer_to_agent" {
-				i++
-				continue
-			}
 			// Each tool_result is a separate tool message
 			result = append(result, &schema.Message{
 				Role:       schema.Tool,
@@ -1547,7 +1609,6 @@ func (s *ChatService) messageToSchemaMessages(msg *models.Message) []*schema.Mes
 			})
 		}
 	}
-
 	return result
 }
 
@@ -2416,8 +2477,9 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 	// Track if we've already handled cancellation (to avoid double save)
 	cancelled := false
 
-	// Track current agent name for display
+	// Track current agent name and run path for multi-agent scenarios
 	currentAgentName := ""
+	currentRunPath := []string{}
 
 	for {
 		// Check for cancellation before getting next chunk
@@ -2455,9 +2517,39 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			return currentAssistantMsg, fmt.Errorf("agent error: %w", chunk.Err)
 		}
 
-		// Update current agent name from chunk (each chunk carries its agent name)
+		// Debug: log chunk agent info
+		s.logger.Debug("Received chunk from agent",
+			"chunkAgentName", chunk.AgentName,
+			"chunkRunPathLen", len(chunk.RunPath),
+			"currentAgentName", currentAgentName,
+			"currentRunPathLen", len(currentRunPath),
+		)
+
+		// Update current agent name and run path from chunk
+		// Priority: 1) Explicit AgentName in chunk, 2) Derive from RunPath
 		if chunk.AgentName != "" {
 			currentAgentName = chunk.AgentName
+		}
+		if len(chunk.RunPath) > 0 {
+			currentRunPath = make([]string, len(chunk.RunPath))
+			for i, step := range chunk.RunPath {
+				currentRunPath[i] = step.String()
+			}
+			// If we have RunPath but no AgentName, derive from RunPath
+			if chunk.AgentName == "" && len(currentRunPath) > 0 {
+				currentAgentName = currentRunPath[len(currentRunPath)-1]
+			}
+		}
+
+		// Check for TransferToAgent action - this indicates we're about to switch to a new agent
+		if chunk.Action != nil && chunk.Action.TransferToAgent != nil {
+			destAgent := chunk.Action.TransferToAgent.DestAgentName
+			s.logger.Debug("TransferToAgent action detected",
+				"destAgent", destAgent,
+				"currentAgentName", currentAgentName,
+			)
+			// Note: The actual switch happens when we receive chunks from the new agent
+			// with the new AgentName/RunPath
 		}
 
 		// Skip events with no output (e.g., transfer actions)
@@ -2480,7 +2572,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 			roundIndex := currentAssistantMsg.GetMaxRoundIndex()
 
 			// Add tool result to current assistant message's chunks and save to database
-			if err := s.AddAndSaveToolResultChunk(currentAssistantMsg, fullMsg.ToolCallID, fullMsg.ToolName, fullMsg.Content, roundIndex, currentAgentName); err != nil {
+			if err := s.AddAndSaveToolResultChunk(currentAssistantMsg, fullMsg.ToolCallID, fullMsg.ToolName, fullMsg.Content, roundIndex, currentAgentName, currentRunPath); err != nil {
 				s.logger.Warn("Failed to save tool result chunk", "error", err)
 			}
 
@@ -2499,6 +2591,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 							Content:    fullMsg.Content,
 							ToolCallID: fullMsg.ToolCallID,
 							AgentName:  currentAgentName,
+							RunPath:    currentRunPath,
 						},
 					},
 				},
@@ -2557,7 +2650,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					// Real-time save each chunk to database and send to client
 					if chunk.Content != "" {
 						// Save chunk to database and add to message.Chunks
-						if err := s.AddAndSaveTextChunk(currentAssistantMsg, chunk.Content, roundIndex, currentAgentName); err != nil {
+						if err := s.AddAndSaveTextChunk(currentAssistantMsg, chunk.Content, roundIndex, currentAgentName, currentRunPath); err != nil {
 							s.logger.Warn("Failed to save streaming text chunk", "error", err)
 						}
 
@@ -2574,6 +2667,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 									Delta: models.ChatCompletionChunkDelta{
 										Content:   chunk.Content,
 										AgentName: currentAgentName,
+										RunPath:   currentRunPath,
 									},
 								},
 							},
@@ -2581,7 +2675,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 					}
 					if chunk.ReasoningContent != "" {
 						// Save chunk to database and add to message.Chunks
-						if err := s.AddAndSaveReasoningChunk(currentAssistantMsg, chunk.ReasoningContent, roundIndex, currentAgentName); err != nil {
+						if err := s.AddAndSaveReasoningChunk(currentAssistantMsg, chunk.ReasoningContent, roundIndex, currentAgentName, currentRunPath); err != nil {
 							s.logger.Warn("Failed to save streaming reasoning chunk", "error", err)
 						}
 
@@ -2598,6 +2692,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 									Delta: models.ChatCompletionChunkDelta{
 										ReasoningContent: chunk.ReasoningContent,
 										AgentName:        currentAgentName,
+										RunPath:          currentRunPath,
 									},
 								},
 							},
@@ -2625,7 +2720,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 
 				// Save and send non-streaming content
 				if streamedMsg.Content != "" {
-					if err := s.AddAndSaveTextChunk(currentAssistantMsg, streamedMsg.Content, roundIndex, currentAgentName); err != nil {
+					if err := s.AddAndSaveTextChunk(currentAssistantMsg, streamedMsg.Content, roundIndex, currentAgentName, currentRunPath); err != nil {
 						s.logger.Warn("Failed to save text chunk", "error", err)
 					}
 
@@ -2641,13 +2736,14 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 								Delta: models.ChatCompletionChunkDelta{
 									Content:   streamedMsg.Content,
 									AgentName: currentAgentName,
+									RunPath:   currentRunPath,
 								},
 							},
 						},
 					})
 				}
 				if streamedMsg.ReasoningContent != "" {
-					if err := s.AddAndSaveReasoningChunk(currentAssistantMsg, streamedMsg.ReasoningContent, roundIndex, currentAgentName); err != nil {
+					if err := s.AddAndSaveReasoningChunk(currentAssistantMsg, streamedMsg.ReasoningContent, roundIndex, currentAgentName, currentRunPath); err != nil {
 						s.logger.Warn("Failed to save reasoning chunk", "error", err)
 					}
 
@@ -2663,6 +2759,7 @@ func (s *ChatService) runStreamingAgent(ctx context.Context, req *models.ChatCom
 								Delta: models.ChatCompletionChunkDelta{
 									ReasoningContent: streamedMsg.ReasoningContent,
 									AgentName:        currentAgentName,
+									RunPath:          currentRunPath,
 								},
 							},
 						},

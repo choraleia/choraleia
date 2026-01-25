@@ -259,6 +259,7 @@ type ChatCompletionChunkDelta struct {
 	Refusal          string     `json:"refusal,omitempty"`
 	ReasoningContent string     `json:"reasoning_content,omitempty"` // Extended
 	AgentName        string     `json:"agent_name,omitempty"`        // Extended: current agent name
+	RunPath          []string   `json:"run_path,omitempty"`          // Extended: agent call path for multi-agent scenarios
 }
 
 // ========== Constants ==========

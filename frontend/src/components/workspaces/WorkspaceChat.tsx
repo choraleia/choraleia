@@ -62,11 +62,16 @@ type UIMessage = {
 
 // Convert MessagePart to UI content format
 function partToUIContent(part: MessagePart, toolResultsMap: Map<string, string>): any | null {
+  const baseFields = {
+    agent_name: part.agent_name,
+    run_path: part.run_path,
+  };
+
   switch (part.type) {
     case "text":
-      return part.text ? { type: "text", text: part.text } : null;
+      return part.text ? { type: "text", text: part.text, ...baseFields } : null;
     case "reasoning":
-      return part.text ? { type: "reasoning", text: part.text } : null;
+      return part.text ? { type: "reasoning", text: part.text, ...baseFields } : null;
     case "tool_call":
       if (part.tool_call) {
         return {
@@ -75,6 +80,7 @@ function partToUIContent(part: MessagePart, toolResultsMap: Map<string, string>)
           toolName: part.tool_call.name,
           argsText: part.tool_call.arguments,
           result: toolResultsMap.get(part.tool_call.id),
+          ...baseFields,
         };
       }
       return null;
@@ -82,13 +88,13 @@ function partToUIContent(part: MessagePart, toolResultsMap: Map<string, string>)
       // Tool results are merged into tool-call parts, not displayed separately
       return null;
     case "image_url":
-      return part.image_url ? { type: "image", url: part.image_url.url, detail: part.image_url.detail } : null;
+      return part.image_url ? { type: "image", url: part.image_url.url, detail: part.image_url.detail, ...baseFields } : null;
     case "audio_url":
-      return part.audio_url ? { type: "audio", url: part.audio_url.url } : null;
+      return part.audio_url ? { type: "audio", url: part.audio_url.url, ...baseFields } : null;
     case "video_url":
-      return part.video_url ? { type: "video", url: part.video_url.url } : null;
+      return part.video_url ? { type: "video", url: part.video_url.url, ...baseFields } : null;
     case "file_url":
-      return part.file_url ? { type: "file", url: part.file_url.url, name: part.file_url.name } : null;
+      return part.file_url ? { type: "file", url: part.file_url.url, name: part.file_url.name, ...baseFields } : null;
     default:
       return null;
   }
@@ -386,12 +392,33 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     stream: AsyncIterable<ChatCompletionChunk>
   ) => {
     const contentParts: any[] = [];
+    let currentAgentName: string | undefined;
+    let currentRunPath: string[] | undefined;
+
+    // Helper to check if run_path arrays are equal
+    const runPathEqual = (a?: string[], b?: string[]): boolean => {
+      if (!a && !b) return true;
+      if (!a || !b) return false;
+      if (a.length !== b.length) return false;
+      return a.every((v, i) => v === b[i]);
+    };
 
     try {
       for await (const chunk of stream) {
         if (abortControllerRef.current?.signal.aborted) break;
 
         for (const choice of chunk.choices) {
+          const deltaAgentName = choice.delta.agent_name;
+          const deltaRunPath = choice.delta.run_path;
+
+          // Track agent context changes
+          if (deltaAgentName) {
+            currentAgentName = deltaAgentName;
+          }
+          if (deltaRunPath) {
+            currentRunPath = deltaRunPath;
+          }
+
           // New assistant round marker - skip
           if (choice.delta.role === "assistant" && !choice.delta.content && !choice.delta.tool_calls && !choice.delta.reasoning_content) {
             continue;
@@ -409,23 +436,43 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
             continue;
           }
 
-          // Reasoning - append to last if also reasoning, otherwise create new
+          // Reasoning - append to last if also reasoning AND same agent context, otherwise create new
           if (choice.delta.reasoning_content) {
             const lastPart = contentParts[contentParts.length - 1];
-            if (lastPart && lastPart.type === "reasoning") {
+            const canAppend = lastPart &&
+              lastPart.type === "reasoning" &&
+              lastPart.agent_name === currentAgentName &&
+              runPathEqual(lastPart.run_path, currentRunPath);
+
+            if (canAppend) {
               lastPart.text += choice.delta.reasoning_content;
             } else {
-              contentParts.push({ type: "reasoning", text: choice.delta.reasoning_content });
+              contentParts.push({
+                type: "reasoning",
+                text: choice.delta.reasoning_content,
+                agent_name: currentAgentName,
+                run_path: currentRunPath,
+              });
             }
           }
 
-          // Content - append to last if also text, otherwise create new
+          // Content - append to last if also text AND same agent context, otherwise create new
           if (choice.delta.content && choice.delta.role !== "tool") {
             const lastPart = contentParts[contentParts.length - 1];
-            if (lastPart && lastPart.type === "text") {
+            const canAppend = lastPart &&
+              lastPart.type === "text" &&
+              lastPart.agent_name === currentAgentName &&
+              runPathEqual(lastPart.run_path, currentRunPath);
+
+            if (canAppend) {
               lastPart.text += choice.delta.content;
             } else {
-              contentParts.push({ type: "text", text: choice.delta.content });
+              contentParts.push({
+                type: "text",
+                text: choice.delta.content,
+                agent_name: currentAgentName,
+                run_path: currentRunPath,
+              });
             }
           }
 
@@ -449,6 +496,8 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
                     toolCallId,
                     toolName: tc.function?.name || "",
                     argsText: tc.function?.arguments || "",
+                    agent_name: currentAgentName,
+                    run_path: currentRunPath,
                   });
                 }
               }
@@ -465,7 +514,7 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
         if (newContent.length === 0) newContent.push({ type: "text", text: "" });
 
         setAllMessages((prev) =>
-          prev.map((msg) => msg.id === messageId ? { ...msg, content: [...newContent] } : msg)
+          prev.map((msg) => msg.id === messageId ? { ...msg, content: [...newContent], agentName: currentAgentName } : msg)
         );
       }
 
@@ -603,6 +652,22 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
     const contentParts: any[] = [];
     let finishReason: string | undefined;
     let currentAgentName: string | undefined;
+    let currentRunPath: string[] | undefined;
+
+    // Helper to check if run_path arrays are equal
+    const runPathEqual = (a?: string[], b?: string[]): boolean => {
+      if (!a && !b) return true;
+      if (!a || !b) return false;
+      if (a.length !== b.length) return false;
+      return a.every((v, i) => v === b[i]);
+    };
+
+    // Helper to check if agent context changed
+    const agentContextChanged = (agentName?: string, runPath?: string[]): boolean => {
+      if (agentName !== currentAgentName) return true;
+      if (!runPathEqual(runPath, currentRunPath)) return true;
+      return false;
+    };
 
     for await (const chunk of stream) {
 
@@ -615,16 +680,13 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           continue;
         }
 
-        // Track agent name changes and insert agent-switch marker as text
-        if (choice.delta.agent_name && choice.delta.agent_name !== currentAgentName) {
-          // If we already had an agent and it's changing, insert a switch marker as text
-          if (currentAgentName && contentParts.length > 0) {
-            contentParts.push({
-              type: "text",
-              text: `\n\n---\n🤖 **Switched to ${choice.delta.agent_name}**\n\n`
-            });
-          }
-          currentAgentName = choice.delta.agent_name;
+        const deltaAgentName = choice.delta.agent_name;
+        const deltaRunPath = choice.delta.run_path;
+
+        // Track agent context changes (no longer insert marker text, blocks handle display)
+        if (deltaAgentName && agentContextChanged(deltaAgentName, deltaRunPath)) {
+          currentAgentName = deltaAgentName;
+          currentRunPath = deltaRunPath;
         }
 
         // New assistant round marker - skip
@@ -644,23 +706,43 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
           continue;
         }
 
-        // Reasoning - append to last if also reasoning, otherwise create new
+        // Reasoning - append to last if also reasoning AND same agent context, otherwise create new
         if (choice.delta.reasoning_content) {
           const lastPart = contentParts[contentParts.length - 1];
-          if (lastPart && lastPart.type === "reasoning") {
+          const canAppend = lastPart &&
+            lastPart.type === "reasoning" &&
+            lastPart.agent_name === currentAgentName &&
+            runPathEqual(lastPart.run_path, currentRunPath);
+
+          if (canAppend) {
             lastPart.text += choice.delta.reasoning_content;
           } else {
-            contentParts.push({ type: "reasoning", text: choice.delta.reasoning_content });
+            contentParts.push({
+              type: "reasoning",
+              text: choice.delta.reasoning_content,
+              agent_name: currentAgentName,
+              run_path: currentRunPath,
+            });
           }
         }
 
-        // Content - append to last if also text, otherwise create new
+        // Content - append to last if also text AND same agent context, otherwise create new
         if (choice.delta.content && choice.delta.role !== "tool") {
           const lastPart = contentParts[contentParts.length - 1];
-          if (lastPart && lastPart.type === "text") {
+          const canAppend = lastPart &&
+            lastPart.type === "text" &&
+            lastPart.agent_name === currentAgentName &&
+            runPathEqual(lastPart.run_path, currentRunPath);
+
+          if (canAppend) {
             lastPart.text += choice.delta.content;
           } else {
-            contentParts.push({ type: "text", text: choice.delta.content });
+            contentParts.push({
+              type: "text",
+              text: choice.delta.content,
+              agent_name: currentAgentName,
+              run_path: currentRunPath,
+            });
           }
         }
 
@@ -684,6 +766,8 @@ export default function WorkspaceChat({ workspaceId, onConversationChange }: Wor
                   toolCallId,
                   toolName: tc.function?.name || "",
                   argsText: tc.function?.arguments || "",
+                  agent_name: currentAgentName,
+                  run_path: currentRunPath,
                 });
               }
             }
