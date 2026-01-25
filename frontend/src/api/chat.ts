@@ -59,6 +59,8 @@ export interface FileURL {
 export interface MessagePart {
   type: MessagePartType;
   index?: number; // Round index for agent multi-round scenarios
+  agent_name?: string; // Name of the agent that generated this part
+  run_path?: string[]; // Agent call path for multi-agent scenarios
   text?: string;
   tool_call?: ToolCallPart;
   tool_result?: ToolResultPart;
@@ -183,6 +185,7 @@ export interface ChatCompletionChunk {
       tool_call_id?: string;
       reasoning_content?: string;
       agent_name?: string;
+      run_path?: string[]; // Agent call path for multi-agent scenarios
     };
     finish_reason?: string;
   }>;

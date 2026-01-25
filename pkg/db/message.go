@@ -74,6 +74,7 @@ type MessageChunk struct {
 	RoundIndex int    `json:"round_index" gorm:"default:0"`               // Round index for agent multi-round scenarios
 	SeqIndex   int    `json:"seq_index" gorm:"default:0"`                 // Sequence index within the same round (for ordering)
 	AgentName  string `json:"agent_name,omitempty" gorm:"size:100;index"` // Name of the agent that generated this chunk
+	RunPath    string `json:"run_path,omitempty" gorm:"size:500"`         // Agent call path (JSON array of agent names, e.g. ["supervisor","worker1"])
 
 	// Text content (for text, reasoning types)
 	Text string `json:"text,omitempty" gorm:"type:text"`
@@ -106,7 +107,9 @@ func (*MessageChunk) TableName() string {
 // MessagePart represents a message part in API response (merged chunks)
 type MessagePart struct {
 	Type       string          `json:"type"`
-	Index      int             `json:"index,omitempty"` // Round index
+	Index      int             `json:"index,omitempty"`      // Round index
+	AgentName  string          `json:"agent_name,omitempty"` // Name of the agent that generated this part
+	RunPath    []string        `json:"run_path,omitempty"`   // Agent call path (e.g. ["supervisor","worker1"])
 	Text       string          `json:"text,omitempty"`
 	ToolCall   *ToolCallPart   `json:"tool_call,omitempty"`
 	ToolResult *ToolResultPart `json:"tool_result,omitempty"`

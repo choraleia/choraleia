@@ -32,7 +32,7 @@ import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import { MarkdownText } from "./chat/markdown-text";
 import { ReasoningContent } from "./chat/reasoning-content";
-import { ToolFallback } from "./chat/tool-fallback";
+import { ToolFallback, SimpleToolFallback } from "./chat/tool-fallback";
 
 // Model config type
 export interface ModelConfig {
@@ -107,6 +107,10 @@ export const WorkspaceChatThread: FC<WorkspaceChatThreadProps> = ({
           {/* Chat messages area - wrapped with padding so scrollbar aligns with input box */}
           <Box sx={{ flex: 1, minHeight: 0, px: "10px" }}>
             <ThreadPrimitive.Viewport
+              autoScroll={true}
+              scrollToBottomOnRunStart={true}
+              scrollToBottomOnInitialize={false}
+              scrollToBottomOnThreadSwitch={true}
               style={{
                 height: "100%",
                 overflowY: "auto",
@@ -572,7 +576,46 @@ const EditComposer: FC = () => {
 // Assistant message component
 const AssistantMessage: FC = () => {
   const message = useMessage();
-  const agentName = (message?.metadata?.custom as any)?.agentName;
+  const content = message?.content || [];
+
+
+  // Group consecutive parts by agent context (agent_name + run_path)
+  const agentBlocks = React.useMemo(() => {
+    const blocks: Array<{
+      agentName?: string;
+      runPath?: string[];
+      parts: any[];
+    }> = [];
+
+    const runPathKey = (runPath?: string[]) => runPath?.join("/") || "";
+
+    for (const part of content) {
+      const partAgentName = (part as any).agent_name;
+      const partRunPath = (part as any).run_path;
+      const lastBlock = blocks[blocks.length - 1];
+
+      // Check if this part belongs to the same agent context as the last block
+      const sameContext =
+        lastBlock &&
+        lastBlock.agentName === partAgentName &&
+        runPathKey(lastBlock.runPath) === runPathKey(partRunPath);
+
+      if (sameContext) {
+        lastBlock.parts.push(part);
+      } else {
+        blocks.push({
+          agentName: partAgentName,
+          runPath: partRunPath,
+          parts: [part],
+        });
+      }
+    }
+
+    return blocks;
+  }, [content]);
+
+  // Check if we have multiple agents (need to show blocks)
+  const hasMultipleAgents = agentBlocks.length > 1 || (agentBlocks.length === 1 && agentBlocks[0].agentName);
 
   return (
     <MessagePrimitive.Root>
@@ -584,53 +627,45 @@ const AssistantMessage: FC = () => {
           mb: 2,
         }}
       >
-        <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
-          {/* Agent name badge */}
-          {agentName && (
-            <Typography
-              variant="caption"
+        <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden", width: "100%" }}>
+          {hasMultipleAgents ? (
+            // Multi-agent mode: render each agent block separately
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+              {agentBlocks.map((block, blockIndex) => (
+                <AgentBlock
+                  key={blockIndex}
+                  agentName={block.agentName}
+                  runPath={block.runPath}
+                  parts={block.parts}
+                />
+              ))}
+            </Box>
+          ) : (
+            // Single agent or no agent info: render normally
+            <Paper
+              elevation={0}
               sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.5,
-                mb: 0.5,
-                px: 1,
-                py: 0.25,
-                bgcolor: "primary.main",
-                color: "primary.contrastText",
-                borderRadius: 1,
-                fontSize: 11,
-                fontWeight: 500,
+                p: 1.5,
+                bgcolor: (theme) => theme.palette.mode === "light" ? "#f5f5f5" : "rgba(255,255,255,0.08)",
+                borderRadius: 2,
+                width: "fit-content",
+                maxWidth: "100%",
+                overflow: "hidden",
+                wordBreak: "break-word",
+                overflowWrap: "anywhere",
               }}
             >
-              <SmartToyIcon sx={{ fontSize: 12 }} />
-              {agentName}
-            </Typography>
+              <MessagePrimitive.Parts
+                components={{
+                  Text: MarkdownText,
+                  Reasoning: ReasoningContent,
+                  tools: {
+                    Fallback: ToolFallback,
+                  },
+                }}
+              />
+            </Paper>
           )}
-          {/* Message content */}
-          <Paper
-            elevation={0}
-            sx={{
-              p: 1.5,
-              bgcolor: (theme) => theme.palette.mode === "light" ? "#f5f5f5" : "rgba(255,255,255,0.08)",
-              borderRadius: 2,
-              width: "fit-content",
-              maxWidth: "100%",
-              overflow: "hidden",
-              wordBreak: "break-word",
-              overflowWrap: "anywhere",
-            }}
-          >
-            <MessagePrimitive.Parts
-              components={{
-                Text: MarkdownText,
-                Reasoning: ReasoningContent,
-                tools: {
-                  Fallback: ToolFallback,
-                },
-              }}
-            />
-          </Paper>
 
           {/* Action bar */}
           <Stack direction="row" spacing={0.5} sx={{ mt: 0.5, opacity: 0.6, "&:hover": { opacity: 1 } }}>
@@ -663,6 +698,124 @@ const AssistantMessage: FC = () => {
       </Box>
     </MessagePrimitive.Root>
   );
+};
+
+// Agent block component - renders a single agent's content with badge
+interface AgentBlockProps {
+  agentName?: string;
+  runPath?: string[];
+  parts: any[];
+}
+
+const AgentBlock: FC<AgentBlockProps> = ({ agentName, runPath, parts }) => {
+  // Format run path for display (show hierarchy if depth > 1)
+  const pathDisplay = runPath && runPath.length > 1 ? runPath.slice(0, -1).join(" → ") : null;
+
+  return (
+    <Box
+      sx={{
+        position: "relative",
+        borderLeft: agentName ? "3px solid" : "none",
+        borderColor: "primary.main",
+        pl: agentName ? 1.5 : 0,
+      }}
+    >
+      {/* Agent name badge - positioned at top of block */}
+      {agentName && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            mb: 0.5,
+          }}
+        >
+          <Typography
+            variant="caption"
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              px: 1,
+              py: 0.25,
+              bgcolor: "primary.main",
+              color: "primary.contrastText",
+              borderRadius: 1,
+              fontSize: 11,
+              fontWeight: 500,
+            }}
+          >
+            <SmartToyIcon sx={{ fontSize: 12 }} />
+            {agentName}
+          </Typography>
+          {pathDisplay && (
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                fontSize: 10,
+              }}
+            >
+              via {pathDisplay}
+            </Typography>
+          )}
+        </Box>
+      )}
+
+      {/* Content */}
+      <Paper
+        elevation={0}
+        sx={{
+          p: 1.5,
+          bgcolor: (theme) => theme.palette.mode === "light" ? "#f5f5f5" : "rgba(255,255,255,0.08)",
+          borderRadius: 2,
+          maxWidth: "100%",
+          overflow: "hidden",
+          wordBreak: "break-word",
+          overflowWrap: "anywhere",
+        }}
+      >
+        {parts.map((part, index) => (
+          <AgentBlockPart key={index} part={part} />
+        ))}
+      </Paper>
+    </Box>
+  );
+};
+
+// Render a single part within an agent block
+const AgentBlockPart: FC<{ part: any }> = ({ part }) => {
+  if (part.type === "text" && part.text) {
+    // For custom rendering, use simple Typography with pre-wrap
+    // The text is already merged, so just display it
+    return (
+      <Typography
+        variant="body2"
+        component="div"
+        sx={{
+          whiteSpace: "pre-wrap",
+          "& p": { my: 0.5 },
+          "& p:first-of-type": { mt: 0 },
+          "& p:last-of-type": { mb: 0 },
+        }}
+      >
+        {part.text}
+      </Typography>
+    );
+  }
+  if (part.type === "reasoning" && part.text) {
+    return <ReasoningContent text={part.text} />;
+  }
+  if (part.type === "tool-call") {
+    return (
+      <SimpleToolFallback
+        toolName={part.toolName}
+        argsText={part.argsText}
+        result={part.result}
+      />
+    );
+  }
+  return null;
 };
 
 // Branch picker component
